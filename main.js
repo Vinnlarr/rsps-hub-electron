@@ -260,8 +260,12 @@ function setupAutoUpdater() {
 }
 
 ipcMain.on('install-update', () => {
-  if (javaProcess) { javaProcess.kill(); javaProcess = null; }
-  autoUpdater.quitAndInstall(true, true);
+  // Destroy window immediately so NSIS doesn't wait for it to close
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+  // Force kill Java backend
+  if (javaProcess) { try { javaProcess.kill('SIGKILL'); } catch (_) {} javaProcess = null; }
+  // Short delay to let processes fully die, then install
+  setTimeout(() => autoUpdater.quitAndInstall(true, false), 800);
 });
 
 // ── APP LIFECYCLE ─────────────────────────────────────────────────────────────
