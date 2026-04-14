@@ -19,8 +19,8 @@ contextBridge.exposeInMainWorld('hub', {
   del:  (path)        => ipcRenderer.invoke('api-call', { method: 'DELETE', path }),
 
   // Profile
-  getProfile:    ()        => ipcRenderer.invoke('profile-get'),
-  saveProfile:   (data)   => ipcRenderer.invoke('profile-save', data),
+  getProfile:    (username) => ipcRenderer.invoke('profile-get', username),
+  saveProfile:   (data)    => ipcRenderer.invoke('profile-save', data),
   pickAvatar:    ()        => ipcRenderer.invoke('pick-avatar'),
   saveAvatar:    (srcPath) => ipcRenderer.invoke('save-avatar', srcPath),
   getPlaytime:   ()        => ipcRenderer.invoke('playtime-get'),

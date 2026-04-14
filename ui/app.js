@@ -243,9 +243,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   initBgParticles();
   initLevelTooltip();
 
-  // Load profile from disk
+  // Load profile from disk (per-user, loaded after session restore)
   try {
-    state.profile = await window.hub.getProfile();
+    const username = state.user?.username;
+    state.profile = await window.hub.getProfile(username);
     updateNavbarAvatar();
   } catch {}
 
@@ -337,6 +338,7 @@ function setupWindowControls() {
   document.getElementById('btn-logout')?.addEventListener('click', async () => {
     try { await api.logout(); } catch {}
     state.user = null;
+    state.profile = null;
     renderUser();
     closeAllDropdowns();
   });
@@ -348,7 +350,7 @@ function closeAllDropdowns() {
 }
 
 function updateNavbarAvatar() {
-  const p         = state.profile;
+  const p         = state.profile || {};
   const navImg    = document.getElementById('nav-avatar-img');
   const navInitial = document.getElementById('user-initial');
   if (!navImg || !navInitial) return;
@@ -365,7 +367,7 @@ function updateNavbarAvatar() {
 }
 
 function populateAccountDropdown() {
-  const p = state.profile;
+  const p = state.profile || {};
   const displayName = p.displayName || state.user?.username || 'Player';
   const accountUsername = state.user?.username || '';
 
@@ -462,6 +464,7 @@ async function saveProfile() {
   if (!name) { showToast('Name cannot be empty.', 'error'); return; }
   state.profile.displayName = name;
   state.profile.bio = bio;
+  state.profile.username = state.user?.username;
   await window.hub.saveProfile(state.profile);
   closeEditProfile();
   showToast('Profile saved!', 'success');
@@ -561,6 +564,7 @@ async function confirmAvatar() {
     const finalPath = await window.hub.saveAvatar(modal._pendingPath);
     if (finalPath) {
       state.profile.avatarPath = finalPath;
+      state.profile.username = state.user?.username;
       await window.hub.saveProfile(state.profile);
       updateNavbarAvatar();
       closeAvatarModal();
@@ -591,6 +595,7 @@ function toggleVisibilityMenu() {
 
 async function setVisibility(vis) {
   state.profile.visibility = vis;
+  state.profile.username = state.user?.username;
   await window.hub.saveProfile(state.profile);
   document.getElementById('visibility-submenu').style.display = 'none';
   populateAccountDropdown();
@@ -1887,13 +1892,14 @@ function renderUser() {
   if (u) {
     const displayName = state.profile?.displayName || u.username || '';
     if (nameEl)        nameEl.textContent = displayName;
-    if (initEl)        initEl.textContent = (displayName || '?')[0].toUpperCase();
+    if (initEl)        initEl.textContent = (displayName || u.username || '?')[0].toUpperCase();
     if (displaynameEl) displaynameEl.textContent = displayName;
     if (usernameEl)    usernameEl.textContent = u.username ? '@' + u.username : '';
+    updateNavbarAvatar();
     hideAuthScreen();
   } else {
     if (nameEl) nameEl.textContent = 'Guest';
-    if (initEl) initEl.textContent = '?';
+    if (initEl) initEl.textContent = (state.user?.username || '?')[0].toUpperCase();
     // Reset to login form view
     const loginForm = document.getElementById('auth-screen-login');
     const regForm   = document.getElementById('auth-screen-register');
@@ -1990,8 +1996,9 @@ function setupAuthForms() {
   togglePass('asr-pass', 'asr-show');
 
   // After successful auth: hide screen, start services
-  const onAuthSuccess = (res, isNew) => {
+  const onAuthSuccess = async (res, isNew) => {
     state.user = { username: res.username, token: res.token };
+    state.profile = await window.hub.getProfile(res.username).catch(() => null);
     renderUser();
     hideAuthScreen();
     closeAllDropdowns();
@@ -3358,6 +3365,7 @@ function bindSettingsEvents(el, initial) {
   el.querySelector('#set-logout')?.addEventListener('click', async () => {
     try { await api.logout(); } catch {}
     state.user = null;
+    state.profile = null;
     renderUser();
     closeAllDropdowns();
   });

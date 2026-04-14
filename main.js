@@ -134,19 +134,22 @@ ipcMain.handle('api-call', async (_, { method, path: apiPath, body }) => {
   });
 });
 
-// Profile — read/write ~/.rsps_hub/profile.json
-ipcMain.handle('profile-get', () => {
+// Profile — read/write ~/.rsps_hub/{username}/profile.json (per-user)
+ipcMain.handle('profile-get', (_, username) => {
   try {
-    if (fs.existsSync(PROFILE_PATH))
-      return JSON.parse(fs.readFileSync(PROFILE_PATH, 'utf8'));
+    if (!username) return { displayName: '', bio: '', visibility: 'online', avatarPath: null };
+    const p = path.join(RSPS_DIR, username, 'profile.json');
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch (_) {}
-  return { displayName: 'Player', bio: '', visibility: 'online', avatarPath: null };
+  return { displayName: '', bio: '', visibility: 'online', avatarPath: null };
 });
 
 ipcMain.handle('profile-save', (_, data) => {
   try {
-    fs.mkdirSync(RSPS_DIR, { recursive: true });
-    fs.writeFileSync(PROFILE_PATH, JSON.stringify(data, null, 2));
+    if (!data.username) return { error: 'No username' };
+    const dir = path.join(RSPS_DIR, data.username);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'profile.json'), JSON.stringify(data, null, 2));
     return { success: true };
   } catch (e) {
     return { error: e.message };
