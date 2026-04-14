@@ -1,6 +1,6 @@
 {
   "name": "rsps-hub",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "RSPS Hub Launcher",
   "author": "RSPS Hub",
   "main": "main.js",
@@ -14,9 +14,10 @@
   },
   "build": {
     "appId": "com.rspshub.launcher",
-    "productName": "RSPS Hub",
+    "productName": "RSPSHub",
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "RSPSHub-Setup-${version}.${ext}"
     },
     "mac": {
       "target": "dmg"
@@ -40,6 +41,7 @@
     }
   },
   "dependencies": {
+    "electron-log": "^5.4.3",
     "electron-updater": "^6.8.3"
   }
 }

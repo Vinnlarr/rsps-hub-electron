@@ -225,8 +225,8 @@ if (window.hub?.onUpdateAvailable) {
   window.hub.onUpdateDownloaded(() => {
     const banner = document.createElement('div');
     banner.id = 'update-banner';
-    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#1a2a1a;border-top:1px solid #50cc50;color:#a0e0a0;font-family:Cinzel,serif;font-size:0.8rem;padding:10px 20px;display:flex;align-items:center;gap:12px;z-index:9999';
-    banner.innerHTML = `<span>✦ Update ready to install</span><button onclick="window.hub.installUpdate()" style="background:#50cc50;color:#0f1115;border:none;padding:5px 14px;border-radius:3px;font-family:Cinzel,serif;font-size:0.75rem;cursor:pointer;font-weight:700">RESTART & UPDATE</button><button onclick="this.parentElement.remove()" style="background:none;border:none;color:#666;cursor:pointer;margin-left:auto;font-size:1rem">✕</button>`;
+    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#1a1d24;border-top:1px solid #2a2e39;color:#c8a840;font-family:Cinzel,serif;font-size:0.8rem;padding:10px 20px;display:flex;align-items:center;gap:12px;z-index:9999';
+    banner.innerHTML = `<span>✦ Update ready to install</span><button onclick="window.hub.installUpdate()" style="background:#ff981f;color:#0f1115;border:none;padding:5px 14px;border-radius:3px;font-family:Cinzel,serif;font-size:0.75rem;cursor:pointer;font-weight:700">RESTART & UPDATE</button><button onclick="this.parentElement.remove()" style="background:none;border:none;color:#666;cursor:pointer;margin-left:auto;font-size:1rem">✕</button>`;
     document.body.appendChild(banner);
   });
 }

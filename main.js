@@ -230,24 +230,33 @@ ipcMain.handle('select-folder', async () => {
 // ── AUTO UPDATER ─────────────────────────────────────────────────────────────
 
 function setupAutoUpdater() {
-  if (!app.isPackaged) return; // only check for updates in production
+  if (!app.isPackaged) return;
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = require('electron-log');
+  autoUpdater.logger.transports.file.level = 'info';
+
+  autoUpdater.on('checking-for-update', () => console.log('[updater] Checking for update...'));
+  autoUpdater.on('update-not-available', () => console.log('[updater] Already up to date.'));
+  autoUpdater.on('error', (err) => console.error('[updater] Error:', err?.message));
+  autoUpdater.on('download-progress', (p) => console.log(`[updater] Downloaded ${Math.round(p.percent)}%`));
 
   autoUpdater.on('update-available', () => {
+    console.log('[updater] Update available, downloading...');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-available');
     }
   });
 
   autoUpdater.on('update-downloaded', () => {
+    console.log('[updater] Update downloaded, ready to install.');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-downloaded');
     }
   });
 
-  autoUpdater.checkForUpdates().catch(() => {});
+  autoUpdater.checkForUpdates().catch((err) => console.error('[updater] checkForUpdates error:', err?.message));
 }
 
 ipcMain.on('install-update', () => {
