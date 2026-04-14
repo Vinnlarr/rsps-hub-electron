@@ -1,0 +1,45 @@
+{
+  "name": "rsps-hub",
+  "version": "1.0.1",
+  "description": "RSPS Hub Launcher",
+  "author": "RSPS Hub",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.rspshub.launcher",
+    "productName": "RSPS Hub",
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "extraResources": [
+      {
+        "from": "java-backend/",
+        "to": "java-backend/",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "Vinnlarr",
+      "repo": "rsps-hub-electron"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
+  }
+}
