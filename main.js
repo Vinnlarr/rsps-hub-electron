@@ -219,11 +219,13 @@ ipcMain.handle('read-file-base64', (_, filePath) => {
 });
 
 // Settings — pick a download folder
-ipcMain.handle('select-folder', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('select-folder', async (_, defaultPath) => {
+  const opts = {
     title: 'Choose Download Folder',
     properties: ['openDirectory']
-  });
+  };
+  if (defaultPath) opts.defaultPath = defaultPath;
+  const result = await dialog.showOpenDialog(mainWindow, opts);
   return result.canceled ? null : result.filePaths[0];
 });
 
@@ -260,8 +262,7 @@ function setupAutoUpdater() {
 }
 
 ipcMain.on('install-update', () => {
-  // Kill Java first, then quit — autoInstallOnAppQuit runs the installer AFTER app is fully dead
-  if (javaProcess) { try { javaProcess.kill('SIGKILL'); } catch (_) {} javaProcess = null; }
+  killJava();
   app.quit();
 });
 
@@ -275,11 +276,23 @@ app.whenReady().then(() => {
   });
 });
 
+function killJava() {
+  if (!javaProcess) return;
+  try {
+    if (process.platform === 'win32') {
+      execSync(`taskkill /F /T /PID ${javaProcess.pid}`, { stdio: 'ignore' });
+    } else {
+      javaProcess.kill('SIGKILL');
+    }
+  } catch (_) {}
+  javaProcess = null;
+}
+
 app.on('window-all-closed', () => {
-  if (javaProcess) { try { javaProcess.kill('SIGKILL'); } catch (_) {} javaProcess = null; }
+  killJava();
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
-  if (javaProcess) { try { javaProcess.kill('SIGKILL'); } catch (_) {} javaProcess = null; }
+  killJava();
 });

@@ -3342,7 +3342,7 @@ function bindSettingsEvents(el, initial) {
 
   // Download path — folder picker
   el.querySelector('#set-browse')?.addEventListener('click', async () => {
-    const folder = await window.hub.selectFolder();
+    const folder = await window.hub.selectFolder(el.querySelector('#set-dl-path')?.value || undefined);
     if (folder) {
       el.querySelector('#set-dl-path').value = folder;
       save('downloadPath', folder);
