@@ -260,12 +260,9 @@ function setupAutoUpdater() {
 }
 
 ipcMain.on('install-update', () => {
-  // Destroy window immediately so NSIS doesn't wait for it to close
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
-  // Force kill Java backend
+  // Kill Java first, then quit — autoInstallOnAppQuit runs the installer AFTER app is fully dead
   if (javaProcess) { try { javaProcess.kill('SIGKILL'); } catch (_) {} javaProcess = null; }
-  // Short delay to let processes fully die, then install
-  setTimeout(() => autoUpdater.quitAndInstall(true, false), 800);
+  app.quit();
 });
 
 // ── APP LIFECYCLE ─────────────────────────────────────────────────────────────
@@ -279,10 +276,10 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (javaProcess) javaProcess.kill();
+  if (javaProcess) { try { javaProcess.kill('SIGKILL'); } catch (_) {} javaProcess = null; }
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
-  if (javaProcess) javaProcess.kill();
+  if (javaProcess) { try { javaProcess.kill('SIGKILL'); } catch (_) {} javaProcess = null; }
 });
