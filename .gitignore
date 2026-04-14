@@ -1,4 +1,7 @@
 node_modules/
 dist/
 java-backend/
+.claude/
 *.log
+RSPSHub.jar
+badge-preview.html

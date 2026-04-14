@@ -1,1 +1,0 @@
-{"version":"0.0.1","configurations":[{"name":"ui-preview","runtimeExecutable":"npx","runtimeArgs":["serve","ui","-p","3131","--no-clipboard"],"port":3131}]}
