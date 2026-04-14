@@ -1,6 +1,6 @@
 {
   "name": "rsps-hub",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "RSPS Hub Launcher",
   "author": "RSPS Hub",
   "main": "main.js",

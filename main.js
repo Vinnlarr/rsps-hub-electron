@@ -261,6 +261,8 @@ function setupAutoUpdater() {
   autoUpdater.checkForUpdates().catch((err) => console.error('[updater] checkForUpdates error:', err?.message));
 }
 
+ipcMain.handle('app-version', () => app.getVersion());
+
 ipcMain.on('install-update', () => {
   killJava();
   // Wait for Java process tree to fully die before handing off to NSIS

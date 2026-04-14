@@ -253,6 +253,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load launcher settings (needed for minimizeOnLaunch etc. before settings tab opens)
   try { state.settings = await api.getSettings(); } catch {}
 
+  // Set version label in status bar
+  try {
+    const v = await window.hub.getVersion();
+    const el = document.getElementById('app-version-label');
+    if (el) el.textContent = 'v' + v;
+  } catch {}
+
   // Load saved DM history from disk
   await dmStoreLoad();
 
@@ -1012,6 +1019,11 @@ async function renderAltContent(tab, el) {
     try { s = await api.getSettings(); } catch (_) {}
     el.innerHTML = buildSettingsHTML(s);
     bindSettingsEvents(el, s);
+    try {
+      const v = await window.hub.getVersion();
+      const av = el.querySelector('#about-version');
+      if (av) av.textContent = 'v' + v;
+    } catch {}
   }
 
   else if (tab === 'news') {
@@ -3312,7 +3324,7 @@ function buildSettingsHTML(s) {
   <!-- ── ABOUT ── -->
   <div class="set-section">
     <div class="set-section-hdr">ℹ️&nbsp; About</div>
-    <div class="set-row set-between"><span class="set-label">RSPS Hub</span><span class="set-value">v1.0.1</span></div>
+    <div class="set-row set-between"><span class="set-label">RSPS Hub</span><span class="set-value" id="about-version">v…</span></div>
     <div class="set-row set-between"><span class="set-label">Platform</span><span class="set-value">Electron + Java</span></div>
     <div class="set-row set-between"><span class="set-label">Engine</span><span class="set-value">Javalin 6 · Java 17</span></div>
   </div>

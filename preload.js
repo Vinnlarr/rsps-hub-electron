@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('hub', {
   getMessages:   ()        => ipcRenderer.invoke('messages-get'),
   saveMessages:  (data)    => ipcRenderer.invoke('messages-save', data),
   selectFolder:    (defaultPath) => ipcRenderer.invoke('select-folder', defaultPath),
+  getVersion:      ()            => ipcRenderer.invoke('app-version'),
   readFileBase64:  (filePath)   => ipcRenderer.invoke('read-file-base64', filePath),
 
   // Auto updater
