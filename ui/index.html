@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RSPS HUB</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- TITLE BAR -->
+<div class="title-bar">
+  <div class="title-bar-left">
+    <span class="title-bar-logo">RSPS HUB</span>
+  </div>
+  <div class="title-bar-btns">
+    <div class="title-bar-btn tb-minimize" id="btn-minimize"></div>
+    <div class="title-bar-btn tb-maximize" id="btn-maximize"></div>
+    <div class="title-bar-btn tb-close"    id="btn-close"></div>
+  </div>
+</div>
+
+<!-- NAVBAR -->
+<header class="navbar">
+  <div class="logo">RSPS HUB</div>
+  <nav class="nav-tabs">
+    <div class="nav-tab" data-tab="news">NEWS</div>
+    <div class="nav-tab active" data-tab="store">STORE</div>
+    <div class="nav-tab" data-tab="library">LIBRARY</div>
+  </nav>
+  <div class="nav-right">
+    <div id="active-session-chip" style="display:none" class="active-session-chip">
+      <span class="active-session-dot"></span>
+      <span id="active-session-name"></span>
+      <span id="active-session-time">0:00:00</span>
+    </div>
+    <div class="nav-icon-btn" id="btn-discord" title="Join our Discord" onclick="window.hub?.openExternal('https://discord.gg/grt9C4GJcj')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+    </div>
+    <div class="nav-icon-btn" id="btn-notifications" title="Notifications">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+      <span class="notif-badge" id="notif-badge" style="display:none">0</span>
+    </div>
+    <div class="user-chip" id="btn-account" title="Account">
+      <div class="user-avatar">
+        <img id="nav-avatar-img" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+        <span id="user-initial">?</span>
+      </div>
+      <span class="user-name" id="user-name">Player</span>
+    </div>
+  </div>
+
+  <!-- NOTIFICATIONS DROPDOWN -->
+  <div class="nav-dropdown" id="notif-dropdown" style="display:none">
+    <div class="nav-dropdown-header">
+      NOTIFICATIONS
+      <button class="notif-clear-btn" onclick="clearAllNotifs()">Clear all</button>
+    </div>
+    <div class="nav-dropdown-body" id="notif-list"></div>
+  </div>
+
+  <!-- ACCOUNT DROPDOWN -->
+  <div class="nav-dropdown" id="account-dropdown" style="display:none">
+    <div class="nav-dropdown-header" id="account-dropdown-title">ACCOUNT</div>
+
+    <!-- Logged-in view -->
+    <div class="nav-dropdown-body" id="account-loggedin-body">
+      <div class="account-avatar-row">
+        <div class="account-avatar-lg" id="account-avatar-lg">
+          <img id="account-avatar-img" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+          <span id="account-initial">?</span>
+        </div>
+        <div class="account-meta">
+          <span class="account-displayname" id="account-displayname">Player</span>
+          <span class="account-username" id="account-username">@username</span>
+          <span class="account-status" id="account-status">● Online</span>
+          <span class="account-bio" id="account-bio"></span>
+        </div>
+      </div>
+      <div class="account-divider"></div>
+      <div class="account-stat-row"><span>Total Playtime</span><span id="acct-playtime">—</span></div>
+      <div class="account-stat-row"><span>Favourites</span><span id="acct-favs">—</span></div>
+      <div class="account-divider"></div>
+      <button class="account-menu-btn" id="btn-edit-profile" onclick="openEditProfile()">✏️ Edit Profile</button>
+      <button class="account-menu-btn" id="btn-change-avatar" onclick="openChangeAvatar()">🖼️ Change Avatar</button>
+      <button class="account-menu-btn" id="btn-visibility" onclick="toggleVisibilityMenu()">👁️ Visibility <span id="visibility-current-label"></span></button>
+      <div id="visibility-submenu" class="visibility-submenu" style="display:none">
+        <button class="vis-option" data-vis="online"    onclick="setVisibility('online')">🟢 Online</button>
+        <button class="vis-option" data-vis="away"      onclick="setVisibility('away')">🟡 Away</button>
+        <button class="vis-option" data-vis="invisible" onclick="setVisibility('invisible')">⚫ Invisible</button>
+      </div>
+      <div class="account-divider"></div>
+      <button class="account-menu-btn logout-btn" id="btn-logout">🚪 Log Out</button>
+    </div>
+
+    <!-- Logged-out: Login form -->
+    <div class="nav-dropdown-body auth-form-body" id="account-login-body" style="display:none">
+      <div class="auth-form-wrap" id="auth-login-form">
+        <p class="auth-form-desc">Sign in to your RSPS Hub account.</p>
+        <input class="auth-input" id="auth-login-user" type="text" placeholder="Username" autocomplete="off">
+        <input class="auth-input" id="auth-login-pass" type="password" placeholder="Password">
+        <div id="auth-login-err" class="auth-err" style="display:none"></div>
+        <button class="auth-btn-primary" id="auth-login-btn">Log In</button>
+        <button class="auth-btn-secondary" id="auth-show-register">Create an account</button>
+      </div>
+      <div class="auth-form-wrap" id="auth-register-form" style="display:none">
+        <p class="auth-form-desc">Create your RSPS Hub account.</p>
+        <input class="auth-input" id="auth-reg-user"  type="text"     placeholder="Username" autocomplete="off">
+        <input class="auth-input" id="auth-reg-email" type="email"    placeholder="Email">
+        <input class="auth-input" id="auth-reg-pass"  type="password" placeholder="Password (8+ chars)">
+        <div id="auth-reg-err" class="auth-err" style="display:none"></div>
+        <button class="auth-btn-primary" id="auth-reg-btn">Create Account</button>
+        <button class="auth-btn-secondary" id="auth-show-login">Back to login</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- BODY -->
+<div class="body-row">
+
+  <!-- SIDEBAR: FAVOURITES -->
+  <aside class="sidebar-fav" id="fav-strip">
+    <div class="fav-star-hdr">★</div>
+  </aside>
+
+  <!-- SIDEBAR: SOCIAL PANELS -->
+  <aside class="sidebar-tabs">
+    <div class="rs-tab" data-panel="friends" title="Friends">
+      <span class="rs-tab-icon">👥</span>
+      <span class="rs-tab-label">FRIENDS</span>
+    </div>
+    <div class="rs-tab" data-panel="chat" title="Friends Chat">
+      <span class="rs-tab-icon">💬</span>
+      <span class="rs-tab-label">CHAT</span>
+      <span class="tab-badge" id="badge-chat" style="display:none">0</span>
+    </div>
+    <div class="rs-tab" data-panel="groupchat" title="Group Chat">
+      <span class="rs-tab-icon">🗨️</span>
+      <span class="rs-tab-label">GROUP</span>
+      <span class="tab-badge" id="badge-groupchat" style="display:none">0</span>
+    </div>
+    <div class="rs-tab" data-panel="stats" title="Stats">
+      <span class="rs-tab-icon">📜</span>
+      <span class="rs-tab-label">STATS</span>
+    </div>
+    <div class="rs-tab" data-panel="leaderboard" title="Leaderboard">
+      <span class="rs-tab-icon">🏆</span>
+      <span class="rs-tab-label">RANKS</span>
+    </div>
+    <div class="rs-tab" data-panel="achievements" title="Achievements">
+      <span class="rs-tab-icon">🎖️</span>
+      <span class="rs-tab-label">ACHIEVE</span>
+    </div>
+    <div class="rs-tab" data-panel="music" title="Music">
+      <span class="rs-tab-icon">🎵</span>
+      <span class="rs-tab-label">MUSIC</span>
+    </div>
+    <div class="rs-tab rs-tab-bottom" data-panel="settings" title="Settings">
+      <span class="rs-tab-icon">⚙️</span>
+      <span class="rs-tab-label">SETTINGS</span>
+    </div>
+  </aside>
+
+  <!-- SLIDE-OUT PANEL -->
+  <div class="slide-panel" id="slide-panel">
+    <div class="slide-panel-inner">
+      <div class="slide-panel-header">
+        <span class="slide-panel-title" id="slide-panel-title"></span>
+        <button class="slide-panel-close" id="slide-panel-close">✕</button>
+      </div>
+      <div class="slide-panel-body" id="slide-panel-body"></div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+
+    <!-- SEARCH PANEL -->
+    <div class="search-panel" id="search-section">
+      <div class="search-row">
+        <div class="search-wrap">
+          <input class="search-input" id="search-input" type="text" placeholder="Search for a server...">
+        </div>
+        <span class="sort-label">Sort by:</span>
+        <select class="sort-select" id="sort-select">
+          <option value="players">Players (High → Low)</option>
+          <option value="name-asc">Alphabetical A–Z</option>
+          <option value="name-desc">Alphabetical Z–A</option>
+        </select>
+        <div class="custom-select-wrap" id="custom-sort-wrap">
+          <button class="custom-select-btn" id="custom-sort-btn">Players (High → Low)</button>
+          <div class="custom-select-dropdown">
+            <div class="custom-select-option selected" data-value="players">Players (High → Low)</div>
+            <div class="custom-select-option" data-value="name-asc">Alphabetical A–Z</div>
+            <div class="custom-select-option" data-value="name-desc">Alphabetical Z–A</div>
+          </div>
+        </div>
+        <button class="refresh-btn" onclick="loadServers()">⟳ Refresh</button>
+      </div>
+      <div class="tags-row">
+        <button class="tag-btn active" data-tag="All">All</button>
+        <button class="tag-btn" data-tag="Custom">Custom</button>
+        <button class="tag-btn" data-tag="PvP">PvP</button>
+        <button class="tag-btn" data-tag="Economy">Economy</button>
+        <button class="tag-btn" data-tag="OSRS">OSRS</button>
+        <button class="tag-btn" data-tag="Hardcore">Hardcore</button>
+        <button class="tag-btn" data-tag="Leagues">Leagues</button>
+        <button class="tag-btn" data-tag="Ironman">Ironman</button>
+      </div>
+    </div>
+
+    <!-- LOADING -->
+    <div id="loading-indicator" class="loading-msg" style="display:none">Loading servers...</div>
+
+    <!-- SERVER GRID -->
+    <div class="server-list" id="server-grid"></div>
+
+    <!-- ALT CONTENT (Stats / Friends / Leaderboard / News) -->
+    <div class="alt-panel" id="alt-content" style="display:none"></div>
+
+  </main>
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span class="status-online">● Hub Online</span>
+  <span class="sep"></span>
+  <span id="status-server-count">Loading...</span>
+  <span class="sep"></span>
+  <span id="status-playtime" title="Total playtime across all servers">⏱ Total: —</span>
+  <span class="sep"></span>
+  <span id="status-session" title="Time since launcher opened">⌛ Session: 00:00</span>
+  <span class="sep ver">v1.0.1</span>
+</div>
+
+<!-- AUTH SCREEN (full-screen login / register) -->
+<div id="auth-screen" style="display:none">
+  <canvas id="auth-canvas"></canvas>
+  <div class="splash-vignette"></div>
+
+  <div class="auth-screen-card">
+    <div class="auth-screen-brand">RSPS HUB</div>
+    <div class="auth-screen-tagline">The Gateway to Private Servers</div>
+    <div class="auth-screen-divider"></div>
+
+    <!-- LOGIN FORM -->
+    <div id="auth-screen-login">
+      <div class="auth-screen-title">SIGN IN</div>
+      <div class="auth-screen-field">
+        <label class="auth-screen-label">USERNAME</label>
+        <input class="auth-screen-input" id="asl-user" type="text" placeholder="Enter your username" autocomplete="off">
+      </div>
+      <div class="auth-screen-field">
+        <label class="auth-screen-label">PASSWORD</label>
+        <div class="auth-screen-pass-wrap">
+          <input class="auth-screen-input" id="asl-pass" type="password" placeholder="Enter your password">
+          <button class="auth-screen-show-btn" id="asl-show">SHOW</button>
+        </div>
+      </div>
+      <div class="auth-screen-remember">
+        <label class="auth-remember-label">
+          <input type="checkbox" id="asl-remember" checked>
+          <span>Remember me</span>
+        </label>
+      </div>
+      <div class="auth-screen-err" id="asl-err" style="display:none"></div>
+      <button class="auth-screen-btn" id="asl-btn">LOGIN</button>
+      <div class="auth-screen-switch">Don't have an account? <span class="auth-screen-link" id="asl-to-reg">Create one</span></div>
+    </div>
+
+    <!-- REGISTER FORM -->
+    <div id="auth-screen-register" style="display:none">
+      <div class="auth-screen-title">CREATE ACCOUNT</div>
+      <div class="auth-screen-field">
+        <label class="auth-screen-label">USERNAME</label>
+        <input class="auth-screen-input" id="asr-user" type="text" placeholder="Choose a username" autocomplete="off">
+      </div>
+      <div class="auth-screen-field">
+        <label class="auth-screen-label">EMAIL</label>
+        <input class="auth-screen-input" id="asr-email" type="email" placeholder="Your email address">
+      </div>
+      <div class="auth-screen-field">
+        <label class="auth-screen-label">PASSWORD</label>
+        <div class="auth-screen-pass-wrap">
+          <input class="auth-screen-input" id="asr-pass" type="password" placeholder="At least 8 characters">
+          <button class="auth-screen-show-btn" id="asr-show">SHOW</button>
+        </div>
+      </div>
+      <div class="auth-screen-err" id="asr-err" style="display:none"></div>
+      <button class="auth-screen-btn" id="asr-btn">CREATE ACCOUNT</button>
+      <div class="auth-screen-switch">Already have an account? <span class="auth-screen-link" id="asr-to-login">Sign in</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- SPLASH SCREEN -->
+<div id="splash-screen">
+  <canvas id="splash-canvas"></canvas>
+  <div class="splash-vignette"></div>
+
+  <div class="splash-center">
+    <div class="splash-rune-ring">
+      <svg viewBox="0 0 200 200" class="splash-rune-svg">
+        <circle cx="100" cy="100" r="90" fill="none" stroke="#c8a840" stroke-width="1" stroke-dasharray="4 8" opacity="0.4"/>
+        <circle cx="100" cy="100" r="75" fill="none" stroke="#8a6420" stroke-width="0.5" opacity="0.6"/>
+        <circle cx="100" cy="100" r="60" fill="none" stroke="#c8a840" stroke-width="1.5" stroke-dasharray="60 10 10 10" opacity="0.7"/>
+        <!-- Rune symbols at compass points -->
+        <text x="100" y="18"  text-anchor="middle" font-family="Cinzel,serif" font-size="11" fill="#c8a840" opacity="0.8">✦</text>
+        <text x="183" y="105" text-anchor="middle" font-family="Cinzel,serif" font-size="11" fill="#c8a840" opacity="0.8">✦</text>
+        <text x="100" y="193" text-anchor="middle" font-family="Cinzel,serif" font-size="11" fill="#c8a840" opacity="0.8">✦</text>
+        <text x="17"  y="105" text-anchor="middle" font-family="Cinzel,serif" font-size="11" fill="#c8a840" opacity="0.8">✦</text>
+      </svg>
+      <div class="splash-logo-wrap">
+        <div class="splash-logo-sub">WELCOME TO</div>
+        <div class="splash-logo">RSPS HUB</div>
+        <div class="splash-logo-tagline">The Gateway to Private Servers</div>
+      </div>
+    </div>
+
+    <div class="splash-bar-wrap">
+      <div class="splash-bar-track">
+        <div class="splash-bar-fill" id="splash-bar-fill"></div>
+        <div class="splash-bar-shine"></div>
+      </div>
+      <div class="splash-bar-labels">
+        <span class="splash-status" id="splash-status">Connecting to server...</span>
+        <span class="splash-pct" id="splash-pct">0%</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

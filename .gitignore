@@ -1,0 +1,4 @@
+node_modules/
+dist/
+java-backend/
+*.log

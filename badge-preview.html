@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Badge Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0f1115;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 60px;
+    font-family: 'Cinzel', serif;
+  }
+
+  .label {
+    color: #6a5a3a;
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+    text-align: center;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+  }
+
+  .sidebar-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: linear-gradient(180deg,#1a1610,#121008);
+    border-right: 1px solid #3a2e14;
+    padding: 8px 6px;
+    border-radius: 6px;
+  }
+
+  .rs-tab {
+    width: 68px; height: 64px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.15s;
+    background: transparent;
+  }
+  .rs-tab:hover {
+    background: linear-gradient(135deg,#2a2418,#201c12);
+    border-color: #6b4f1a;
+  }
+  .rs-tab.active {
+    background: linear-gradient(135deg,#28220a,#1e1a06);
+    border-color: #c8a840;
+    box-shadow: 0 0 12px rgba(200,168,64,0.15);
+  }
+  .rs-tab-icon { font-size: 1.7rem; line-height: 1; }
+  .rs-tab-label {
+    font-size: 0.42rem;
+    font-family: 'Cinzel', serif;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #6a5a3a;
+  }
+  .rs-tab.active .rs-tab-label { color: #c8a840; }
+
+  /* THE BADGE */
+  .tab-badge {
+    position: absolute;
+    top: 6px; right: 6px;
+    min-width: 16px; height: 16px;
+    padding: 0 4px;
+    background: #cc3a3a;
+    color: #fff;
+    font-family: 'Cinzel', serif;
+    font-size: 0.55rem;
+    font-weight: 700;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 6px rgba(200,60,60,0.7);
+    letter-spacing: 0;
+  }
+</style>
+</head>
+<body>
+
+  <div>
+    <div class="label">No messages</div>
+    <div class="sidebar-tabs">
+      <div class="rs-tab">
+        <span class="rs-tab-icon">👥</span>
+        <span class="rs-tab-label">FRIENDS</span>
+      </div>
+      <div class="rs-tab">
+        <span class="rs-tab-icon">💬</span>
+        <span class="rs-tab-label">CHAT</span>
+      </div>
+      <div class="rs-tab">
+        <span class="rs-tab-icon">🗨️</span>
+        <span class="rs-tab-label">GROUP</span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="label">1 new DM</div>
+    <div class="sidebar-tabs">
+      <div class="rs-tab">
+        <span class="rs-tab-icon">👥</span>
+        <span class="rs-tab-label">FRIENDS</span>
+      </div>
+      <div class="rs-tab">
+        <span class="rs-tab-icon">💬</span>
+        <span class="rs-tab-label">CHAT</span>
+        <span class="tab-badge">1</span>
+      </div>
+      <div class="rs-tab">
+        <span class="rs-tab-icon">🗨️</span>
+        <span class="rs-tab-label">GROUP</span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="label">Multiple messages</div>
+    <div class="sidebar-tabs">
+      <div class="rs-tab">
+        <span class="rs-tab-icon">👥</span>
+        <span class="rs-tab-label">FRIENDS</span>
+      </div>
+      <div class="rs-tab">
+        <span class="rs-tab-icon">💬</span>
+        <span class="rs-tab-label">CHAT</span>
+        <span class="tab-badge">4</span>
+      </div>
+      <div class="rs-tab">
+        <span class="rs-tab-icon">🗨️</span>
+        <span class="rs-tab-label">GROUP</span>
+        <span class="tab-badge">12</span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="label">Tab open (clears)</div>
+    <div class="sidebar-tabs">
+      <div class="rs-tab">
+        <span class="rs-tab-icon">👥</span>
+        <span class="rs-tab-label">FRIENDS</span>
+      </div>
+      <div class="rs-tab active">
+        <span class="rs-tab-icon">💬</span>
+        <span class="rs-tab-label">CHAT</span>
+        <!-- badge gone when tab is open -->
+      </div>
+      <div class="rs-tab">
+        <span class="rs-tab-icon">🗨️</span>
+        <span class="rs-tab-label">GROUP</span>
+        <span class="tab-badge">12</span>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
