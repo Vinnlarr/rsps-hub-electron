@@ -260,7 +260,8 @@ function setupAutoUpdater() {
 }
 
 ipcMain.on('install-update', () => {
-  autoUpdater.quitAndInstall();
+  if (javaProcess) { javaProcess.kill(); javaProcess = null; }
+  autoUpdater.quitAndInstall(true, true);
 });
 
 // ── APP LIFECYCLE ─────────────────────────────────────────────────────────────
