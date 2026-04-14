@@ -235,7 +235,7 @@ function setupAutoUpdater() {
   if (!app.isPackaged) return;
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false; // handled manually via install-update
   autoUpdater.logger = require('electron-log');
   autoUpdater.logger.transports.file.level = 'info';
 
@@ -263,7 +263,8 @@ function setupAutoUpdater() {
 
 ipcMain.on('install-update', () => {
   killJava();
-  app.quit();
+  // Wait for Java process tree to fully die before handing off to NSIS
+  setTimeout(() => autoUpdater.quitAndInstall(true, true), 1000);
 });
 
 // ── APP LIFECYCLE ─────────────────────────────────────────────────────────────
