@@ -261,7 +261,10 @@ function setupAutoUpdater() {
     }
   });
 
-  autoUpdater.checkForUpdates().catch((err) => console.error('[updater] checkForUpdates error:', err?.message));
+  // Delay so renderer has time to register its IPC listeners before update-downloaded fires
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err) => console.error('[updater] checkForUpdates error:', err?.message));
+  }, 5000);
 }
 
 ipcMain.handle('app-version', () => app.getVersion());
