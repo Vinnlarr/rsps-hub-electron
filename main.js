@@ -62,7 +62,8 @@ function startJavaBackend() {
 }
 
 // Poll until Java backend is up, then open the window
-function waitForBackend(callback, retries = 30) {
+// 120 retries * 500ms = 60s (slow systems / Wine can take 30s+ to start JVM)
+function waitForBackend(callback, retries = 120) {
   http.get(`http://localhost:${JAVA_PORT}/api/ping`, res => {
     if (res.statusCode === 200) callback();
     else retry();
@@ -72,6 +73,18 @@ function waitForBackend(callback, retries = 30) {
     if (retries <= 0) { callback(); return; } // open anyway after timeout
     setTimeout(() => waitForBackend(callback, retries - 1), 500);
   }
+}
+
+// Shared: check if backend is alive right now
+function isBackendAlive() {
+  return new Promise(resolve => {
+    const r = http.get(`http://localhost:${JAVA_PORT}/api/ping`, res => {
+      resolve(res.statusCode === 200);
+      res.resume();
+    });
+    r.on('error', () => resolve(false));
+    r.setTimeout(1000, () => { r.destroy(); resolve(false); });
+  });
 }
 
 // ── WINDOW ───────────────────────────────────────────────────────────────────
@@ -118,8 +131,9 @@ ipcMain.on('window-close', () => { if (mainWindow && !mainWindow.isDestroyed()) 
 ipcMain.on('open-external', (_, url) => shell.openExternal(url));
 
 // API proxy — renderer asks main to call Java backend
+// Auto-retries on ECONNREFUSED (Java still starting) up to ~15s before giving up
 ipcMain.handle('api-call', async (_, { method, path: apiPath, body }) => {
-  return new Promise((resolve, reject) => {
+  const attempt = (triesLeft) => new Promise(resolve => {
     const options = {
       hostname: 'localhost',
       port: JAVA_PORT,
@@ -138,12 +152,21 @@ ipcMain.handle('api-call', async (_, { method, path: apiPath, body }) => {
     });
 
     req.on('error', (err) => {
+      // Backend still coming up — retry with backoff
+      const recoverable = err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
+      if (recoverable && triesLeft > 0) {
+        console.log(`[api-call] ${err.code}, retrying (${triesLeft} left)...`);
+        setTimeout(() => attempt(triesLeft - 1).then(resolve), 500);
+        return;
+      }
       console.error('[api-call] Backend connection error:', err.code, err.message);
       resolve({ error: 'Connection failed (' + (err.code || err.message) + '). Please restart the launcher.' });
     });
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
+
+  return attempt(30); // 30 retries * 500ms = 15s
 });
 
 // Profile — read/write ~/.rsps_hub/{username}/profile.json (per-user)
