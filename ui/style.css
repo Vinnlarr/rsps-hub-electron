@@ -2054,7 +2054,7 @@ body > * { position: relative; z-index: 1; }
 }
 .status-bar .sep { width: 1px; height: 12px; background: #3a2e14; flex-shrink: 0; }
 .status-online { color: #50cc50; font-weight: 700; }
-.status-bar .ver { margin-left: auto; color: #5a4a2a; }
+.status-bar .ver { margin-left: auto; color: #5a4a2a; flex-shrink: 0; }
 #status-playtime { color: #c8a840; font-weight: 700; }
 #status-session   { color: #c8a840; font-weight: 700; }
 

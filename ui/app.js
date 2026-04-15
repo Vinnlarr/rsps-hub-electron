@@ -617,9 +617,13 @@ async function loadServers() {
     state.servers    = data.servers    || data || [];
     state.favourites = new Set(data.favourites || []);
     checkServerUpdates(state.servers);
+    const countEl = document.getElementById('status-server-count');
+    if (countEl) countEl.innerHTML = '<span class="status-online">● Hub Online</span>';
   } catch (e) {
     console.error('Failed to load servers:', e);
     state.servers = [];
+    const countEl = document.getElementById('status-server-count');
+    if (countEl) countEl.textContent = '● Offline';
   }
   showLoading(false);
   renderServers();

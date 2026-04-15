@@ -128,7 +128,10 @@ ipcMain.handle('api-call', async (_, { method, path: apiPath, body }) => {
       });
     });
 
-    req.on('error', reject);
+    req.on('error', (err) => {
+      console.error('[api-call] Backend connection error:', err.code, err.message);
+      resolve({ error: 'Connection failed (' + (err.code || err.message) + '). Please restart the launcher.' });
+    });
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
