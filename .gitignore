@@ -5,3 +5,4 @@ java-backend/
 *.log
 RSPSHub.jar
 badge-preview.html
+.idea/
