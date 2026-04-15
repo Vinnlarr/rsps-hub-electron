@@ -33,16 +33,25 @@ function killPortIfBusy(port) {
 function startJavaBackend() {
   killPortIfBusy(JAVA_PORT);
   const isDev = !app.isPackaged;
-  const javaBackendPath = isDev
-    ? path.join(__dirname, '..', 'RSPS-Hub-Launcher-main', 'build', 'install', 'RSPSHub', 'bin')
-    : path.join(process.resourcesPath, 'java-backend', 'bin');
+  const javaBackendRoot = isDev
+    ? path.join(__dirname, 'java-backend')
+    : path.join(process.resourcesPath, 'java-backend');
+  const javaBackendPath = path.join(javaBackendRoot, 'bin');
 
   // On Windows use the .bat, on Unix use the shell script
   const scriptName = process.platform === 'win32' ? 'RSPSHub.bat' : 'RSPSHub';
   const scriptPath = path.join(javaBackendPath, scriptName);
 
+  // Bundled JRE so users don't need Java installed (fixes Wine/Linux and no-java Windows users)
+  const bundledJreHome = path.join(javaBackendRoot, 'jre');
+  const hasBundledJre = fs.existsSync(path.join(bundledJreHome, 'bin',
+    process.platform === 'win32' ? 'java.exe' : 'java'));
+
+  const childEnv = { ...process.env, RSPS_HUB_API_MODE: 'true' };
+  if (hasBundledJre) childEnv.JAVA_HOME = bundledJreHome;
+
   javaProcess = spawn(scriptPath, ['--api-mode', '--port', String(JAVA_PORT), '--api-key', API_SECRET], {
-    env: { ...process.env, RSPS_HUB_API_MODE: 'true' },
+    env: childEnv,
     windowsHide: true,
     shell: process.platform === 'win32'
   });
