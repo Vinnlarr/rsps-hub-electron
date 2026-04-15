@@ -614,7 +614,8 @@ async function loadServers() {
   showLoading(true);
   try {
     const data = await api.getServers();
-    state.servers    = data.servers    || data || [];
+    const serversData = data.servers || data;
+    state.servers = Array.isArray(serversData) ? serversData : [];``
     state.favourites = new Set(data.favourites || []);
     checkServerUpdates(state.servers);
     const countEl = document.getElementById('status-server-count');
