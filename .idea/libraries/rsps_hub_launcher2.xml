@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="rsps-hub-launcher2">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/java-backend/rsps-hub-launcher.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
