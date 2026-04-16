@@ -695,27 +695,27 @@ function buildServerCard(server) {
   card.innerHTML = `
     <div class="card-banner" style="background:${bannerGradient};width:210px;min-width:210px;height:115px;position:relative;overflow:hidden;border-right:1px solid #3a2e14;">
       ${server.cardBannerUrl || server.bannerUrl
-        ? `<img src="${server.cardBannerUrl || server.bannerUrl}" alt="${server.name}" onerror="this.style.display='none'">`
-        : `<span class="banner-placeholder">${server.name}</span>`
+        ? `<img src="${escHtml(server.cardBannerUrl || server.bannerUrl)}" alt="${escHtml(server.name)}" onerror="this.style.display='none'">`
+        : `<span class="banner-placeholder">${escHtml(server.name)}</span>`
       }
     </div>
     <div class="card-info">
       <div class="card-header">
-        <span class="card-title">${server.name}</span>
+        <span class="card-title">${escHtml(server.name)}</span>
         <span class="status-dot ${isOnline ? 'online' : 'offline'}" title="${isOnline ? 'Online' : 'Offline'}"></span>
         <span class="level-badge-wrap"
           data-lv="${level}"
-          data-rank="${rankName}"
+          data-rank="${escHtml(rankName)}"
           data-mc="${milestoneClr}"
-          data-orb="${server.name[0].toUpperCase()}"
+          data-orb="${escHtml(server.name[0].toUpperCase())}"
           data-xp="${Math.round(xpPct*100)}"
-          data-time="${calcTooltip(server.name, level, minutes).split('·')[1]?.trim() || 'Max level'}">
+          data-time="${escHtml(calcTooltip(server.name, level, minutes).split('·')[1]?.trim() || 'Max level')}">
           <span class="level-badge" style="border-color:${milestoneClr};color:${milestoneClr}">Lv. ${level}</span>
         </span>
       </div>
-      <p class="card-desc">${truncate(server.description || '', 200)}</p>
+      <p class="card-desc">${escHtml(truncate(server.description || '', 200))}</p>
       <div class="card-tags">
-        ${tags.map(t => `<span class="tag-pill">${t.toUpperCase()}</span>`).join('')}
+        ${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}
       </div>
     </div>
     <div class="card-actions">
@@ -811,11 +811,13 @@ function renderFavSidebar() {
     const slot   = document.createElement('div');
     slot.className = 'fav-slot';
     slot.title     = name;
+    const safeInitial = escHtml(name[0].toUpperCase());
+    const safeName = escHtml(name.length > 6 ? name.slice(0, 5) + '…' : name);
     slot.innerHTML = `
       ${server?.serverOnline === 1 ? '<span class="fav-online-dot"></span>' : ''}
       <button class="fav-remove-btn" title="Remove favourite">✕</button>
-      <span class="fav-initial">${name[0].toUpperCase()}</span>
-      <span class="fav-name">${name.length > 6 ? name.slice(0, 5) + '…' : name}</span>
+      <span class="fav-initial">${safeInitial}</span>
+      <span class="fav-name">${safeName}</span>
     `;
     slot.addEventListener('click', e => {
       if (e.target.closest('.fav-remove-btn')) return;
@@ -961,21 +963,30 @@ async function renderAltContent(tab, el) {
           <div class="library-row">
             <div class="library-banner" style="background:${bannerColor(s.name)}">
               ${s.cardBannerUrl || s.bannerUrl
-                ? `<img src="${s.cardBannerUrl || s.bannerUrl}" alt="${s.name}" onerror="this.style.display='none'">`
-                : `<span class="lib-initial">${s.name[0].toUpperCase()}</span>`}
+                ? `<img src="${escHtml(s.cardBannerUrl || s.bannerUrl)}" alt="${escHtml(s.name)}" onerror="this.style.display='none'">`
+                : `<span class="lib-initial">${escHtml(s.name[0].toUpperCase())}</span>`}
             </div>
             <div class="library-info">
-              <span class="library-name">${s.name}</span>
-              <span class="library-meta">${(s.tags || []).slice(0,3).map(t => t.toUpperCase()).join(' · ')}</span>
+              <span class="library-name">${escHtml(s.name)}</span>
+              <span class="library-meta">${escHtml((s.tags || []).slice(0,3).map(t => String(t).toUpperCase()).join(' · '))}</span>
             </div>
             <div class="library-actions">
-              <button class="action-btn play-btn" onclick="handleLibraryPlay('${s.name.replace(/'/g,"\\'")}')">PLAY</button>
-              <button class="action-btn uninstall-btn" onclick="handleLibraryUninstall('${s.name.replace(/'/g,"\\'")}')">UNINSTALL</button>
+              <button class="action-btn play-btn" data-lib-action="play" data-lib-name="${escHtml(s.name)}">PLAY</button>
+              <button class="action-btn uninstall-btn" data-lib-action="uninstall" data-lib-name="${escHtml(s.name)}">UNINSTALL</button>
             </div>
           </div>
         `).join('')
       }
     `;
+    // Bind library button actions (replaces onclick=… to avoid string injection)
+    el.querySelectorAll('[data-lib-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-lib-name') || '';
+        const action = btn.getAttribute('data-lib-action');
+        if (action === 'play')      handleLibraryPlay(name);
+        else if (action === 'uninstall') handleLibraryUninstall(name);
+      });
+    });
   }
 
   else if (tab === 'chat') {
@@ -1061,13 +1072,13 @@ async function renderAltContent(tab, el) {
       const changelogCards = serversWithChangelog.map(s => `
         <div class="news-card">
           <div class="news-card-header">
-            <div class="news-server-icon" style="background:${bannerColor(s.name)}">${s.name[0].toUpperCase()}</div>
+            <div class="news-server-icon" style="background:${bannerColor(s.name)}">${escHtml(s.name[0].toUpperCase())}</div>
             <div class="news-server-meta">
-              <span class="news-server-name">${s.name}</span>
+              <span class="news-server-name">${escHtml(s.name)}</span>
               <span class="news-server-tag">CHANGELOG</span>
             </div>
           </div>
-          <div class="news-body">${s.changelog.replace(/\n/g, '<br>')}</div>
+          <div class="news-body">${escHtml(s.changelog).replace(/\n/g, '<br>')}</div>
         </div>
       `).join('');
 
@@ -1402,9 +1413,9 @@ async function openDM(el, username) {
     } else {
       msgEl.innerHTML = msgs.map(m => `
         <div class="dm-msg ${m.isOwn ? 'own' : 'other'}">
-          ${!m.isOwn ? `<span class="dm-sender">${m.sender}</span>` : ''}
-          <div class="dm-bubble">${m.content}</div>
-          ${m.timestamp ? `<span class="dm-ts">${m.timestamp}</span>` : ''}
+          ${!m.isOwn ? `<span class="dm-sender">${escHtml(m.sender)}</span>` : ''}
+          <div class="dm-bubble">${escHtml(m.content)}</div>
+          ${m.timestamp ? `<span class="dm-ts">${escHtml(m.timestamp)}</span>` : ''}
         </div>
       `).join('');
     }
@@ -1430,7 +1441,7 @@ async function openDM(el, username) {
     if (msgEl.querySelector('.empty-msg')) msgEl.innerHTML = '';
     const div = document.createElement('div');
     div.className = 'dm-msg own';
-    div.innerHTML = `<div class="dm-bubble">${content}</div><span class="dm-ts">${now}</span>`;
+    div.innerHTML = `<div class="dm-bubble">${escHtml(content)}</div><span class="dm-ts">${escHtml(now)}</span>`;
     msgEl.appendChild(div);
     msgEl.scrollTop = msgEl.scrollHeight;
     // Fire to server (best-effort)
@@ -1690,18 +1701,18 @@ function showServerDetail(server) {
       <div class="sd-header">
         <div class="sd-icon" style="background:${bannerColor(server.name)};border-color:${accent}">
           ${server.iconUrl
-            ? `<img src="${server.iconUrl}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+            ? `<img src="${escHtml(server.iconUrl)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
             : ''}
-          <span>${server.name[0].toUpperCase()}</span>
+          <span>${escHtml(server.name[0].toUpperCase())}</span>
         </div>
         <div class="sd-title-block">
           <div class="sd-name-row">
-            <h2 class="sd-name">${server.name}</h2>
+            <h2 class="sd-name">${escHtml(server.name)}</h2>
             <span class="sd-status-dot ${isOnline ? 'online' : 'offline'}" title="${isOnline ? 'Online' : 'Offline'}"></span>
             ${server.isNew ? '<span class="sd-new-badge">NEW</span>' : ''}
           </div>
-          <p class="sd-tagline">${server.tagline || ''}</p>
-          <div class="sd-tags">${tags.map(t => `<span class="tag-pill">${t.toUpperCase()}</span>`).join('')}</div>
+          <p class="sd-tagline">${escHtml(server.tagline || '')}</p>
+          <div class="sd-tags">${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}</div>
         </div>
       </div>
 
@@ -1718,7 +1729,7 @@ function showServerDetail(server) {
         ${server.description ? `
           <div class="sd-section">
             <h3 class="sd-section-title">ABOUT</h3>
-            <p class="sd-description">${server.description}</p>
+            <p class="sd-description">${escHtml(server.description).replace(/\n/g, '<br>')}</p>
           </div>
         ` : ''}
 
@@ -1726,7 +1737,7 @@ function showServerDetail(server) {
           <div class="sd-section">
             <h3 class="sd-section-title">SCREENSHOTS</h3>
             <div class="sd-screenshots">
-              ${shots.map(s => `<img src="${s}" alt="Screenshot" class="sd-screenshot" onerror="this.remove()">`).join('')}
+              ${shots.map(s => `<img src="${escHtml(s)}" alt="Screenshot" class="sd-screenshot" onerror="this.remove()">`).join('')}
             </div>
           </div>
         ` : ''}
@@ -1734,7 +1745,7 @@ function showServerDetail(server) {
         ${server.changelog ? `
           <div class="sd-section">
             <h3 class="sd-section-title">CHANGELOG</h3>
-            <div class="sd-changelog">${server.changelog.replace(/\n/g, '<br>')}</div>
+            <div class="sd-changelog">${escHtml(server.changelog).replace(/\n/g, '<br>')}</div>
           </div>
         ` : ''}
 
