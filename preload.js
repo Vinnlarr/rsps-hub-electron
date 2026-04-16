@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('hub', {
   savePlaytime:  (data)    => ipcRenderer.invoke('playtime-save', data),
   getMessages:   ()        => ipcRenderer.invoke('messages-get'),
   saveMessages:  (data)    => ipcRenderer.invoke('messages-save', data),
+  getMusicPrefs:  ()       => ipcRenderer.invoke('music-prefs-get'),
+  saveMusicPrefs: (data)   => ipcRenderer.invoke('music-prefs-save', data),
   selectFolder:    (defaultPath) => ipcRenderer.invoke('select-folder', defaultPath),
   getVersion:      ()            => ipcRenderer.invoke('app-version'),
   readFileBase64:  (filePath)   => ipcRenderer.invoke('read-file-base64', filePath),

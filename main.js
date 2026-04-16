@@ -11,6 +11,7 @@ const PROFILE_PATH  = path.join(RSPS_DIR, 'profile.json');
 const AVATAR_PATH   = path.join(RSPS_DIR, 'avatar.png');
 const PLAYTIME_PATH = path.join(RSPS_DIR, 'playtime.json');
 const MESSAGES_PATH = path.join(RSPS_DIR, 'messages.json');
+const MUSIC_PREFS_PATH = path.join(RSPS_DIR, 'music_prefs.json');
 
 const JAVA_PORT = 7890;
 // Generated fresh each launch — never stored in code or on disk
@@ -281,6 +282,25 @@ ipcMain.handle('messages-save', (_, data) => {
   try {
     fs.mkdirSync(RSPS_DIR, { recursive: true });
     fs.writeFileSync(MESSAGES_PATH, JSON.stringify(data, null, 2));
+    return true;
+  } catch (_) { return false; }
+});
+
+// Music prefs: favorites, volume, shuffle, repeat, last track
+const MUSIC_DEFAULTS = { favorites: [], volume: 0.6, shuffle: false, repeat: 'off', lastTrackId: null };
+ipcMain.handle('music-prefs-get', () => {
+  try {
+    if (fs.existsSync(MUSIC_PREFS_PATH)) {
+      return { ...MUSIC_DEFAULTS, ...JSON.parse(fs.readFileSync(MUSIC_PREFS_PATH, 'utf8')) };
+    }
+  } catch (_) {}
+  return MUSIC_DEFAULTS;
+});
+ipcMain.handle('music-prefs-save', (_, data) => {
+  try {
+    fs.mkdirSync(RSPS_DIR, { recursive: true });
+    const merged = { ...MUSIC_DEFAULTS, ...(data || {}) };
+    fs.writeFileSync(MUSIC_PREFS_PATH, JSON.stringify(merged, null, 2));
     return true;
   } catch (_) { return false; }
 });
