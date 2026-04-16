@@ -47,10 +47,16 @@ function startJavaBackend() {
   const hasBundledJre = fs.existsSync(path.join(bundledJreHome, 'bin',
     process.platform === 'win32' ? 'java.exe' : 'java'));
 
-  const childEnv = { ...process.env, RSPS_HUB_API_MODE: 'true' };
+  const childEnv = {
+    ...process.env,
+    RSPS_HUB_API_MODE: 'true',
+    // API secret via env, not argv — argv is visible in `tasklist /v` to any local process
+    RSPS_HUB_API_KEY: API_SECRET,
+  };
   if (hasBundledJre) childEnv.JAVA_HOME = bundledJreHome;
 
-  javaProcess = spawn(scriptPath, ['--api-mode', '--port', String(JAVA_PORT), '--api-key', API_SECRET], {
+  // Note: --api-key is kept as a fallback while in-flight Java versions roll out
+  javaProcess = spawn(scriptPath, ['--api-mode', '--port', String(JAVA_PORT)], {
     env: childEnv,
     windowsHide: true,
     shell: process.platform === 'win32'
@@ -103,12 +109,34 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      allowRunningInsecureContent: true,
-      webSecurity: false   // allow HTTP banner images from the API
+      sandbox: true
     }
   });
 
   mainWindow.loadFile(path.join(__dirname, 'ui', 'index.html'));
+
+  // Lock the renderer down: no external navigation, no popups
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        shell.openExternal(parsed.href);
+      }
+    } catch (_) {}
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // Only allow file:// (our own index.html); everything else opens externally
+    if (!url.startsWith('file://')) {
+      event.preventDefault();
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+          shell.openExternal(parsed.href);
+        }
+      } catch (_) {}
+    }
+  });
 
   // Open DevTools in dev mode
   if (!app.isPackaged) {
@@ -128,7 +156,19 @@ ipcMain.on('window-maximize', () => {
 ipcMain.on('window-close', () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close(); });
 
 // Open external links in browser (Discord, website etc.)
-ipcMain.on('open-external', (_, url) => shell.openExternal(url));
+// Allowlist http/https only — prevents file:// RCE via malicious server discordUrl/websiteUrl
+ipcMain.on('open-external', (_, url) => {
+  try {
+    const parsed = new URL(String(url));
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      shell.openExternal(parsed.href);
+    } else {
+      console.warn('[open-external] blocked non-http(s) protocol:', parsed.protocol);
+    }
+  } catch (_) {
+    console.warn('[open-external] blocked invalid URL:', url);
+  }
+});
 
 // API proxy — renderer asks main to call Java backend
 // Auto-retries on ECONNREFUSED (Java still starting) up to ~15s before giving up
@@ -169,22 +209,42 @@ ipcMain.handle('api-call', async (_, { method, path: apiPath, body }) => {
   return attempt(30); // 30 retries * 500ms = 15s
 });
 
+// Username sanitization — must match server-side regex ^[a-zA-Z0-9_]{3,32}$
+// Prevents path traversal, backslash injection, and Windows reserved names
+function safeUsername(u) {
+  if (typeof u !== 'string') return null;
+  if (!/^[a-zA-Z0-9_]{3,32}$/.test(u)) return null;
+  return u;
+}
+
+// Ensures a resolved path stays within RSPS_DIR after joining — belt-and-braces defense
+function insideHub(resolved) {
+  const root = path.resolve(RSPS_DIR) + path.sep;
+  return path.resolve(resolved).startsWith(root);
+}
+
 // Profile — read/write ~/.rsps_hub/{username}/profile.json (per-user)
 ipcMain.handle('profile-get', (_, username) => {
+  const DEFAULT = { displayName: '', bio: '', visibility: 'online', avatarPath: null };
   try {
-    if (!username) return { displayName: '', bio: '', visibility: 'online', avatarPath: null };
-    const p = path.join(RSPS_DIR, username, 'profile.json');
+    const u = safeUsername(username);
+    if (!u) return DEFAULT;
+    const p = path.join(RSPS_DIR, u, 'profile.json');
+    if (!insideHub(p)) return DEFAULT;
     if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch (_) {}
-  return { displayName: '', bio: '', visibility: 'online', avatarPath: null };
+  return DEFAULT;
 });
 
 ipcMain.handle('profile-save', (_, data) => {
   try {
-    if (!data.username) return { error: 'No username' };
-    const dir = path.join(RSPS_DIR, data.username);
+    const u = safeUsername(data?.username);
+    if (!u) return { error: 'Invalid username' };
+    const dir = path.join(RSPS_DIR, u);
+    const file = path.join(dir, 'profile.json');
+    if (!insideHub(dir) || !insideHub(file)) return { error: 'Invalid path' };
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'profile.json'), JSON.stringify(data, null, 2));
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
     return { success: true };
   } catch (e) {
     return { error: e.message };
@@ -225,32 +285,52 @@ ipcMain.handle('messages-save', (_, data) => {
   } catch (_) { return false; }
 });
 
-// Avatar — step 1: open file picker, return chosen path (no copy yet)
+// Avatar flow — picked path stays in MAIN process memory. Never trust renderer-supplied paths.
+let _pickedAvatarPath = null;
+const ALLOWED_IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
 ipcMain.handle('pick-avatar', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose Avatar',
     filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
     properties: ['openFile']
   });
-  if (result.canceled || !result.filePaths.length) return null;
-  return result.filePaths[0];
-});
-
-// Avatar — step 2: copy confirmed path to ~/.rsps_hub/avatar.png
-ipcMain.handle('save-avatar', (_, srcPath) => {
+  if (result.canceled || !result.filePaths.length) { _pickedAvatarPath = null; return null; }
+  const picked = result.filePaths[0];
+  const ext = path.extname(picked).toLowerCase();
+  if (!ALLOWED_IMG_EXT.has(ext)) { _pickedAvatarPath = null; return null; }
   try {
-    fs.mkdirSync(RSPS_DIR, { recursive: true });
-    fs.copyFileSync(srcPath, AVATAR_PATH);
-    return AVATAR_PATH;
-  } catch (e) {
-    return null;
-  }
+    const stat = fs.statSync(picked);
+    if (!stat.isFile() || stat.size > 8 * 1024 * 1024) { _pickedAvatarPath = null; return null; }
+  } catch { _pickedAvatarPath = null; return null; }
+  _pickedAvatarPath = picked;
+  // Return a display-only path; not used for any file op
+  return picked;
 });
 
-// Read a file as base64 (for image uploads)
+// Copy the MOST RECENTLY PICKED avatar to the hub folder. Ignores any renderer-supplied path.
+ipcMain.handle('save-avatar', () => {
+  try {
+    if (!_pickedAvatarPath) return null;
+    fs.mkdirSync(RSPS_DIR, { recursive: true });
+    fs.copyFileSync(_pickedAvatarPath, AVATAR_PATH);
+    _pickedAvatarPath = null; // single-use
+    return AVATAR_PATH;
+  } catch (_) { return null; }
+});
+
+// Read a file as base64 — STRICT: only reads the avatar path, or the most-recently-picked avatar.
+// Previously took an arbitrary path, which was a full filesystem read vulnerability.
 ipcMain.handle('read-file-base64', (_, filePath) => {
-  try { return fs.readFileSync(filePath).toString('base64'); }
-  catch (e) { return null; }
+  try {
+    const resolved = path.resolve(String(filePath || ''));
+    const isAvatar = resolved === path.resolve(AVATAR_PATH);
+    const isPicked = _pickedAvatarPath && resolved === path.resolve(_pickedAvatarPath);
+    if (!isAvatar && !isPicked) return null;
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile() || stat.size > 8 * 1024 * 1024) return null;
+    return fs.readFileSync(resolved).toString('base64');
+  } catch { return null; }
 });
 
 // Settings — pick a download folder
