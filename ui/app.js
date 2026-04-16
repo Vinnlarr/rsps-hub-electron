@@ -1019,14 +1019,8 @@ async function renderAltContent(tab, el) {
   }
 
   else if (tab === 'music') {
-    el.innerHTML = `
-      <div class="alt-header"><h2>MUSIC</h2><p>Old School RuneScape soundtrack</p></div>
-      <div class="coming-soon-wrap">
-        <span class="coming-soon-icon">🎵</span>
-        <span class="coming-soon-title">Coming Soon</span>
-        <span class="coming-soon-sub">OSRS music player is being built — play, skip & favourite tracks</span>
-      </div>
-    `;
+    if (window.RH_MUSIC?.render) window.RH_MUSIC.render(el);
+    else el.innerHTML = '<p class="loading-msg">Loading music...</p>';
   }
 
   else if (tab === 'settings') {
@@ -1054,7 +1048,7 @@ async function renderAltContent(tab, el) {
       const announcements = announcementsData?.announcements || [];
       const serversWithChangelog = state.servers.filter(s => s.changelog && s.changelog.trim());
 
-      const isStaff = state.user?.username?.toLowerCase() === 'vinnlarr';
+      const isStaff = !!state.user?.isStaff;
       const announcementCards = announcements.map(a => `
         <div class="news-card" data-ann-id="${a.id}">
           <div class="news-card-header">
@@ -2025,7 +2019,7 @@ function setupAuthForms() {
 
   // After successful auth: hide screen, start services
   const onAuthSuccess = async (res, isNew) => {
-    state.user = { username: res.username, token: res.token };
+    state.user = { username: res.username, token: res.token, isStaff: !!res.isStaff };
     state.profile = await window.hub.getProfile(res.username).catch(() => null);
     renderUser();
     hideAuthScreen();
@@ -2455,9 +2449,9 @@ async function openDevPortal(startSection = 'my-servers') {
   // TODO: Before launch, remove the `|| true` so only real staff see staff sections
   try {
     const check = await window.hub.get('/api/dev/check');
-    _devIsStaff = check?.isStaff || state.user?.username?.toLowerCase() === 'vinnlarr';
+    _devIsStaff = !!(check?.isStaff ?? state.user?.isStaff);
   } catch {
-    _devIsStaff = state.user?.username?.toLowerCase() === 'vinnlarr';
+    _devIsStaff = !!state.user?.isStaff;
   }
 
   const overlay = document.createElement('div');
@@ -3294,7 +3288,7 @@ function buildSettingsHTML(s) {
   </div>
 
   <!-- ── STAFF ── -->
-  ${state.user?.username?.toLowerCase() === 'vinnlarr' ? `
+  ${state.user?.isStaff ? `
   <div class="set-section" style="border-left:2px solid #c8a840">
     <div class="set-section-hdr" style="color:#e0c87a">⚔️&nbsp; Staff Panel</div>
     <div class="set-row set-between">

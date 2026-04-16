@@ -16,6 +16,7 @@
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' https://fonts.gstatic.com data:;
   img-src 'self' data: blob: https: http:;
+  media-src 'self' https://api.therspshub.com https://therspshub.com blob:;
   connect-src 'self' http://localhost:7890 https://api.therspshub.com https://therspshub.com;
   frame-src 'none';
   object-src 'none';
@@ -24,6 +25,7 @@
 <title>RSPS HUB</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="music.css">
 </head>
 <body>
 
@@ -349,5 +351,6 @@
 </div>
 
 <script src="app.js"></script>
+<script src="music.js"></script>
 </body>
 </html>

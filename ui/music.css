@@ -1,0 +1,652 @@
+/* ══════════════════════════════════════════════════════════
+   MUSIC PLAYER — "Stone of Song"
+   A ritual-circle audio player with live visualizer,
+   particle embers, runestone track sigils and a parchment scroll.
+══════════════════════════════════════════════════════════ */
+
+/* Panel root */
+.music-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 0%, rgba(200,168,64,0.08), transparent 70%),
+    linear-gradient(180deg, #141008 0%, #0a0806 100%);
+  position: relative;
+}
+
+/* ── STAGE: Stone of Song + visualizer ── */
+.music-stage {
+  flex-shrink: 0;
+  height: 246px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px 0 6px;
+  border-bottom: 1px solid #3a2e14;
+  overflow: hidden;
+}
+.music-stage::before {
+  /* subtle starfield */
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, rgba(240,192,96,0.5), transparent 50%),
+    radial-gradient(1px 1px at 70% 20%, rgba(240,192,96,0.35), transparent 50%),
+    radial-gradient(1px 1px at 50% 80%, rgba(240,192,96,0.4), transparent 50%),
+    radial-gradient(1px 1px at 85% 60%, rgba(240,192,96,0.25), transparent 50%),
+    radial-gradient(1px 1px at 30% 70%, rgba(240,192,96,0.3), transparent 50%),
+    radial-gradient(1px 1px at 10% 50%, rgba(240,192,96,0.25), transparent 50%);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Particle ember canvas (behind everything) */
+.music-particles {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+}
+
+/* Stone of Song wrapper */
+.music-stone-wrap {
+  position: relative;
+  width: 130px; height: 130px;
+  margin-top: 2px;
+  z-index: 2;
+}
+
+/* Outer golden glow, intensifies with volume / playing */
+.music-stone-wrap::before {
+  content: '';
+  position: absolute; inset: -20px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(240,192,96,0.25) 0%, transparent 65%);
+  filter: blur(8px);
+  transition: opacity 0.4s;
+  opacity: 0.4;
+  pointer-events: none;
+}
+.music-panel.playing .music-stone-wrap::before { opacity: 0.9; }
+
+/* Progress ring SVG — scales to wrapper size */
+.music-progress-ring {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  transform: rotate(-90deg);
+}
+.music-progress-ring circle {
+  fill: none;
+  stroke-width: 3;
+}
+.music-progress-ring .track {
+  stroke: rgba(80,60,30,0.5);
+}
+.music-progress-ring .bar {
+  stroke: url(#music-grad);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.2s linear;
+  filter: drop-shadow(0 0 4px rgba(240,192,96,0.6));
+}
+
+/* The Stone itself — a circular runestone */
+.music-stone {
+  position: absolute;
+  top: 12px; left: 12px; right: 12px; bottom: 12px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255,255,255,0.08) 0%, transparent 30%),
+    radial-gradient(circle, #2a2118 0%, #130d08 80%);
+  border: 2px solid #6b5228;
+  box-shadow:
+    inset 0 0 20px rgba(0,0,0,0.6),
+    inset 0 0 0 1px rgba(240,192,96,0.15),
+    0 0 16px rgba(240,192,96,0.15);
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.3s;
+}
+.music-stone:hover {
+  box-shadow:
+    inset 0 0 20px rgba(0,0,0,0.6),
+    inset 0 0 0 1px rgba(240,192,96,0.35),
+    0 0 24px rgba(240,192,96,0.35);
+}
+.music-stone:active { transform: scale(0.97); }
+
+/* Rotating inner sigil */
+.music-stone-sigil {
+  position: absolute; inset: 10px;
+  border-radius: 50%;
+  border: 1px dashed rgba(200,168,64,0.3);
+  opacity: 0.7;
+  transition: opacity 0.3s;
+}
+.music-panel.playing .music-stone-sigil {
+  animation: stoneRotate 18s linear infinite;
+  opacity: 1;
+  border-color: rgba(240,192,96,0.5);
+}
+@keyframes stoneRotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Visualizer canvas inside the stone */
+.music-stone-viz {
+  position: absolute; inset: 16px;
+  border-radius: 50%;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* Center play/pause icon */
+.music-stone-icon {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #f0c060;
+  pointer-events: none;
+  transition: transform 0.2s;
+  filter: drop-shadow(0 0 8px rgba(240,192,96,0.5)) drop-shadow(2px 2px 0 rgba(0,0,0,0.8));
+}
+.music-stone-icon svg { width: 34px; height: 34px; }
+.music-stone:hover .music-stone-icon { transform: scale(1.12); }
+
+/* Now-playing meta */
+.music-meta {
+  margin-top: 8px;
+  text-align: center;
+  max-width: 380px;
+  position: relative;
+  z-index: 2;
+}
+.music-title {
+  font-family: 'Cinzel', serif;
+  font-size: 1.1rem; font-weight: 700;
+  color: #f0e0a0;
+  letter-spacing: 2px;
+  margin-bottom: 4px;
+  text-shadow: 0 0 10px rgba(240,192,96,0.3), 2px 2px 0 rgba(0,0,0,0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.music-category {
+  font-family: 'IM Fell English', serif;
+  font-style: italic;
+  font-size: 0.7rem;
+  color: #8a7a5a;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* Waveform ribbon */
+.music-waveform-wrap {
+  width: 82%;
+  max-width: 420px;
+  height: 22px;
+  margin: 4px auto 0;
+  position: relative;
+  z-index: 2;
+}
+.music-waveform { width: 100%; height: 100%; display: block; }
+
+/* Seek row — current time, draggable progress bar, duration */
+.music-seek-row {
+  display: flex; align-items: center; gap: 10px;
+  width: 82%; max-width: 440px;
+  margin: 2px auto 0;
+  font-family: 'Cinzel', serif;
+  font-size: 0.62rem;
+  letter-spacing: 1.5px;
+  color: #8a7a5a;
+  position: relative; z-index: 2;
+}
+.music-time-cur { color: #f0c060; min-width: 30px; text-align: right; }
+.music-time-dur { color: #8a7a5a; min-width: 30px; text-align: left; }
+
+.music-seek {
+  flex: 1;
+  height: 18px;
+  display: flex; align-items: center;
+  cursor: pointer;
+  position: relative;
+}
+.music-seek-track {
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(180deg, #0c0806 0%, #1a1408 100%);
+  border: 1px solid #3a2e14;
+  border-radius: 2px;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.7);
+  position: relative;
+  overflow: visible;
+  transition: height 0.15s, background 0.2s;
+}
+.music-seek:hover .music-seek-track { height: 6px; }
+
+.music-seek-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 0%;
+  background: linear-gradient(90deg, #8a7030 0%, #f0c060 70%, #fff0c8 100%);
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(240,192,96,0.5);
+  transition: width 0.1s linear;
+}
+.music-seek-thumb {
+  position: absolute;
+  left: 0%; top: 50%;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #fff0c8, #8a7030);
+  border: 1px solid #f0e0a0;
+  transform: translate(-50%, -50%) scale(0);
+  box-shadow: 0 0 8px rgba(240,192,96,0.7);
+  transition: transform 0.15s cubic-bezier(.4,0,.2,1);
+  pointer-events: none;
+}
+.music-seek:hover .music-seek-thumb { transform: translate(-50%, -50%) scale(1); }
+
+/* ── CONTROLS BAR ── */
+.music-controls {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 12px 4px;
+  background: linear-gradient(180deg, #1a1408 0%, #12100a 100%);
+  position: relative;
+}
+.music-controls::before {
+  /* gold divider line at top */
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(200,168,64,0.35), transparent);
+}
+/* ── RUNESTONE BUTTONS ────────────────────────────────────
+   Double-ringed carved stone, gold trim, torchlight flicker,
+   rotating rune halo on hover, click ripple. */
+.music-btn {
+  width: 46px; height: 46px;
+  min-width: 46px; min-height: 46px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 25%, #4a3a1a 0%, #2a2010 45%, #120c06 100%);
+  border: none;
+  color: #e8cc7a;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  position: relative;
+  transition: transform 0.18s cubic-bezier(.4,0,.2,1),
+              color 0.18s, box-shadow 0.25s;
+  /* layered: black lip + gold inner ring + stone bevel + drop shadow */
+  box-shadow:
+    inset 0 1px 1px rgba(255,220,140,0.35),
+    inset 0 0 0 2px rgba(10,6,2,0.85),
+    inset 0 0 0 3px rgba(200,168,64,0.5),
+    inset 0 -4px 8px rgba(0,0,0,0.65),
+    0 3px 6px rgba(0,0,0,0.55);
+  animation: btnFlicker 5s ease-in-out infinite;
+}
+@keyframes btnFlicker {
+  0%, 100% { filter: brightness(1) saturate(1); }
+  22%      { filter: brightness(1.06) saturate(1.05); }
+  43%      { filter: brightness(0.96) saturate(0.98); }
+  68%      { filter: brightness(1.04) saturate(1.03); }
+}
+.music-btn svg {
+  width: 18px; height: 18px;
+  display: block;
+  position: relative; z-index: 2;
+  filter: drop-shadow(0 1px 0 rgba(0,0,0,0.65))
+          drop-shadow(0 -1px 0 rgba(255,220,140,0.2));
+  transition: transform 0.25s cubic-bezier(.4,0,.2,1), filter 0.2s;
+}
+/* Rotating rune halo (hover only) */
+.music-btn::before {
+  content: '';
+  position: absolute; inset: -7px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    transparent 0deg,   rgba(240,192,96,0.75) 18deg, transparent 42deg,
+    transparent 90deg,  rgba(240,192,96,0.45) 108deg, transparent 132deg,
+    transparent 180deg, rgba(240,192,96,0.75) 198deg, transparent 222deg,
+    transparent 270deg, rgba(240,192,96,0.45) 288deg, transparent 312deg);
+  opacity: 0;
+  filter: blur(3px);
+  transition: opacity 0.3s;
+  pointer-events: none;
+  z-index: 0;
+}
+/* Inner highlight */
+.music-btn::after {
+  content: '';
+  position: absolute; inset: 4px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 20%,
+    rgba(255,235,160,0.35) 0%, rgba(255,220,140,0.05) 30%, transparent 55%);
+  pointer-events: none;
+  z-index: 1;
+}
+.music-btn:hover {
+  color: #fff0c8;
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 1px rgba(255,235,160,0.45),
+    inset 0 0 0 2px rgba(10,6,2,0.85),
+    inset 0 0 0 3px rgba(255,220,140,0.85),
+    inset 0 -4px 8px rgba(0,0,0,0.55),
+    0 4px 10px rgba(0,0,0,0.5),
+    0 0 18px rgba(240,192,96,0.55);
+}
+.music-btn:hover::before { opacity: 1; animation: runeHalo 4.5s linear infinite; }
+.music-btn:hover svg {
+  transform: scale(1.12);
+  filter: drop-shadow(0 1px 0 rgba(0,0,0,0.6))
+          drop-shadow(0 0 6px rgba(255,220,140,0.9));
+}
+@keyframes runeHalo { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.music-btn:active { transform: translateY(1px) scale(0.94); transition-duration: 0.08s; }
+
+.music-btn.active {
+  color: #fff5d0;
+  background: radial-gradient(circle at 35% 25%, #8a6c28 0%, #4a3a14 50%, #241a06 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255,240,200,0.45),
+    inset 0 0 10px rgba(240,192,96,0.45),
+    inset 0 0 0 2px rgba(10,6,2,0.85),
+    inset 0 0 0 3px rgba(255,220,140,0.9),
+    inset 0 -4px 8px rgba(0,0,0,0.45),
+    0 0 20px rgba(240,192,96,0.55);
+}
+.music-btn.active::before { opacity: 0.85; animation: runeHalo 6s linear infinite; }
+
+/* Big centre play button */
+.music-btn-lg {
+  width: 58px; height: 58px;
+  min-width: 58px; min-height: 58px;
+}
+.music-btn-lg svg { width: 24px; height: 24px; }
+.music-panel.playing .music-btn-lg { animation: btnFlicker 5s ease-in-out infinite, playPulse 2.4s ease-in-out infinite; }
+@keyframes playPulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 1px 1px rgba(255,220,140,0.35),
+      inset 0 0 0 2px rgba(10,6,2,0.85),
+      inset 0 0 0 3px rgba(200,168,64,0.55),
+      inset 0 -4px 8px rgba(0,0,0,0.65),
+      0 3px 6px rgba(0,0,0,0.55),
+      0 0 14px rgba(240,192,96,0.35);
+  }
+  50% {
+    box-shadow:
+      inset 0 1px 1px rgba(255,235,160,0.55),
+      inset 0 0 0 2px rgba(10,6,2,0.85),
+      inset 0 0 0 3px rgba(255,220,140,0.85),
+      inset 0 -4px 8px rgba(0,0,0,0.55),
+      0 3px 6px rgba(0,0,0,0.55),
+      0 0 32px rgba(240,192,96,0.95);
+  }
+}
+
+/* Shuffle icon wobble + scale shimmer when active */
+.music-btn[data-ctl="shuffle"].active svg {
+  animation: shuffleWobble 2.2s ease-in-out infinite;
+}
+@keyframes shuffleWobble {
+  0%, 100% { transform: rotate(-10deg) scale(1); }
+  50%      { transform: rotate(10deg) scale(1.08); }
+}
+
+/* Repeat button — full spin when clicked */
+.music-btn[data-ctl="repeat"].active svg {
+  animation: repeatSpin 4s linear infinite;
+}
+@keyframes repeatSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.music-volume {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px;
+  padding: 2px 20px 10px;
+  background: linear-gradient(180deg, #12100a 0%, #12100a 100%);
+  border-bottom: 1px solid #3a2e14;
+}
+.music-volume-icon { color: #8a7a5a; display: flex; flex-shrink: 0; }
+.music-volume-icon svg { width: 18px; height: 18px; }
+.music-volume input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; height: 4px;
+  background: linear-gradient(90deg, #c8a840 var(--vol,60%), #3a2e14 var(--vol,60%));
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.music-volume input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  background: radial-gradient(circle at 30% 30%, #f0c060, #8a7030);
+  border: 1px solid #f0e0a0;
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(240,192,96,0.6);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.music-volume input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.25);
+  box-shadow: 0 0 10px rgba(240,192,96,0.9);
+}
+
+/* ── SEARCH + CATEGORY ── */
+.music-filters {
+  flex-shrink: 0;
+  padding: 8px 14px 6px;
+  background: rgba(10,8,6,0.6);
+  border-bottom: 1px solid #2a2010;
+}
+.music-search {
+  width: 100%;
+  height: 32px;
+  border-radius: 3px;
+  background: rgba(20,16,10,0.8);
+  border: 1px solid #3a2e14;
+  padding: 0 14px;
+  color: #d4c090;
+  font-family: 'IM Fell English', serif;
+  font-style: italic;
+  font-size: 0.85rem;
+  outline: none;
+}
+.music-search:focus {
+  border-color: #c8a840;
+  box-shadow: 0 0 8px rgba(200,168,64,0.2);
+}
+.music-cats {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-top: 8px;
+}
+.music-cat {
+  padding: 4px 11px;
+  border-radius: 3px;
+  background: rgba(30,26,16,0.85);
+  border: 1px solid #3a2e14;
+  font-family: 'Cinzel', serif;
+  font-size: 0.58rem;
+  letter-spacing: 2px;
+  color: #8a7a5a;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.music-cat:hover { color: #c8a840; border-color: #5a4828; }
+.music-cat.active {
+  background: rgba(200,168,64,0.12);
+  border-color: #c8a840;
+  color: #f0c060;
+}
+
+/* ── TRACK LIST (parchment scroll) ── */
+.music-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px 20px;
+}
+.music-list::-webkit-scrollbar { width: 6px; }
+.music-list::-webkit-scrollbar-thumb { background: #4a3820; border-radius: 3px; }
+
+.music-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  cursor: pointer;
+  margin-bottom: 2px;
+  position: relative;
+}
+.music-row:hover {
+  background: rgba(200,168,64,0.06);
+  border-color: #3a2e14;
+}
+.music-row.playing {
+  background: linear-gradient(90deg, rgba(200,168,64,0.12), rgba(200,168,64,0.03));
+  border-color: #6b5228;
+  box-shadow: inset 0 0 0 1px rgba(240,192,96,0.15);
+}
+.music-row.playing::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, #f0c060, transparent);
+  animation: playingPulse 1.6s ease-in-out infinite;
+}
+@keyframes playingPulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+
+.music-sigil {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #2a2118, #0a0806);
+  border: 1px solid #4a3820;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Cinzel', serif;
+  font-weight: 900;
+  font-size: 0.75rem;
+  color: var(--sigil-color, #c8a840);
+  text-shadow: 0 0 6px currentColor;
+  flex-shrink: 0;
+}
+.music-row.playing .music-sigil {
+  animation: sigilSpin 4s linear infinite;
+  box-shadow: 0 0 8px var(--sigil-color, #c8a840);
+}
+@keyframes sigilSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.music-row-info { min-width: 0; }
+.music-row-name {
+  font-family: 'Cinzel', serif;
+  font-size: 0.82rem;
+  color: #d4c090;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.music-row.playing .music-row-name { color: #f0e0a0; }
+.music-row-cat {
+  font-family: 'IM Fell English', serif;
+  font-style: italic;
+  font-size: 0.65rem;
+  color: #6a5a3a;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-top: 1px;
+}
+
+.music-row-dur {
+  font-family: 'Cinzel', serif;
+  font-size: 0.65rem;
+  color: #6a5a3a;
+  letter-spacing: 1px;
+  min-width: 42px;
+  text-align: right;
+}
+
+.music-fav {
+  width: 26px; height: 26px;
+  border: none; background: none;
+  cursor: pointer;
+  color: #4a3820;
+  transition: color 0.15s, transform 0.15s;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.music-fav svg { width: 16px; height: 16px; display: block; }
+.music-fav:hover { color: #c8a840; transform: scale(1.15); }
+.music-fav.on {
+  color: #f0c060;
+  filter: drop-shadow(0 0 4px rgba(240,192,96,0.6));
+}
+
+/* Empty state */
+.music-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #5a4a28;
+  font-family: 'IM Fell English', serif;
+  font-style: italic;
+}
+
+/* ── CUSTOM TOOLTIP (JS-positioned, lives on body) ─────────
+   Rendered as a fixed-position element so overflow:hidden parents
+   can't clip it, and specificity can't conflict with button pseudos. */
+#rh-tooltip {
+  position: fixed;
+  z-index: 999999;
+  pointer-events: none;
+  background: linear-gradient(180deg, #2a2010 0%, #141008 100%);
+  color: #f0c060;
+  font-family: 'Cinzel', serif;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 6px 11px;
+  border: 1px solid #6b5228;
+  border-radius: 3px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.7),
+              0 0 0 1px rgba(200,168,64,0.15),
+              inset 0 1px 0 rgba(240,192,96,0.12);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.8);
+}
+#rh-tooltip.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+#rh-tooltip::after {
+  /* triangular notch pointing down at the target */
+  content: '';
+  position: absolute;
+  top: 100%; left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #6b5228;
+}
