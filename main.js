@@ -407,6 +407,68 @@ ipcMain.on('install-update', () => {
   setTimeout(() => autoUpdater.quitAndInstall(true, true), 1000);
 });
 
+// ── MUSIC POPOUT WINDOW ──────────────────────────────────────
+// A small always-on-top window that mirrors the Music tab's mini player.
+// It is a remote control + display: audio plays in the main window.
+let musicPopout = null;
+
+ipcMain.handle('music-popout-open', () => {
+  if (musicPopout && !musicPopout.isDestroyed()) {
+    musicPopout.focus();
+    return true;
+  }
+  musicPopout = new BrowserWindow({
+    width: 420,
+    height: 150,
+    minWidth: 360,
+    minHeight: 150,
+    maxWidth: 640,
+    maxHeight: 200,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#12100a',
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  musicPopout.setMenu(null);
+  musicPopout.loadFile(path.join(__dirname, 'ui', 'music-popout.html'));
+  musicPopout.once('ready-to-show', () => musicPopout.show());
+  musicPopout.on('closed', () => {
+    musicPopout = null;
+    // Tell the main renderer so it re-shows the docked mini
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('music-popout-cmd', { cmd: 'closed' });
+    }
+  });
+  return true;
+});
+
+// Popout → main: a command (play/pause/prev/next/seek/close)
+ipcMain.on('music-popout-cmd', (_e, payload) => {
+  if (payload?.cmd === 'close' && musicPopout && !musicPopout.isDestroyed()) {
+    musicPopout.close();
+    return;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('music-popout-cmd', payload);
+  }
+});
+
+// Main renderer → popout: state broadcast
+ipcMain.on('music-state', (_e, state) => {
+  if (musicPopout && !musicPopout.isDestroyed()) {
+    musicPopout.webContents.send('music-state', state);
+  }
+});
+
 // ── APP LIFECYCLE ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {

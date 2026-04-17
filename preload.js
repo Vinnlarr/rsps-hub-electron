@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('hub', {
   saveMessages:  (data)    => ipcRenderer.invoke('messages-save', data),
   getMusicPrefs:  ()       => ipcRenderer.invoke('music-prefs-get'),
   saveMusicPrefs: (data)   => ipcRenderer.invoke('music-prefs-save', data),
+  // Music popout window
+  openMusicPopout: ()      => ipcRenderer.invoke('music-popout-open'),
+  pushMusicState:  (s)     => ipcRenderer.send('music-state', s),
+  sendMusicCmd:    (cmd, value) => ipcRenderer.send('music-popout-cmd', { cmd, value }),
+  onMusicState:    (cb)    => ipcRenderer.on('music-state', (_e, s) => cb(s)),
+  onMusicPopoutCmd:(cb)    => ipcRenderer.on('music-popout-cmd', (_e, p) => cb(p?.cmd, p?.value)),
   selectFolder:    (defaultPath) => ipcRenderer.invoke('select-folder', defaultPath),
   getVersion:      ()            => ipcRenderer.invoke('app-version'),
   readFileBase64:  (filePath)   => ipcRenderer.invoke('read-file-base64', filePath),
