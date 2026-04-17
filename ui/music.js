@@ -146,6 +146,8 @@
   // ── PLAYBACK ─────────────────────────────────────────────
   function playTrack(track, listIndex) {
     ensureAudio();
+    // User triggered playback — bring back the docked mini if it was X-closed
+    M._miniHidden = false;
     M.current = track;
     M.index = typeof listIndex === 'number' ? listIndex : M.filtered.findIndex(t => t.id === track.id);
     M.audio.src = track.url;
@@ -654,20 +656,36 @@
     const tip = document.createElement('div');
     tip.id = 'rh-tooltip';
     document.body.appendChild(tip);
+    let currentTarget = null;
     const show = (el) => {
       const text = el.getAttribute('data-tip');
       if (!text) return;
+      currentTarget = el;
       tip.textContent = text;
-      const r = el.getBoundingClientRect();
-      tip.style.left = (r.left + r.width / 2) + 'px';
+      // Measure off-screen briefly with visibility hidden so we know the tooltip width
+      tip.classList.remove('show');
+      tip.style.left = '-10000px';
+      tip.style.top  = '0px';
+      tip.style.transform = 'translate(-50%, -100%)';
+      const tr = tip.getBoundingClientRect();
+      const r  = el.getBoundingClientRect();
+      const margin = 8;
+      const vw = window.innerWidth;
+      let cx = r.left + r.width / 2;
+      const half = tr.width / 2;
+      if (cx - half < margin)      cx = margin + half;
+      if (cx + half > vw - margin) cx = vw - margin - half;
+      tip.style.left = cx + 'px';
       tip.style.top  = (r.top - 12) + 'px';
-      tip.style.transform = 'translate(-50%, -100%) translateY(4px)';
-      requestAnimationFrame(() => {
-        tip.style.transform = 'translate(-50%, -100%) translateY(0)';
-        tip.classList.add('show');
-      });
+      const arrowOffsetX = (r.left + r.width / 2) - cx;
+      tip.style.setProperty('--tip-arrow-x', arrowOffsetX + 'px');
+      // Mouse may have left before we got here — only show if still hovering
+      if (currentTarget === el) tip.classList.add('show');
     };
-    const hide = () => { tip.classList.remove('show'); };
+    const hide = () => {
+      currentTarget = null;
+      tip.classList.remove('show');
+    };
     document.addEventListener('mouseover', e => {
       const el = e.target.closest('[data-tip]');
       if (el) show(el);
@@ -681,6 +699,192 @@
     document.addEventListener('mousedown', hide);
   })();
 
+  // ── STATUS BAR MUSIC TOGGLE ─────────────────────────────────
+  // Small always-visible button in the status bar. If the user X-es out the
+  // docked mini, this button brings it back without interrupting playback.
+  function ensureStatusBarToggle() {
+    if (document.getElementById('music-status-toggle')) return;
+    const statusBar = document.querySelector('.status-bar');
+    if (!statusBar) return;
+    const btn = document.createElement('button');
+    btn.id = 'music-status-toggle';
+    btn.className = 'music-status-toggle';
+    btn.setAttribute('data-tip', 'Show / hide music player');
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 3v11.55a4 4 0 1 0 2 3.45V7h8V3z"/></svg>`;
+    btn.addEventListener('click', () => {
+      M._miniHidden = !M._miniHidden;
+      refreshMini();
+      refreshStatusToggle();
+    });
+    // Insert before the version label so it sits on the right edge
+    const ver = statusBar.querySelector('#app-version-label');
+    if (ver) statusBar.insertBefore(btn, ver);
+    else     statusBar.appendChild(btn);
+    M.statusToggleEl = btn;
+    refreshStatusToggle();
+  }
+
+  function refreshStatusToggle() {
+    const btn = M.statusToggleEl;
+    if (!btn) return;
+    // Dim if no track loaded; gold glow if playing; slight highlight if hidden
+    btn.classList.toggle('has-track', !!M.current);
+    btn.classList.toggle('is-playing', !!M.current && !M.paused);
+    btn.classList.toggle('is-hidden', !!M._miniHidden);
+  }
+
+  // ── MINI PLAYER (always-visible strip above status bar) ─────
+  // Creates a global dock that follows the user across every tab.
+  // Shares all state + controls with the main Music tab.
+  function ensureMiniPlayer() {
+    if (document.getElementById('music-mini')) return;
+    const statusBar = document.querySelector('.status-bar');
+    if (!statusBar) return; // layout not ready yet
+
+    const mini = document.createElement('div');
+    mini.id = 'music-mini';
+    mini.className = 'music-mini';
+    mini.innerHTML = `
+      <div class="music-mini-left" data-mini-expand>
+        <div class="music-mini-sigil"></div>
+        <div class="music-mini-text">
+          <div class="music-mini-title">—</div>
+          <div class="music-mini-sub">No track loaded</div>
+        </div>
+      </div>
+      <div class="music-mini-seek">
+        <div class="music-mini-seek-track">
+          <div class="music-mini-seek-fill"></div>
+        </div>
+      </div>
+      <div class="music-mini-ctrls">
+        <button class="music-mini-btn" data-mini-ctl="prev" data-tip="Previous">${ICON.prev}</button>
+        <button class="music-mini-btn music-mini-btn-lg" data-mini-ctl="play" data-tip="Play">${ICON.play}</button>
+        <button class="music-mini-btn" data-mini-ctl="next" data-tip="Next">${ICON.next}</button>
+        <button class="music-mini-btn music-mini-btn-xp" data-mini-ctl="popout" data-tip="Pop out (always on top)">${ICON.popout}</button>
+        <button class="music-mini-btn music-mini-btn-xp" data-mini-ctl="expand" data-tip="Open music player">${ICON.expand}</button>
+        <button class="music-mini-btn music-mini-btn-xp" data-mini-ctl="close" data-tip="Hide">${ICON.close}</button>
+      </div>
+    `;
+    statusBar.parentNode.insertBefore(mini, statusBar);
+
+    // Wire controls
+    mini.querySelectorAll('[data-mini-ctl]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const ctl = btn.dataset.miniCtl;
+        if (ctl === 'play')   togglePlay();
+        if (ctl === 'prev')   prev();
+        if (ctl === 'next')   next();
+        if (ctl === 'expand') openMusicTab();
+        if (ctl === 'close')  { M._miniHidden = true; refreshMini(); }
+        if (ctl === 'popout') {
+          if (window.hub?.openMusicPopout) {
+            window.hub.openMusicPopout();
+            M._popoutOpen = true;
+            refreshMini();
+          }
+        }
+      });
+    });
+    // Click the left zone (sigil + text) also opens the music tab
+    mini.querySelector('[data-mini-expand]').addEventListener('click', openMusicTab);
+
+    // Seek bar
+    const seek = mini.querySelector('.music-mini-seek');
+    let dragging = false;
+    const seekTo = (x) => {
+      if (!M.audio || !M.audio.duration || isNaN(M.audio.duration)) return;
+      const r = seek.getBoundingClientRect();
+      const p = Math.max(0, Math.min(1, (x - r.left) / r.width));
+      M.audio.currentTime = p * M.audio.duration;
+    };
+    seek.addEventListener('mousedown', e => { dragging = true; seekTo(e.clientX); });
+    window.addEventListener('mousemove', e => { if (dragging) seekTo(e.clientX); });
+    window.addEventListener('mouseup',   () => { dragging = false; });
+
+    M.miniEl = mini;
+    refreshMini();
+  }
+
+  function openMusicTab() {
+    const btn = document.querySelector('.rs-tab[data-panel="music"]');
+    if (btn) btn.click();
+  }
+
+  function refreshMini() {
+    refreshStatusToggle();
+    const mini = M.miniEl;
+    if (!mini) return;
+    // Hidden when no track, user-closed, or popout window is open
+    if (!M.current || M._miniHidden || M._popoutOpen) {
+      mini.classList.remove('visible');
+      // Also push state to the popout window if it's open
+      if (M._popoutOpen) pushStateToPopout();
+      return;
+    }
+    mini.classList.add('visible');
+    const s = sigilOf(M.current.name);
+    const sigilEl = mini.querySelector('.music-mini-sigil');
+    sigilEl.textContent = s.letter;
+    sigilEl.style.setProperty('--sigil-color', s.color);
+    mini.querySelector('.music-mini-title').textContent = M.current.name;
+    const sub = mini.querySelector('.music-mini-sub');
+    const cur = fmtTime(M.audio?.currentTime);
+    const dur = fmtTime(M.audio?.duration);
+    sub.textContent = `${M.current.category} · ${cur} / ${dur}`;
+    const playBtn = mini.querySelector('[data-mini-ctl="play"]');
+    playBtn.innerHTML = M.paused ? ICON.play : ICON.pause;
+    playBtn.setAttribute('data-tip', M.paused ? 'Play' : 'Pause');
+    mini.classList.toggle('playing', !M.paused);
+    // Progress bar
+    const fill = mini.querySelector('.music-mini-seek-fill');
+    if (fill && M.audio?.duration) {
+      const p = M.audio.currentTime / M.audio.duration;
+      fill.style.width = (p * 100) + '%';
+    }
+  }
+
+  // Hook refreshMini into all the key lifecycle points
+  const _origRefreshPlaying = refreshPlayingUI;
+  refreshPlayingUI = function () { _origRefreshPlaying(); refreshMini(); };
+  const _origUpdateTime = updateTimeDisplay;
+  updateTimeDisplay = function () { _origUpdateTime(); refreshMini(); };
+
+  // Add extra icons to the dictionary
+  ICON.expand  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="m21 3-8 8"/><path d="M9 21H3v-6"/><path d="m3 21 8-8"/></svg>`;
+  ICON.popout  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M20 14v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"/></svg>`;
+  ICON.close   = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 6-12 12"/><path d="m6 6 12 12"/></svg>`;
+
+  // Popout IPC bridge: forward commands from popout → engine; push state → popout
+  function pushStateToPopout() {
+    if (!window.hub?.pushMusicState || !M._popoutOpen || !M.current) return;
+    window.hub.pushMusicState({
+      name:        M.current.name,
+      category:    M.current.category,
+      paused:      M.paused,
+      currentTime: M.audio?.currentTime || 0,
+      duration:    M.audio?.duration || 0,
+      sigilLetter: sigilOf(M.current.name).letter,
+      sigilColor:  sigilOf(M.current.name).color,
+    });
+  }
+  if (window.hub?.onMusicPopoutCmd) {
+    window.hub.onMusicPopoutCmd((cmd, value) => {
+      if (cmd === 'play')   togglePlay();
+      if (cmd === 'prev')   prev();
+      if (cmd === 'next')   next();
+      if (cmd === 'seek' && M.audio && M.audio.duration) M.audio.currentTime = value * M.audio.duration;
+      if (cmd === 'closed') { M._popoutOpen = false; refreshMini(); }
+    });
+  }
+
+  // Auto-reshow the docked mini when a new track starts (clears user-hidden state)
+  document.addEventListener('click', (e) => {
+    // If user plays any track via row click, reset hidden flag
+    if (e.target.closest('.music-row')) M._miniHidden = false;
+  });
+
   M.render = renderPanel;
   M.onPanelUnmount = () => {
     M.panelEl = null;
@@ -691,6 +895,16 @@
     await loadPrefs();
     await loadCatalog();
     ensureAudio();
+    // Mount mini player + status-bar toggle after DOM is ready
+    const tryMount = () => {
+      if (document.querySelector('.status-bar')) {
+        ensureMiniPlayer();
+        ensureStatusBarToggle();
+      } else {
+        setTimeout(tryMount, 200);
+      }
+    };
+    tryMount();
   };
 
   // Boot on DOM ready

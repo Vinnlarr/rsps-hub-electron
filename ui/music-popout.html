@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  font-src 'self' https://fonts.gstatic.com data:;
+  img-src 'self' data: blob:;
+  connect-src 'self';
+  frame-src 'none'; object-src 'none'; base-uri 'self';
+">
+<title>RSPS Hub Music</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    font-family: 'IM Fell English', serif;
+    color: #e0d5c0;
+    background:
+      radial-gradient(ellipse 70% 80% at 30% 0%, rgba(200,168,64,0.1), transparent 70%),
+      linear-gradient(180deg, #1a1408 0%, #0e0a06 100%);
+    border: 1px solid #6b5228;
+    user-select: none;
+    -webkit-app-region: drag;
+  }
+  .pop-root {
+    position: absolute; inset: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    min-height: 0;
+  }
+  .pop-foot { margin-top: auto; flex-shrink: 0; }
+  /* Title bar with close button */
+  .pop-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 10px;
+    border-bottom: 1px solid rgba(200,168,64,0.15);
+    font-family: 'Cinzel', serif;
+    font-size: 0.6rem; letter-spacing: 3px;
+    color: #c8a840;
+  }
+  .pop-bar .name { opacity: 0.8; }
+  .pop-close {
+    -webkit-app-region: no-drag;
+    width: 22px; height: 22px;
+    border-radius: 4px;
+    background: none;
+    border: 1px solid transparent;
+    color: #8a7a5a;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+  }
+  .pop-close:hover { color: #e07070; border-color: rgba(224,112,112,0.35); background: rgba(224,112,112,0.08); }
+  .pop-close svg { width: 12px; height: 12px; }
+
+  /* Body with track info + progress */
+  .pop-body {
+    display: flex; align-items: center; gap: 12px;
+    padding: 6px 12px 4px;
+    flex: 1; min-height: 0;
+    overflow: hidden;
+  }
+  .pop-sigil {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #2a2118, #0a0806);
+    border: 1px solid #4a3820;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Cinzel', serif;
+    font-weight: 900; font-size: 0.95rem;
+    color: var(--sigil-color, #c8a840);
+    text-shadow: 0 0 6px currentColor;
+    flex-shrink: 0;
+  }
+  body.playing .pop-sigil {
+    animation: sigilSpin 5s linear infinite;
+    box-shadow: 0 0 8px var(--sigil-color, #c8a840);
+  }
+  @keyframes sigilSpin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+  .pop-info { flex: 1; min-width: 0; }
+  .pop-title {
+    font-family: 'Cinzel', serif;
+    font-weight: 700; font-size: 0.92rem;
+    letter-spacing: 1px;
+    color: #f0e0a0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow: 0 0 6px rgba(240,192,96,0.2), 1px 1px 0 rgba(0,0,0,0.8);
+  }
+  .pop-sub {
+    font-style: italic;
+    font-size: 0.68rem;
+    color: #8a7a5a;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+
+  /* Progress */
+  .pop-seek {
+    -webkit-app-region: no-drag;
+    margin: 0 12px 2px;
+    height: 6px;
+    display: flex; align-items: center;
+    cursor: pointer;
+  }
+  .pop-seek-track {
+    width: 100%; height: 3px;
+    background: linear-gradient(180deg, #0c0806, #1a1408);
+    border: 1px solid #3a2e14;
+    border-radius: 2px;
+    position: relative;
+    transition: height 0.12s;
+  }
+  .pop-seek:hover .pop-seek-track { height: 5px; }
+  .pop-seek-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: 0%;
+    background: linear-gradient(90deg, #8a7030, #f0c060);
+    border-radius: 2px;
+    box-shadow: 0 0 4px rgba(240,192,96,0.45);
+  }
+
+  /* Controls */
+  .pop-ctrls {
+    -webkit-app-region: no-drag;
+    display: flex; justify-content: center; gap: 8px;
+    padding: 4px 0 10px;
+  }
+  .pop-btn {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 25%, #3a2e14, #14100a);
+    border: 1px solid #5a4828;
+    color: #c8a840;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    transition: all 0.15s;
+    box-shadow: inset 0 1px 0 rgba(255,220,140,0.15),
+                inset 0 -2px 4px rgba(0,0,0,0.45),
+                0 2px 3px rgba(0,0,0,0.4);
+  }
+  .pop-btn svg { width: 13px; height: 13px; filter: drop-shadow(0 1px 0 rgba(0,0,0,0.6)); }
+  .pop-btn:hover {
+    color: #f0c060; border-color: #c8a840;
+    transform: translateY(-1px);
+    box-shadow: inset 0 1px 0 rgba(255,220,140,0.25),
+                inset 0 -2px 4px rgba(0,0,0,0.35),
+                0 3px 5px rgba(0,0,0,0.5),
+                0 0 10px rgba(240,192,96,0.4);
+  }
+  .pop-btn:active { transform: translateY(0) scale(0.92); }
+  .pop-btn-lg { width: 38px; height: 38px; }
+  .pop-btn-lg svg { width: 15px; height: 15px; }
+  body.playing .pop-btn-lg {
+    animation: lgPulse 2.4s ease-in-out infinite;
+  }
+  @keyframes lgPulse {
+    0%, 100% { box-shadow: inset 0 1px 0 rgba(255,220,140,0.2),
+                           inset 0 -2px 4px rgba(0,0,0,0.45),
+                           0 0 8px rgba(240,192,96,0.25); }
+    50%      { box-shadow: inset 0 1px 0 rgba(255,235,160,0.35),
+                           inset 0 -2px 4px rgba(0,0,0,0.35),
+                           0 0 18px rgba(240,192,96,0.7); }
+  }
+</style>
+</head>
+<body>
+<div class="pop-root">
+  <div class="pop-bar">
+    <span class="name">RSPS HUB · MUSIC</span>
+    <button class="pop-close" id="pop-close" title="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 6-12 12"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </div>
+  <div class="pop-body">
+    <div class="pop-sigil" id="pop-sigil">♫</div>
+    <div class="pop-info">
+      <div class="pop-title" id="pop-title">—</div>
+      <div class="pop-sub"  id="pop-sub">No track loaded</div>
+    </div>
+  </div>
+  <div class="pop-foot">
+    <div class="pop-seek" id="pop-seek"><div class="pop-seek-track"><div class="pop-seek-fill" id="pop-fill"></div></div></div>
+    <div class="pop-ctrls">
+      <button class="pop-btn"                 id="pop-prev" title="Previous">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 4.5v15c0 .8-.9 1.3-1.6.9l-12-7.5a1.05 1.05 0 0 1 0-1.8l12-7.5c.7-.4 1.6 0 1.6.9z"/></svg>
+      </button>
+      <button class="pop-btn pop-btn-lg"      id="pop-play" title="Play/Pause">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15c0 .8.9 1.3 1.6.9l12-7.5a1.05 1.05 0 0 0 0-1.8l-12-7.5A1.05 1.05 0 0 0 7 4.5z"/></svg>
+      </button>
+      <button class="pop-btn"                 id="pop-next" title="Next">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 4.5v15c0 .8.9 1.3 1.6.9l12-7.5a1.05 1.05 0 0 0 0-1.8l-12-7.5A1.05 1.05 0 0 0 4 4.5z"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+<script>
+  const ICON_PLAY  = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15c0 .8.9 1.3 1.6.9l12-7.5a1.05 1.05 0 0 0 0-1.8l-12-7.5A1.05 1.05 0 0 0 7 4.5z"/></svg>';
+  const ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5h3v14H8zM13 5h3v14h-3z"/></svg>';
+
+  const send = (cmd, value) => window.hub?.sendMusicCmd(cmd, value);
+
+  document.getElementById('pop-play').onclick  = () => send('play');
+  document.getElementById('pop-prev').onclick  = () => send('prev');
+  document.getElementById('pop-next').onclick  = () => send('next');
+  document.getElementById('pop-close').onclick = () => send('close');
+
+  // Seek
+  const seek = document.getElementById('pop-seek');
+  let dragging = false, lastDur = 0;
+  const seekAt = (x) => {
+    if (!lastDur) return;
+    const r = seek.getBoundingClientRect();
+    const p = Math.max(0, Math.min(1, (x - r.left) / r.width));
+    send('seek', p);
+  };
+  seek.addEventListener('mousedown', e => { dragging = true; seekAt(e.clientX); });
+  window.addEventListener('mousemove', e => { if (dragging) seekAt(e.clientX); });
+  window.addEventListener('mouseup',   () => { dragging = false; });
+
+  const fmt = (s) => {
+    if (!s || isNaN(s)) return '—:——';
+    s = Math.floor(s);
+    const m = Math.floor(s / 60), r = s % 60;
+    return m + ':' + (r < 10 ? '0' : '') + r;
+  };
+
+  // Receive state pushes from main renderer
+  window.hub?.onMusicState((s) => {
+    if (!s) return;
+    document.body.classList.toggle('playing', !s.paused);
+    document.getElementById('pop-title').textContent = s.name || '—';
+    document.getElementById('pop-sub').textContent   = (s.category || '') + ' · ' + fmt(s.currentTime) + ' / ' + fmt(s.duration);
+    const sig = document.getElementById('pop-sigil');
+    sig.textContent = s.sigilLetter || '♫';
+    sig.style.setProperty('--sigil-color', s.sigilColor || '#c8a840');
+    document.getElementById('pop-play').innerHTML = s.paused ? ICON_PLAY : ICON_PAUSE;
+    lastDur = s.duration || 0;
+    const fill = document.getElementById('pop-fill');
+    if (fill && s.duration) fill.style.width = ((s.currentTime / s.duration) * 100) + '%';
+  });
+</script>
+</body>
+</html>
