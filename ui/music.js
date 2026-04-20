@@ -913,4 +913,27 @@
   } else {
     M.init();
   }
+
+  // Hooks for auth — app.js calls these on login/logout so favs/volume/etc.
+  // are scoped per-user (main.js already scopes the file on disk).
+  function refreshVisibleList() {
+    // Re-render the currently visible track list so favourite stars reflect
+    // the freshly loaded prefs. No-op if the music panel isn't mounted.
+    const list = document.querySelector('.mp-list');
+    if (list && typeof renderListHTML === 'function') {
+      list.innerHTML = renderListHTML();
+    }
+  }
+  window.reloadMusicPrefs = async () => {
+    try { await loadPrefs(); } catch {}
+    refreshVisibleList();
+  };
+  window.clearMusicPrefs = () => {
+    M.favorites.clear();
+    M.volume  = 0.6;
+    M.shuffle = false;
+    M.repeat  = 'off';
+    if (M.audio) M.audio.volume = M.volume;
+    refreshVisibleList();
+  };
 })();

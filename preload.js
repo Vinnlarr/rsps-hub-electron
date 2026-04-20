@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('hub', {
   savePlaytime:  (data)    => ipcRenderer.invoke('playtime-save', data),
   getMessages:   ()        => ipcRenderer.invoke('messages-get'),
   saveMessages:  (data)    => ipcRenderer.invoke('messages-save', data),
+  setActiveUser: (username)=> ipcRenderer.invoke('set-active-user', username),
   getMusicPrefs:  ()       => ipcRenderer.invoke('music-prefs-get'),
   saveMusicPrefs: (data)   => ipcRenderer.invoke('music-prefs-save', data),
   // Music popout window

@@ -10,8 +10,44 @@ const RSPS_DIR      = path.join(os.homedir(), '.rsps_hub');
 const PROFILE_PATH  = path.join(RSPS_DIR, 'profile.json');
 const AVATAR_PATH   = path.join(RSPS_DIR, 'avatar.png');
 const PLAYTIME_PATH = path.join(RSPS_DIR, 'playtime.json');
-const MESSAGES_PATH = path.join(RSPS_DIR, 'messages.json');
-const MUSIC_PREFS_PATH = path.join(RSPS_DIR, 'music_prefs.json');
+// Legacy (pre-per-user) paths — still read as a fallback and auto-migrated to
+// the first user who logs in after this release.
+const LEGACY_MESSAGES_PATH    = path.join(RSPS_DIR, 'messages.json');
+const LEGACY_MUSIC_PREFS_PATH = path.join(RSPS_DIR, 'music_prefs.json');
+
+// Tracks which user is currently logged in. Renderer updates this via
+// set-active-user on login/register/session-restore/logout.
+let activeUser = null;
+
+function safeUsername(u) {
+  return String(u || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+}
+function userDir(username) {
+  const dir = path.join(RSPS_DIR, 'users', safeUsername(username));
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
+}
+function messagesPath()   { return activeUser ? path.join(userDir(activeUser), 'messages.json')    : null; }
+function musicPrefsPath() { return activeUser ? path.join(userDir(activeUser), 'music_prefs.json') : null; }
+
+// One-shot migration: when a user first logs in after the upgrade, move any
+// existing legacy top-level files into their user directory. Keeps current
+// Vinnlarr's DMs + music favs intact on upgrade, everyone else starts fresh.
+function migrateLegacyFor(username) {
+  const udir = userDir(username);
+  const pairs = [
+    [LEGACY_MESSAGES_PATH,    path.join(udir, 'messages.json')],
+    [LEGACY_MUSIC_PREFS_PATH, path.join(udir, 'music_prefs.json')],
+  ];
+  for (const [src, dst] of pairs) {
+    try {
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        fs.renameSync(src, dst);
+        console.log('[migrate] moved', src, '->', dst);
+      }
+    } catch (e) { console.warn('[migrate] failed', src, e.message); }
+  }
+}
 
 const JAVA_PORT = 7890;
 // Generated fresh each launch — never stored in code or on disk
@@ -269,38 +305,54 @@ ipcMain.handle('playtime-save', (_, data) => {
   } catch (_) { return false; }
 });
 
-// Messages — read/write ~/.rsps_hub/messages.json { "Username": [...msgs] }
+// Renderer calls this on login/register/session-restore/logout so the file
+// paths below lock to the current user's directory. Pass null/empty on logout
+// to isolate the unauthed state (no reads/writes).
+ipcMain.handle('set-active-user', (_, username) => {
+  activeUser = username ? String(username) : null;
+  if (activeUser) migrateLegacyFor(activeUser);
+  return { user: activeUser };
+});
+
+// Messages — stored per-user under ~/.rsps_hub/users/<name>/messages.json
 ipcMain.handle('messages-get', () => {
+  const p = messagesPath();
+  if (!p) return {}; // not logged in — never surface legacy/other users' data
   try {
-    if (fs.existsSync(MESSAGES_PATH))
-      return JSON.parse(fs.readFileSync(MESSAGES_PATH, 'utf8'));
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch (_) {}
   return {};
 });
 
 ipcMain.handle('messages-save', (_, data) => {
+  const p = messagesPath();
+  if (!p) return false;
   try {
-    fs.mkdirSync(RSPS_DIR, { recursive: true });
-    fs.writeFileSync(MESSAGES_PATH, JSON.stringify(data, null, 2));
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(data, null, 2));
     return true;
   } catch (_) { return false; }
 });
 
-// Music prefs: favorites, volume, shuffle, repeat, last track
+// Music prefs: favorites, volume, shuffle, repeat, last track — per-user.
 const MUSIC_DEFAULTS = { favorites: [], volume: 0.6, shuffle: false, repeat: 'off', lastTrackId: null };
 ipcMain.handle('music-prefs-get', () => {
+  const p = musicPrefsPath();
+  if (!p) return MUSIC_DEFAULTS;
   try {
-    if (fs.existsSync(MUSIC_PREFS_PATH)) {
-      return { ...MUSIC_DEFAULTS, ...JSON.parse(fs.readFileSync(MUSIC_PREFS_PATH, 'utf8')) };
+    if (fs.existsSync(p)) {
+      return { ...MUSIC_DEFAULTS, ...JSON.parse(fs.readFileSync(p, 'utf8')) };
     }
   } catch (_) {}
   return MUSIC_DEFAULTS;
 });
 ipcMain.handle('music-prefs-save', (_, data) => {
+  const p = musicPrefsPath();
+  if (!p) return false;
   try {
-    fs.mkdirSync(RSPS_DIR, { recursive: true });
+    fs.mkdirSync(path.dirname(p), { recursive: true });
     const merged = { ...MUSIC_DEFAULTS, ...(data || {}) };
-    fs.writeFileSync(MUSIC_PREFS_PATH, JSON.stringify(merged, null, 2));
+    fs.writeFileSync(p, JSON.stringify(merged, null, 2));
     return true;
   } catch (_) { return false; }
 });

@@ -197,6 +197,23 @@ function dmStorePush(username, msg) {
   dmStoreSave(); // write to disk immediately on every sent message
 }
 
+// Shared logout teardown. Wipes per-user in-memory caches and un-scopes the
+// file paths in main.js so a subsequent login can't accidentally read/write
+// the previous user's folder. Call from every logout path.
+async function logoutCleanup() {
+  state.user = null;
+  state.profile = null;
+  // Clear DM cache (private messages must not leak to the next login)
+  for (const k of Object.keys(DM_STORE)) delete DM_STORE[k];
+  // Clear server favourites (will be re-fetched from server on next login)
+  state.favourites.clear();
+  // Tell music module to drop its prefs (favs, last track, etc.)
+  if (window.clearMusicPrefs) try { window.clearMusicPrefs(); } catch {}
+  // Un-scope main.js file paths
+  try { await window.hub.setActiveUser(null); } catch {}
+  renderUser();
+}
+
 // ── STATE ─────────────────────────────────────────────────────────────────────
 
 let state = {
@@ -260,19 +277,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (el) el.textContent = 'v' + v;
   } catch {}
 
-  // Load saved DM history from disk
-  await dmStoreLoad();
-
   // If "remember me" was disabled on last login, clear the saved session before loading
   if (localStorage.getItem('rsps_hub_remember') === 'false') {
     await window.hub.post('/api/auth/logout', {}).catch(() => {});
   }
 
-  // Try to load user session
+  // Try to load user session. We need the username BEFORE loading any
+  // per-user caches (DMs, music prefs) so the right user's folder is read.
   try {
     const userData = await api.getUser();
     if (userData?.username) {
       state.user = userData;
+      await window.hub.setActiveUser(userData.username);
+      // Now safe to load the caller's private DM history from disk.
+      await dmStoreLoad();
+      // Reload music prefs scoped to this user (favs, last track, etc.).
+      if (window.reloadMusicPrefs) await window.reloadMusicPrefs();
       renderUser();
       startHeartbeat();
       startMessagePolling();
@@ -349,9 +369,7 @@ function setupWindowControls() {
   // Logout
   document.getElementById('btn-logout')?.addEventListener('click', async () => {
     try { await api.logout(); } catch {}
-    state.user = null;
-    state.profile = null;
-    renderUser();
+    await logoutCleanup();
     closeAllDropdowns();
   });
 }
@@ -1958,11 +1976,32 @@ function renderUser() {
   }
 }
 
+// Ensures both auth buttons are in their clean "ready to click" state and
+// any error banners + password fields are cleared. Call this whenever the
+// auth screen is about to become visible OR when toggling between login
+// and register views — otherwise a prior in-progress state leaks through.
+function resetAuthForms() {
+  const loginBtn = document.getElementById('asl-btn');
+  if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = 'LOGIN'; }
+  const regBtn = document.getElementById('asr-btn');
+  if (regBtn)   { regBtn.disabled   = false; regBtn.textContent   = 'CREATE ACCOUNT'; }
+  const loginErr = document.getElementById('asl-err');
+  if (loginErr) { loginErr.style.display = 'none'; loginErr.textContent = ''; }
+  const regErr = document.getElementById('asr-err');
+  if (regErr)   { regErr.style.display   = 'none'; regErr.textContent   = ''; }
+  // Clear password fields (but leave username — users expect that to persist)
+  const loginPass = document.getElementById('asl-pass');
+  if (loginPass) loginPass.value = '';
+  const regPass = document.getElementById('asr-pass');
+  if (regPass)   regPass.value   = '';
+}
+
 function showAuthScreen() {
   const el = document.getElementById('auth-screen');
   if (!el) return;
   el.style.display = 'flex';
   el.classList.remove('hidden');
+  resetAuthForms();
   // Reuse splash canvas particle system for auth screen
   const canvas = document.getElementById('auth-canvas');
   if (canvas && !canvas._animating) {
@@ -2018,13 +2057,16 @@ function setupAuthForms() {
     });
   }
 
-  // Toggle login ↔ register
+  // Toggle login ↔ register. Also reset button + error state every flip so
+  // a stale "SIGNING IN…" / "CREATING…" never leaks between the two views.
   document.getElementById('asl-to-reg')?.addEventListener('click', () => {
+    resetAuthForms();
     document.getElementById('auth-screen-login').style.display    = 'none';
     document.getElementById('auth-screen-register').style.display = '';
     document.getElementById('asr-user')?.focus();
   });
   document.getElementById('asr-to-login')?.addEventListener('click', () => {
+    resetAuthForms();
     document.getElementById('auth-screen-register').style.display = 'none';
     document.getElementById('auth-screen-login').style.display    = '';
     document.getElementById('asl-user')?.focus();
@@ -2044,10 +2086,21 @@ function setupAuthForms() {
   togglePass('asl-pass', 'asl-show');
   togglePass('asr-pass', 'asr-show');
 
-  // After successful auth: hide screen, start services
+  // After successful auth: hide screen, start services.
+  // Anything that talks to main/Java is best-effort — if the main process is
+  // running older preload.js without a new IPC handler, we don't want to
+  // deadlock the sign-in button. Wrap each call defensively.
   const onAuthSuccess = async (res, isNew) => {
     state.user = { username: res.username, token: res.token, isStaff: !!res.isStaff };
-    state.profile = await window.hub.getProfile(res.username).catch(() => null);
+    // Scope per-user caches BEFORE loading them (best effort — old main.js
+    // without this handler just silently returns undefined, which is fine).
+    try { if (window.hub.setActiveUser) await window.hub.setActiveUser(res.username); } catch {}
+    // Wipe in-memory caches that belonged to whoever was logged in last.
+    for (const k of Object.keys(DM_STORE)) delete DM_STORE[k];
+    state.favourites.clear();
+    try { await dmStoreLoad(); } catch {}
+    try { if (window.reloadMusicPrefs) await window.reloadMusicPrefs(); } catch {}
+    try { state.profile = await window.hub.getProfile(res.username); } catch { state.profile = null; }
     renderUser();
     hideAuthScreen();
     closeAllDropdowns();
@@ -2070,7 +2123,9 @@ function setupAuthForms() {
     try {
       const res = await window.hub.post('/api/auth/login', { username: user, password: pass, remember });
       if (res?.error) throw new Error(res.error);
-      onAuthSuccess(res, false);
+      // Await so any failure inside onAuthSuccess reaches the catch block
+      // below and the button gets reset instead of stuck on "SIGNING IN…".
+      await onAuthSuccess(res, false);
     } catch (e) {
       err.textContent = e.message || 'Login failed.';
       err.style.display = '';
@@ -3455,9 +3510,7 @@ function bindSettingsEvents(el, initial) {
   // Logout
   el.querySelector('#set-logout')?.addEventListener('click', async () => {
     try { await api.logout(); } catch {}
-    state.user = null;
-    state.profile = null;
-    renderUser();
+    await logoutCleanup();
     closeAllDropdowns();
   });
 }

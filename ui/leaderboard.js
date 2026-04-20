@@ -34,12 +34,17 @@
     return Math.max(1, Math.min(99, Math.floor(1 + Math.pow(ratio, 0.65) * 98)));
   }
 
+  // Cap at top 50 — keeps the board competitive. Users below the cutoff
+  // still see their absolute rank via the pinned YOUR RANK row (server
+  // computes that via the `you` field regardless of limit).
+  const LB_LIMIT = 50;
+
   async function load() {
     state.loading = true;
     rerender();
     try {
       const data = await window.hub.get(
-        '/api/leaderboard?scope=' + state.scope + '&period=' + state.period
+        '/api/leaderboard?scope=' + state.scope + '&period=' + state.period + '&limit=' + LB_LIMIT
       );
       state.rows  = data.rows || [];
       state.you   = data.you || null;
