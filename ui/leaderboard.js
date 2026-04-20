@@ -82,8 +82,9 @@
       r.isYou     ? 'lb-you'    : '',
       opts.pinned ? 'lb-pinned' : '',
     ].filter(Boolean).join(' ');
+    // Rows are clickable — open that user's public profile modal.
     return `
-      <div class="${cls}">
+      <div class="${cls} lb-clickable" data-username="${esc(r.username)}">
         <div class="lb-rank">${r.rank <= 3 ? rankBadge(r.rank) : `#${r.rank}`}</div>
         <div class="lb-avatar">${avatarHtml(r)}</div>
         <div class="lb-info">
@@ -132,6 +133,13 @@
     // Update total count display
     const totalEl = el.querySelector('.lb-total');
     if (totalEl) totalEl.textContent = state.total + (state.total === 1 ? ' player' : ' players');
+    // Row → profile modal. Delegated so it survives re-renders.
+    body.querySelectorAll('.lb-clickable').forEach(row => {
+      row.addEventListener('click', () => {
+        const u = row.dataset.username;
+        if (u && window.openUserProfile) window.openUserProfile(u);
+      });
+    });
   }
 
   function render(rootEl) {

@@ -146,11 +146,30 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      // Production builds disable DevTools entirely. Users shouldn't be able
+      // to open the renderer console to inspect auth tokens, edit UI state,
+      // or tamper with the API layer. Dev builds keep it enabled.
+      devTools: !app.isPackaged,
     }
   });
 
   mainWindow.loadFile(path.join(__dirname, 'ui', 'index.html'));
+
+  // Defense-in-depth: even though devTools:false blocks openDevTools(), also
+  // intercept the keyboard shortcuts (F12, Ctrl+Shift+I/J/C, Cmd+Opt+I)
+  // in packaged builds so the UI doesn't flash a DevTools window attempt.
+  if (app.isPackaged) {
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      const key = (input.key || '').toLowerCase();
+      const ctrlShift = (input.control || input.meta) && input.shift;
+      const blocked =
+        key === 'f12' ||
+        (ctrlShift && (key === 'i' || key === 'j' || key === 'c')) ||
+        (input.meta && input.alt && key === 'i'); // Cmd+Option+I on macOS
+      if (blocked) event.preventDefault();
+    });
+  }
 
   // Lock the renderer down: no external navigation, no popups
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

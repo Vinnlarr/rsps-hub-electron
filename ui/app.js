@@ -197,6 +197,60 @@ function dmStorePush(username, msg) {
   dmStoreSave(); // write to disk immediately on every sent message
 }
 
+// ── TAB DATA CACHE ─────────────────────────────────────────────────────────
+// Stale-while-revalidate cache. Each entry holds the last-fetched payload +
+// timestamp. Tab render functions look here first (instant paint), then
+// kick off a background refresh if the entry is stale, and re-render when
+// fresh data arrives. Entries are cleared on logout.
+window.DATA_CACHE = {
+  stats:         { data: null, at: 0, ttl: 60_000 },
+  friends:       { data: null, at: 0, ttl: 30_000 },
+  friendReqs:    { data: null, at: 0, ttl: 30_000 },
+  conversations: { data: null, at: 0, ttl: 30_000 },
+};
+
+/**
+ * Get cached data (possibly stale) and optionally trigger a background
+ * refresh. Returns { data, isStale }. If no cache exists yet, returns
+ * { data: null, isStale: true } and caller must fetch fresh.
+ */
+window.getCached = function getCached(key) {
+  const e = window.DATA_CACHE[key];
+  if (!e) return { data: null, isStale: true };
+  const isStale = !e.data || (Date.now() - e.at) > e.ttl;
+  return { data: e.data, isStale };
+};
+window.setCache = function setCache(key, data) {
+  const e = window.DATA_CACHE[key];
+  if (!e) window.DATA_CACHE[key] = { data, at: Date.now(), ttl: 30_000 };
+  else { e.data = data; e.at = Date.now(); }
+};
+window.clearCaches = function clearCaches() {
+  for (const k of Object.keys(window.DATA_CACHE)) {
+    window.DATA_CACHE[k].data = null;
+    window.DATA_CACHE[k].at = 0;
+  }
+};
+
+/** Fire off all the expensive tab fetches in parallel right after login so
+ *  switching to those tabs is instant. Ignore failures silently — the tab
+ *  render functions will fall back to a fresh fetch on first view. */
+async function prefetchTabs() {
+  window.hub.get('/api/stats/me').then(d => {
+    if (d && !d.error && 'totalMinutes' in d) window.setCache('stats', d);
+  }).catch(() => {});
+  Promise.all([
+    window.hub.get('/api/friends').catch(() => null),
+    window.hub.get('/api/friends/requests').catch(() => null),
+  ]).then(([f, r]) => {
+    if (f) window.setCache('friends', f);
+    if (r) window.setCache('friendReqs', r);
+  });
+  window.hub.get('/api/messages').then(d => {
+    if (d) window.setCache('conversations', d);
+  }).catch(() => {});
+}
+
 // Shared logout teardown. Wipes per-user in-memory caches and un-scopes the
 // file paths in main.js so a subsequent login can't accidentally read/write
 // the previous user's folder. Call from every logout path.
@@ -207,6 +261,8 @@ async function logoutCleanup() {
   for (const k of Object.keys(DM_STORE)) delete DM_STORE[k];
   // Clear server favourites (will be re-fetched from server on next login)
   state.favourites.clear();
+  // Clear tab data cache so the next login doesn't see the previous user's cached data
+  window.clearCaches();
   // Tell music module to drop its prefs (favs, last track, etc.)
   if (window.clearMusicPrefs) try { window.clearMusicPrefs(); } catch {}
   // Un-scope main.js file paths
@@ -299,6 +355,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       startFriendRequestPolling();
       startFriendOnlinePolling();
       startAnnouncementPolling();
+      // Prefetch tab data so Stats/Friends/Chat open instantly from cache.
+      prefetchTabs();
     }
   } catch {}
 
@@ -965,18 +1023,46 @@ async function renderAltContent(tab, el) {
   }
 
   else if (tab === 'friends') {
-    el.innerHTML = '<p class="loading-msg">Loading friends...</p>';
-    try {
-      const [friendsData, reqData] = await Promise.all([
-        api.getFriends().catch(() => ({ friends: [] })),
-        api.getFriendRequests().catch(() => ({ requests: [] })),
-      ]);
-      const friends  = friendsData.friends  || [];
-      const requests = reqData.requests     || [];
-      state.friends = friends; // cache for group chat picker
+    // Instant paint from cache + background refresh if stale.
+    const drawFriends = (friendsData, reqData) => {
+      const friends  = friendsData?.friends || [];
+      const requests = reqData?.requests    || [];
+      state.friends = friends;
       el.innerHTML = buildFriendsHTML({ friends, requests });
       bindFriendsEvents(el);
-    } catch (e) { el.innerHTML = '<p class="empty-msg">Could not load friends.</p>'; }
+    };
+    const cachedF = window.getCached?.('friends');
+    const cachedR = window.getCached?.('friendReqs');
+    const initialPanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
+    const stillOnFriends = () =>
+      document.querySelector('.rs-tab.active')?.dataset?.panel === initialPanel
+      && document.contains(el);
+    if (cachedF?.data && cachedR?.data) {
+      drawFriends(cachedF.data, cachedR.data);
+      if (cachedF.isStale || cachedR.isStale) {
+        Promise.all([
+          api.getFriends().catch(() => null),
+          api.getFriendRequests().catch(() => null),
+        ]).then(([f, r]) => {
+          if (f) window.setCache?.('friends', f);
+          if (r) window.setCache?.('friendReqs', r);
+          // Critical: don't draw friends into the wrong tab if the user
+          // navigated away while the refresh was in flight.
+          if (stillOnFriends() && f && r) drawFriends(f, r);
+        });
+      }
+    } else {
+      el.innerHTML = '<p class="loading-msg">Loading friends...</p>';
+      try {
+        const [friendsData, reqData] = await Promise.all([
+          api.getFriends().catch(() => ({ friends: [] })),
+          api.getFriendRequests().catch(() => ({ requests: [] })),
+        ]);
+        if (friendsData) window.setCache?.('friends', friendsData);
+        if (reqData)     window.setCache?.('friendReqs', reqData);
+        drawFriends(friendsData, reqData);
+      } catch (e) { el.innerHTML = '<p class="empty-msg">Could not load friends.</p>'; }
+    }
   }
 
   else if (tab === 'leaderboard') {
@@ -1039,14 +1125,14 @@ async function renderAltContent(tab, el) {
   }
 
   else if (tab === 'achievements') {
-    el.innerHTML = `
-      <div class="alt-header"><h2>ACHIEVEMENTS</h2><p>Track your milestones across all servers</p></div>
-      <div class="coming-soon-wrap">
-        <span class="coming-soon-icon">🎖️</span>
-        <span class="coming-soon-title">Coming Soon</span>
-        <span class="coming-soon-sub">Achievements are being crafted — check back soon</span>
-      </div>
-    `;
+    if (window.renderAchievements) {
+      window.renderAchievements(el);
+    } else {
+      el.innerHTML = `
+        <div class="alt-header"><h2>ACHIEVEMENTS</h2><p>Track your milestones across all servers</p></div>
+        <p class="loading-msg">Loading achievements…</p>
+      `;
+    }
   }
 
   else if (tab === 'music') {
@@ -1357,10 +1443,21 @@ function bindFriendsEvents(el) {
 function renderConversationList(el, convos) {
   // Always read from DM_STORE so the last message shown is always current.
   // Seed any store-missing usernames from server convos or MOCK_MESSAGES.
+  const me = (state.user?.username || '').toLowerCase();
   const storeUsernames = new Set(Object.keys(DM_STORE));
+  // Filter yourself out — a conversation-with-yourself shouldn't be a thing,
+  // and if it ever got created (old bug, bad server response, etc.) it
+  // clutters the list with a "Vinnlarr — No messages yet" row.
+  for (const u of Array.from(storeUsernames)) {
+    if (u && u.toLowerCase() === me) {
+      storeUsernames.delete(u);
+      delete DM_STORE[u];
+    }
+  }
   for (const c of convos) {
     const u = c.username || c.with_user || c.other_user;
-    if (u && !storeUsernames.has(u)) storeUsernames.add(u);
+    if (!u || u.toLowerCase() === me) continue;
+    if (!storeUsernames.has(u)) storeUsernames.add(u);
   }
 
   const list = [...storeUsernames].map(username => {
@@ -1408,9 +1505,21 @@ function renderConversationList(el, convos) {
 }
 
 async function openDM(el, username) {
+  // Never open a DM with yourself — caller may pass own username by mistake
+  // (leaderboard self-click, stale click handler, etc.). Ignore and stay
+  // on the conversation list.
+  if (!username || username.toLowerCase() === (state.user?.username || '').toLowerCase()) {
+    state.activeDM = null;
+    renderAltContent('chat', el);
+    return;
+  }
   state.activeDM = username;
-  el.style.overflow = 'hidden';
-  el.style.padding  = '0';
+  // Reset any padding the host container may have (alt-panel has 24/28,
+  // slide-panel-body has 14/14). The DM wrapper itself manages its own
+  // internal padding, and if we leave the outer padding intact the DM's
+  // header and input row sit inside a second gutter that visibly jumps
+  // the panel wider/narrower when the user toggles between list and DM.
+  el.classList.add('dm-host');
   el.innerHTML = `
     <div class="dm-wrap">
       <div class="dm-header" style="padding:10px 14px 10px">
@@ -1428,8 +1537,7 @@ async function openDM(el, username) {
 
   el.querySelector('#dm-back').addEventListener('click', () => {
     state.activeDM = null;
-    el.style.overflow = '';
-    el.style.padding  = '';
+    el.classList.remove('dm-host');
     renderAltContent('chat', el);
   });
 
@@ -1467,30 +1575,44 @@ async function openDM(el, username) {
     })
     .catch(() => {});
 
+  // In-flight guard — prevents Enter-spam from queuing multiple sends of the
+  // same message before the first one has fully left the renderer. Separate
+  // from sendBtn.disabled so keyboard users are covered even if the button
+  // is invisible / missing.
+  let _sending = false;
   async function doSend() {
+    if (_sending) return;
     const content = input.value.trim();
     if (!content) return;
+    _sending = true;
     sendBtn.disabled = true;
+    input.disabled = true;
     input.value = '';
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const msg = { sender: state.profile.displayName || 'You', content, timestamp: now, isOwn: true, pending: true };
-    // Save to persistent local store — survives panel close/reopen
+    const msg = { sender: state.profile?.displayName || 'You', content, timestamp: now, isOwn: true, pending: true };
     dmStorePush(username, msg);
-    // Append to DOM immediately
     if (msgEl.querySelector('.empty-msg')) msgEl.innerHTML = '';
     const div = document.createElement('div');
     div.className = 'dm-msg own';
     div.innerHTML = `<div class="dm-bubble">${escHtml(content)}</div><span class="dm-ts">${escHtml(now)}</span>`;
     msgEl.appendChild(div);
     msgEl.scrollTop = msgEl.scrollHeight;
-    // Fire to server (best-effort)
-    api.sendMessage(username, content).catch(() => {});
+    // Await the send so the re-enable happens only AFTER the message is
+    // confirmed on the server. This is the actual fix for the duplicate-
+    // send bug: the previous code re-enabled the button in the next tick
+    // (before the network round-trip), letting a second Enter press queue
+    // an identical send while the first was still in flight.
+    try { await api.sendMessage(username, content); } catch {}
+    _sending = false;
     sendBtn.disabled = false;
+    input.disabled = false;
     input.focus();
   }
 
   sendBtn.addEventListener('click', doSend);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !_sending) { e.preventDefault(); doSend(); }
+  });
   input.focus();
 }
 
@@ -1740,9 +1862,9 @@ function showServerDetail(server) {
       <div class="sd-header">
         <div class="sd-icon" style="background:${bannerColor(server.name)};border-color:${accent}">
           ${server.iconUrl
-            ? `<img src="${escHtml(server.iconUrl)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
-            : ''}
-          <span>${escHtml(server.name[0].toUpperCase())}</span>
+            ? `<img src="${escHtml(server.iconUrl)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+               <span style="display:none">${escHtml(server.name[0].toUpperCase())}</span>`
+            : `<span>${escHtml(server.name[0].toUpperCase())}</span>`}
         </div>
         <div class="sd-title-block">
           <div class="sd-name-row">
@@ -1772,21 +1894,21 @@ function showServerDetail(server) {
           </div>
         ` : ''}
 
-        ${shots.length ? `
-          <div class="sd-section">
-            <h3 class="sd-section-title">SCREENSHOTS</h3>
-            <div class="sd-screenshots">
-              ${shots.map(s => `<img src="${escHtml(s)}" alt="Screenshot" class="sd-screenshot" onerror="this.remove()">`).join('')}
-            </div>
-          </div>
-        ` : ''}
+        <div class="sd-section">
+          <h3 class="sd-section-title">SCREENSHOTS</h3>
+          ${shots.length
+            ? `<div class="sd-screenshots">
+                ${shots.map(s => `<img src="${escHtml(s)}" alt="Screenshot" class="sd-screenshot" onerror="this.remove()">`).join('')}
+              </div>`
+            : `<div class="sd-empty-section">No screenshots yet — the server owner hasn't uploaded any.</div>`}
+        </div>
 
-        ${server.changelog ? `
-          <div class="sd-section">
-            <h3 class="sd-section-title">CHANGELOG</h3>
-            <div class="sd-changelog">${escHtml(server.changelog).replace(/\n/g, '<br>')}</div>
-          </div>
-        ` : ''}
+        <div class="sd-section">
+          <h3 class="sd-section-title">CHANGELOG</h3>
+          ${server.changelog
+            ? `<div class="sd-changelog">${escHtml(server.changelog).replace(/\n/g, '<br>')}</div>`
+            : `<div class="sd-empty-section">No changelog posted yet — check back later for patch notes.</div>`}
+        </div>
 
       </div>
 
@@ -2106,6 +2228,9 @@ function setupAuthForms() {
     closeAllDropdowns();
     startHeartbeat(); startMessagePolling(); startFriendRequestPolling();
     startFriendOnlinePolling(); startAnnouncementPolling();
+    // Kick off background prefetch for expensive tab data so the first
+    // click on Stats / Friends / Chat renders instantly from cache.
+    prefetchTabs();
     showToast(isNew ? 'Welcome, ' + res.username + '!' : 'Welcome back, ' + res.username + '!', 'success');
   };
 
@@ -2212,13 +2337,19 @@ function startActiveSessionChip(serverName) {
   timeEl.textContent = '0:00:00';
   chip.style.display = 'flex';
 
+  // Give the VPS a few seconds to register our session_start, then refresh
+  // the server list so our own card shows +1 Hub Player without waiting
+  // for the next normal poll cycle.
+  setTimeout(() => { loadServers().catch(() => {}); }, 4000);
+
   // Poll the Java backend — it tracks the real process tree and clears
   // activeSession only when ALL spawned processes (including child JARs) have exited.
   _activeSessionInterval = setInterval(async () => {
     try {
       const status = await window.hub.get('/api/session/status');
       if (!status.active) {
-        // Game has fully closed — stop chip and refresh playtime/XP bars
+        // Game has fully closed — stop chip and refresh everything that
+        // might have updated server-side (playtime, hub_players, stats).
         clearInterval(_activeSessionInterval);
         _activeSessionInterval = null;
         chip.style.display = 'none';
@@ -2226,7 +2357,17 @@ function startActiveSessionChip(serverName) {
           const pt = await api.getPlaytime();
           if (pt && pt.perServer) state.playtime = pt.perServer;
           updatePlaytimeStatus();
-          renderServers();
+          // Pull fresh server list from VPS (new hub_players, per-server totals)
+          await loadServers();
+          // If the Stats tab is currently the active panel, re-render it
+          // so totals/heatmap/top-servers reflect the just-ended session.
+          const activePanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
+          const altContent  = document.getElementById('alt-content');
+          if (activePanel === 'stats' && altContent && window.renderStats) {
+            window.renderStats(altContent);
+          } else if (activePanel === 'achievements' && altContent && window.renderAchievements) {
+            window.renderAchievements(altContent);
+          }
         } catch {}
         return;
       }
@@ -2515,8 +2656,17 @@ function startSessionTimer() {
 
 // ── DEVELOPER PORTAL ─────────────────────────────────────────────────────────
 
-const DEV_TAGS_LIST = ['Custom','PvP','Economy','OSRS','Hardcore','Leagues','Vanilla','Ironman',
-                       '1x XP','High XP','Group Ironman','Skilling','Minigames','Raids'];
+// Canonical tag list shown as checkboxes in the dev portal. Any tag on a
+// server that isn't in this list still shows up as a checkbox (pre-checked)
+// so saving never accidentally wipes something the server already had.
+const DEV_TAGS_LIST = [
+  'OSRS', 'Pre-EOC', 'EOC', 'Custom',
+  'PvM', 'PvP', 'Economy', 'Gambling',
+  'Ironman', 'Group Ironman', 'Hardcore', 'Leagues',
+  'Skilling', 'Raids', 'Bossing', 'Minigames',
+  'Vanilla', '1x XP', 'High XP',
+  'RuneLite', 'Mobile',
+];
 const XP_RATES = ['1x','5x','10x','25x','50x','100x','Custom/Varies'];
 
 let _devPortalEl  = null;
@@ -2909,6 +3059,7 @@ function renderDevEditor(el, server) {
           <input class="dp-input" id="dp-icon-url" type="text" value="${escHtml(s.iconUrl)}" placeholder="https://...">
           <button class="dp-file-btn" id="dp-icon-pick">📁</button>
         </div>
+        <div class="dp-size-hint">Recommended: <b>256 × 256</b> (square, 1:1) · PNG with transparent background</div>
         <div class="dp-img-thumb" id="dp-icon-preview">${s.iconUrl ? `<img src="${escHtml(s.iconUrl)}" onerror="this.style.display='none'">` : ''}</div>
       </div>
       <div class="dp-field">
@@ -2917,6 +3068,7 @@ function renderDevEditor(el, server) {
           <input class="dp-input" id="dp-card-banner-url" type="text" value="${escHtml(s.cardBannerUrl)}" placeholder="https://...">
           <button class="dp-file-btn" id="dp-card-banner-pick">📁</button>
         </div>
+        <div class="dp-size-hint">Recommended: <b>840 × 460</b> (aspect 1.83:1) · displays at 210×115 · PNG or JPG</div>
         <div class="dp-img-thumb dp-img-wide" id="dp-card-banner-preview">${s.cardBannerUrl ? `<img src="${escHtml(s.cardBannerUrl)}" onerror="this.style.display='none'">` : ''}</div>
       </div>
       <div class="dp-field">
@@ -2925,6 +3077,7 @@ function renderDevEditor(el, server) {
           <input class="dp-input" id="dp-banner-url" type="text" value="${escHtml(s.bannerUrl)}" placeholder="https://...">
           <button class="dp-file-btn" id="dp-banner-pick">📁</button>
         </div>
+        <div class="dp-size-hint">Recommended: <b>1920 × 540</b> (ultra-wide, aspect 3.5:1) · PNG or JPG</div>
         <div class="dp-img-thumb dp-img-wide" id="dp-banner-preview">${s.bannerUrl ? `<img src="${escHtml(s.bannerUrl)}" onerror="this.style.display='none'">` : ''}</div>
       </div>
     </div>
@@ -2979,18 +3132,34 @@ function renderDevEditor(el, server) {
     <div class="dp-form-section">
       <div class="dp-form-section-hdr">🏷 Tags</div>
       <div class="dp-tags-grid">
-        ${DEV_TAGS_LIST.map(t => `
-          <label class="dp-tag-check">
-            <input type="checkbox" class="dp-tag-cb" data-tag="${t}"${tags.includes(t) ? ' checked' : ''}>
-            <span class="dp-tag-lbl">${t}</span>
-          </label>`).join('')}
+        ${(() => {
+          // Build the render list: canonical tags + any extras the server
+          // already has (case-insensitive compare so "PVM" / "PvM" don't both
+          // render). Extras land at the end so the form looks consistent.
+          const lc = t => String(t).trim().toLowerCase();
+          const existing = (Array.isArray(tags) ? tags : []).map(String);
+          const existingLc = new Set(existing.map(lc));
+          const canonLc = new Set(DEV_TAGS_LIST.map(lc));
+          const extras = existing.filter(t => !canonLc.has(lc(t)));
+          return [...DEV_TAGS_LIST, ...extras].map(t => {
+            const checked = existingLc.has(lc(t)) ? ' checked' : '';
+            return `
+              <label class="dp-tag-check">
+                <input type="checkbox" class="dp-tag-cb" data-tag="${escHtml(t)}"${checked}>
+                <span class="dp-tag-lbl">${escHtml(t)}</span>
+              </label>`;
+          }).join('');
+        })()}
       </div>
-      ${_devIsStaff ? `
+      ${!isNew ? `
       <div style="margin-top:12px">
         <label class="dp-tag-check">
           <input type="checkbox" id="dp-visible"${s.visible ? ' checked' : ''}>
           <span class="dp-tag-lbl">Visible in store</span>
         </label>
+        <div style="font-size:0.72rem;color:#6a5a3a;margin-top:4px;margin-left:24px;font-style:italic">
+          Uncheck to hide your listing while you polish it.
+        </div>
       </div>` : ''}
     </div>
 
@@ -3148,7 +3317,12 @@ function devCollect(el) {
     discord_url:     el.querySelector('#dp-discord')?.value.trim()        || '',
     tags:            tags.join(','),
     screenshots:     shots,
-    visible:         el.querySelector('#dp-visible')?.checked ? 1 : 0,
+    // Only include `visible` if the checkbox is actually in the form. When
+    // it's absent (e.g. on a new submission), leave it out so the server
+    // doesn't accidentally get hidden. Backend keeps the existing value.
+    ...(el.querySelector('#dp-visible')
+        ? { visible: el.querySelector('#dp-visible').checked ? 1 : 0 }
+        : {}),
     players_online:  parseInt(el.querySelector('#dp-players')?.value || '0'),
   };
 }
@@ -3161,10 +3335,16 @@ async function devPortalSave(el, server) {
   btn.disabled = true; btn.textContent = server ? 'Saving…' : 'Submitting…';
   try {
     if (server) {
-      await window.hub.post('/api/dev/update', { ...data, id: server.id });
+      const res = await window.hub.post('/api/dev/update', { ...data, id: server.id });
+      if (res?.error) throw new Error(res.error);
       showToast('Changes saved!', 'success');
+      // Refresh in-memory server list so subsequent card + detail views
+      // pick up the new banner/icon/etc. Without this, state.servers keeps
+      // the pre-save snapshot and new images silently don't render.
+      try { await loadServers(); } catch {}
     } else {
-      await window.hub.post('/api/dev/submit', data);
+      const res = await window.hub.post('/api/dev/submit', data);
+      if (res?.error) throw new Error(res.error);
       showToast('Server submitted for review!', 'success');
       devPortalLoadSection('my-servers');
     }
@@ -3253,8 +3433,10 @@ function buildDevDetailPreview(s) {
       </div>
       <div class="sd-header">
         <div class="sd-icon" style="background:${grad};border-color:${escHtml(accent)}">
-          ${icon ? `<img src="${escHtml(icon)}" alt="" onerror="this.style.display='none'">` : ''}
-          <span>${escHtml(name[0]?.toUpperCase()||'?')}</span>
+          ${icon
+            ? `<img src="${escHtml(icon)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+               <span style="display:none">${escHtml(name[0]?.toUpperCase()||'?')}</span>`
+            : `<span>${escHtml(name[0]?.toUpperCase()||'?')}</span>`}
         </div>
         <div class="sd-title-block">
           <div class="sd-name-row">

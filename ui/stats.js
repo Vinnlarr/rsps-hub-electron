@@ -118,7 +118,7 @@
         const tip = cell.mins
           ? `${fmtHours(cell.mins)} on ${fmtDate(cell.iso)}`
           : `No playtime on ${fmtDate(cell.iso)}`;
-        return `<div class="sd-cell sd-l${cell.level}" style="grid-column:${c+2};grid-row:${r+1}" title="${esc(tip)}"></div>`;
+        return `<div class="sd-cell sd-l${cell.level}" style="grid-column:${c+2};grid-row:${r+1}" data-tip="${esc(tip)}"></div>`;
       }).join('')
     ).join('');
 
@@ -249,6 +249,205 @@
     return Math.round(r * r * 60000);
   }
 
+  // ── hub-wide achievement badges ──────────────────────
+  // 100+ cross-cutting goals covering playtime, exploration, streaks, skill
+  // tiers, time-of-day, active days, account tenure, leaderboard rank, and
+  // single-server focus. Everything here is computable from the fields the
+  // stats endpoint already returns.
+  function computeHubBadges(data) {
+    const totalMin      = data.totalMinutes || 0;
+    const totalHours    = totalMin / 60;
+    const servers       = data.serversPlayed || (data.topServers || []).length || 0;
+    const streak        = data.streak || 0;
+    const skill         = data.skillTotal || 0;
+    const rank          = data.globalRank || 0;
+    const top           = data.topServers || [];
+    const tod           = data.timeOfDay || {};
+    const heat          = data.heatmap || {};
+    const hasAvatar     = !!data.hasAvatar;
+    const milestones    = data.milestones || [];
+    const longest       = milestones.find(m => m.type === 'longestSession');
+    const longestMin    = longest ? parseInt((longest.label || '').match(/\d+/)?.[0] || '0', 10) : 0;
+    // Days with any activity in the heatmap
+    const activeDays    = Object.values(heat).filter(v => (+v) > 0).length;
+    // Max minutes in a single day
+    const busiestDay    = Math.max(0, ...Object.values(heat).map(v => +v || 0));
+    // How many servers the user has reached a given level on
+    const serversAtLv   = lv => top.filter(s => (s.level || 0) >= lv).length;
+    // Account age in days
+    const ageDays = data.createdAt
+      ? Math.floor((Date.now() - new Date(data.createdAt).getTime()) / 86400000)
+      : 0;
+    // Time-of-day buckets (minutes)
+    const todBuckets = ['morning','afternoon','evening','night'].map(k => +(tod[k] || 0));
+    const activeTodBuckets = todBuckets.filter(m => m >= 30).length;
+    // Top-server minutes helpers
+    const topMinsOn = (n) => top[n - 1]?.minutes || 0;
+
+    return [
+      // ── PLAYTIME ────────────────────────────────
+      { icon:'⚔️',  name:'First Steps',     sub:'Play your first session',    unlocked: totalMin > 0 },
+      { icon:'🔥',  name:'Warming Up',      sub:'1 hour played',              unlocked: totalHours >= 1 },
+      { icon:'📈',  name:'Getting Into It', sub:'5 hours played',             unlocked: totalHours >= 5 },
+      { icon:'⏳',  name:'Grinder',         sub:'10 hours played',            unlocked: totalHours >= 10 },
+      { icon:'🔨',  name:'Committed',       sub:'25 hours played',            unlocked: totalHours >= 25 },
+      { icon:'💪',  name:'Addict',          sub:'50 hours played',            unlocked: totalHours >= 50 },
+      { icon:'💎',  name:'Dedicated',       sub:'100 hours played',           unlocked: totalHours >= 100 },
+      { icon:'🛡️', name:'Veteran',         sub:'250 hours played',           unlocked: totalHours >= 250 },
+      { icon:'🗡️', name:'Die Hard',        sub:'500 hours played',           unlocked: totalHours >= 500 },
+      { icon:'👑',  name:'Hub Legend',      sub:'1000 hours played',          unlocked: totalHours >= 1000 },
+      { icon:'🌠',  name:'Immortal',        sub:'2500 hours played',          unlocked: totalHours >= 2500 },
+      { icon:'🏛️', name:'Eternal',         sub:'5000 hours played',          unlocked: totalHours >= 5000 },
+
+      // ── SERVER EXPLORATION ─────────────────────
+      { icon:'👣',  name:'Sampled',         sub:'Play 2 different servers',   unlocked: servers >= 2 },
+      { icon:'🔭',  name:'Scout',           sub:'Play 3 different servers',   unlocked: servers >= 3 },
+      { icon:'🗺️', name:'Explorer',        sub:'Play 5 different servers',   unlocked: servers >= 5 },
+      { icon:'🧭',  name:'Wanderer',        sub:'Play 10 different servers',  unlocked: servers >= 10 },
+      { icon:'🌍',  name:'Globetrotter',    sub:'Play 15 different servers',  unlocked: servers >= 15 },
+      { icon:'📚',  name:'Encyclopedia',    sub:'Play 20 different servers',  unlocked: servers >= 20 },
+      { icon:'🎓',  name:'Connoisseur',     sub:'Play 25 different servers',  unlocked: servers >= 25 },
+      { icon:'🏰',  name:'Hub Mayor',       sub:'Play 30 different servers',  unlocked: servers >= 30 },
+      { icon:'♾️',  name:'Omni-Player',     sub:'Play 40 different servers',  unlocked: servers >= 40 },
+
+      // ── LOGIN STREAKS ──────────────────────────
+      { icon:'📅',  name:'Returning Player', sub:'2-day login streak',        unlocked: streak >= 2 },
+      { icon:'🔁',  name:'Habit Forming',    sub:'3-day login streak',        unlocked: streak >= 3 },
+      { icon:'🗓️', name:'Week Warrior',     sub:'7-day login streak',        unlocked: streak >= 7 },
+      { icon:'📆',  name:'Fortnightly',      sub:'14-day login streak',       unlocked: streak >= 14 },
+      { icon:'🏆',  name:'Month Master',     sub:'30-day login streak',       unlocked: streak >= 30 },
+      { icon:'🎖️', name:'Two-Month Grind',  sub:'60-day login streak',       unlocked: streak >= 60 },
+      { icon:'💯',  name:'100-Day Club',     sub:'100-day login streak',      unlocked: streak >= 100 },
+      { icon:'📜',  name:'Year Round',       sub:'365-day login streak',      unlocked: streak >= 365 },
+
+      // ── FIRST-TIME TIER UNLOCKS (any server) ───
+      { icon:'🟫',  name:'First Iron',       sub:'Reach Iron tier on any server',     unlocked: serversAtLv(5)  >= 1 },
+      { icon:'⚙️',  name:'First Steel',      sub:'Reach Steel tier on any server',    unlocked: serversAtLv(10) >= 1 },
+      { icon:'🖤',  name:'First Black',      sub:'Reach Black tier on any server',    unlocked: serversAtLv(25) >= 1 },
+      { icon:'🟢',  name:'First Mithril',    sub:'Reach Mithril tier on any server',  unlocked: serversAtLv(40) >= 1 },
+      { icon:'🟩',  name:'First Adamant',    sub:'Reach Adamant tier on any server',  unlocked: serversAtLv(55) >= 1 },
+      { icon:'🔷',  name:'First Rune',       sub:'Reach Rune tier on any server',     unlocked: serversAtLv(70) >= 1 },
+      { icon:'🟣',  name:'First Dragon',     sub:'Reach Dragon tier on any server',   unlocked: serversAtLv(85) >= 1 },
+      { icon:'🔥',  name:'First Infernal',   sub:'Reach Lv 99 on any server',         unlocked: serversAtLv(99) >= 1 },
+
+      // ── MULTI-SERVER TIER MASTERY (3 servers) ──
+      { icon:'🥉',  name:'Iron Collector',     sub:'Iron tier on 3 servers',     unlocked: serversAtLv(5)  >= 3 },
+      { icon:'🥈',  name:'Steel Collector',    sub:'Steel tier on 3 servers',    unlocked: serversAtLv(10) >= 3 },
+      { icon:'🪨',  name:'Black Collector',    sub:'Black tier on 3 servers',    unlocked: serversAtLv(25) >= 3 },
+      { icon:'🌿',  name:'Mithril Collector',  sub:'Mithril tier on 3 servers',  unlocked: serversAtLv(40) >= 3 },
+      { icon:'🌳',  name:'Adamant Collector',  sub:'Adamant tier on 3 servers',  unlocked: serversAtLv(55) >= 3 },
+      { icon:'💠',  name:'Rune Collector',     sub:'Rune tier on 3 servers',     unlocked: serversAtLv(70) >= 3 },
+      { icon:'🐉',  name:'Dragon Collector',   sub:'Dragon tier on 3 servers',   unlocked: serversAtLv(85) >= 3 },
+      { icon:'🏆',  name:'Max Collector',      sub:'Lv 99 on 3 servers',         unlocked: serversAtLv(99) >= 3 },
+
+      // ── SKILL TOTAL ────────────────────────────
+      { icon:'📖',  name:'Rookie',        sub:'50 total skill levels',   unlocked: skill >= 50 },
+      { icon:'📘',  name:'Apprentice',    sub:'100 total skill levels',  unlocked: skill >= 100 },
+      { icon:'📗',  name:'Journeyman',    sub:'250 total skill levels',  unlocked: skill >= 250 },
+      { icon:'📙',  name:'Expert',        sub:'500 total skill levels',  unlocked: skill >= 500 },
+      { icon:'📕',  name:'Master',        sub:'1000 total skill levels', unlocked: skill >= 1000 },
+      { icon:'📜',  name:'Grandmaster',   sub:'1500 total skill levels', unlocked: skill >= 1500 },
+      { icon:'🪄',  name:'Ascendant',     sub:'2000 total skill levels', unlocked: skill >= 2000 },
+      { icon:'✨',  name:'Transcendent',  sub:'2500 total skill levels', unlocked: skill >= 2500 },
+
+      // ── TIME OF DAY ────────────────────────────
+      { icon:'🌅',  name:'Early Bird',       sub:'Play in the morning',         unlocked: (tod.morning   || 0) >= 30 },
+      { icon:'☀️', name:'Afternoon Player', sub:'Play in the afternoon',       unlocked: (tod.afternoon || 0) >= 30 },
+      { icon:'🌆',  name:'Golden Hour',      sub:'Play in the evening',         unlocked: (tod.evening   || 0) >= 30 },
+      { icon:'🌙',  name:'Night Owl',        sub:'Play in the night',           unlocked: (tod.night     || 0) >= 30 },
+      { icon:'🕓',  name:'Round the Clock',  sub:'Play in all 4 time-of-day buckets', unlocked: activeTodBuckets >= 4 },
+
+      // ── ACTIVE DAYS (heatmap) ──────────────────
+      { icon:'🗓️', name:'Active Week',      sub:'Play on 7 different days',    unlocked: activeDays >= 7 },
+      { icon:'📆',  name:'Active Month',     sub:'Play on 20 different days',   unlocked: activeDays >= 20 },
+      { icon:'🧱',  name:'Active Quarter',   sub:'Play on 50 different days',   unlocked: activeDays >= 50 },
+      { icon:'🏞️', name:'Active Year',      sub:'Play on 200 different days',  unlocked: activeDays >= 200 },
+      { icon:'🌋',  name:'Hot Day',          sub:'4h+ in a single day',         unlocked: busiestDay >= 240 },
+      { icon:'🪨',  name:'Grind Day',        sub:'8h+ in a single day',         unlocked: busiestDay >= 480 },
+
+      // ── ACCOUNT TENURE ─────────────────────────
+      { icon:'🌱',  name:'Hub Original',     sub:'Account among first 30 days', unlocked: data.createdAt && ageDays >= 0 && new Date(data.createdAt) <= new Date('2026-05-09') },
+      { icon:'🕰️', name:'1 Month Member',   sub:'Account 30+ days old',        unlocked: ageDays >= 30 },
+      { icon:'📅',  name:'6 Month Member',   sub:'Account 180+ days old',       unlocked: ageDays >= 180 },
+      { icon:'🎂',  name:'1 Year Member',    sub:'Account 365+ days old',       unlocked: ageDays >= 365 },
+      { icon:'🏛️', name:'Ancient',          sub:'Account 2+ years old',        unlocked: ageDays >= 730 },
+
+      // ── GLOBAL RANK ────────────────────────────
+      { icon:'📊',  name:'Top 1000',    sub:'Global rank ≤ 1000', unlocked: rank > 0 && rank <= 1000 },
+      { icon:'📈',  name:'Top 500',     sub:'Global rank ≤ 500',  unlocked: rank > 0 && rank <= 500 },
+      { icon:'⭐',  name:'Top 100',     sub:'Global rank ≤ 100',  unlocked: rank > 0 && rank <= 100 },
+      { icon:'💫',  name:'Top 50',      sub:'Global rank ≤ 50',   unlocked: rank > 0 && rank <= 50 },
+      { icon:'🌟',  name:'Top 25',      sub:'Global rank ≤ 25',   unlocked: rank > 0 && rank <= 25 },
+      { icon:'🥇',  name:'Top 10',      sub:'Global rank ≤ 10',   unlocked: rank > 0 && rank <= 10 },
+      { icon:'🏅',  name:'Top 5',       sub:'Global rank ≤ 5',    unlocked: rank > 0 && rank <= 5 },
+      { icon:'👑',  name:'Number One',  sub:'Global rank = 1',    unlocked: rank === 1 },
+
+      // ── LONGEST SESSION ────────────────────────
+      { icon:'🎮',  name:'First Session',   sub:'Complete a full session',     unlocked: !!milestones.find(m => m.type === 'firstSession') },
+      { icon:'🏃',  name:'Long Play',       sub:'2-hour single session',       unlocked: longestMin >= 120 },
+      { icon:'🔥',  name:'Marathon',        sub:'4-hour single session',       unlocked: longestMin >= 240 },
+      { icon:'⚡',  name:'Epic Run',        sub:'8-hour single session',       unlocked: longestMin >= 480 },
+      { icon:'🌙',  name:'All-Nighter',     sub:'12-hour single session',      unlocked: longestMin >= 720 },
+
+      // ── SINGLE-SERVER FOCUS ────────────────────
+      { icon:'🏠',  name:'Found Home',      sub:'10h on a single server',      unlocked: topMinsOn(1) >= 600 },
+      { icon:'❤️', name:'Loyal Fan',       sub:'50h on a single server',      unlocked: topMinsOn(1) >= 3000 },
+      { icon:'💖',  name:'True Believer',   sub:'100h on a single server',    unlocked: topMinsOn(1) >= 6000 },
+      { icon:'⚜️', name:'Devotee',         sub:'250h on a single server',    unlocked: topMinsOn(1) >= 15000 },
+      { icon:'🗿',  name:'Ascetic',         sub:'500h on a single server',    unlocked: topMinsOn(1) >= 30000 },
+
+      // ── BREADTH+DEPTH COMBOS ───────────────────
+      { icon:'⚖️', name:'Balanced',        sub:'10h+ on each of your top 3 servers', unlocked: top.length >= 3 && top.slice(0, 3).every(s => (s.minutes || 0) >= 600) },
+      { icon:'🎯',  name:'Sampler',         sub:'Lv 5+ on 10 different servers',      unlocked: serversAtLv(5)  >= 10 },
+      { icon:'🧩',  name:'Well-Traveled',   sub:'Lv 10+ on 5 different servers',      unlocked: serversAtLv(10) >= 5 },
+      { icon:'🔮',  name:'Polymath',        sub:'Lv 25+ on 3 different servers',      unlocked: serversAtLv(25) >= 3 },
+      { icon:'🎖️', name:'Well-Rounded',    sub:'Lv 40+ on 2 different servers',      unlocked: serversAtLv(40) >= 2 },
+
+      // ── PROFILE / META ─────────────────────────
+      { icon:'🖼️', name:'Face of the Hub', sub:'Upload a profile avatar',     unlocked: hasAvatar },
+      { icon:'🎉',  name:'Joined the Hub',  sub:'Create your RSPS Hub account', unlocked: !!data.createdAt },
+
+      // ── STYLE / HOOKS FOR FUTURE ───────────────
+      { icon:'❓',  name:'Secret Achievement', sub:'Find the hidden easter egg',  unlocked: false },
+      { icon:'🕵️', name:'Detective',          sub:'Discover all 5 hidden tabs',  unlocked: false },
+      { icon:'🎃',  name:'Halloween Hunter',   sub:'Play during Halloween event', unlocked: false },
+      { icon:'🎄',  name:'Christmas Spirit',   sub:'Play during Christmas event', unlocked: false },
+      { icon:'❄️', name:'Winter Grinder',     sub:'Play during Winter event',    unlocked: false },
+      { icon:'🌸',  name:'Spring Awakening',   sub:'Play during Spring event',    unlocked: false },
+      { icon:'🏐',  name:'Summer Vibes',       sub:'Play during Summer event',    unlocked: false },
+      { icon:'🍂',  name:'Autumn Glow',        sub:'Play during Autumn event',    unlocked: false },
+      { icon:'🎁',  name:'Gift Receiver',      sub:'Get a gift from staff',       unlocked: false },
+      { icon:'💌',  name:'Hub Pen Pal',        sub:'Send 100 DMs',                unlocked: false },
+      { icon:'🤝',  name:'First Friend',       sub:'Add your first friend',       unlocked: false },
+      { icon:'👥',  name:'Social Butterfly',   sub:'5 friends added',             unlocked: false },
+      { icon:'🌐',  name:'Community Pillar',   sub:'10 friends added',            unlocked: false },
+      { icon:'⭐',  name:'Hub Ambassador',     sub:'25 friends added',            unlocked: false },
+      { icon:'📝',  name:'Reviewer',           sub:'Write a server review',       unlocked: false },
+      { icon:'⭐',  name:'Critic',             sub:'Write 10 server reviews',     unlocked: false },
+      { icon:'🎵',  name:'Music Lover',        sub:'Favorite a music track',      unlocked: false },
+      { icon:'🎶',  name:'DJ',                 sub:'Favorite 25 music tracks',    unlocked: false },
+    ];
+  }
+
+  function buildHubBadges(data) {
+    const badges = computeHubBadges(data);
+    const earned = badges.filter(b => b.unlocked).length;
+    return `
+      <div class="sd-badge-grid">
+        ${badges.map(b => `
+          <div class="sd-badge ${b.unlocked ? 'unlocked' : 'locked'}" title="${esc(b.sub)}">
+            <span class="sd-badge-icon">${b.icon}</span>
+            <div class="sd-badge-body">
+              <div class="sd-badge-name">${esc(b.name)}</div>
+              <div class="sd-badge-sub">${esc(b.sub)}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="sd-badge-count">${earned} / ${badges.length} unlocked</div>
+    `;
+  }
+
   function buildServerMilestones(topServers) {
     if (!topServers.length) {
       return '<div class="sd-empty small">Play a server to start unlocking tier milestones.</div>';
@@ -350,17 +549,70 @@
   }
 
   // ── main render ────────────────────────────────────────
-  async function render(el) {
+  // When `username` is provided, render that user's public profile instead of
+  // the caller's own stats. Otherwise default to /api/stats/me.
+  async function render(el, username = null) {
+    const title = username
+      ? `${esc(username)}'S PROFILE`
+      : 'STATS';
+    const subtitle = username
+      ? `Public profile · stats & achievements`
+      : 'Your personal playtime dashboard';
     el.innerHTML = `
-      <div class="alt-header"><h2>STATS</h2><p>Your personal playtime dashboard</p></div>
-      <div class="sd-loading">Loading stats…</div>
+      <div class="alt-header"><h2>${title}</h2><p>${subtitle}</p></div>
+      <div class="sd-loading">Loading…</div>
     `;
-    let data;
-    try {
-      data = await window.hub.get('/api/stats/me');
-    } catch (e) {
-      console.error('[stats] load failed', e);
-      data = null;
+    const endpoint = username
+      ? '/api/stats/user/' + encodeURIComponent(username)
+      : '/api/stats/me';
+    // For own-profile view, check the shared tab cache first. If there's
+    // already fresh data from the login-time prefetch, render instantly
+    // and still kick off a background refresh in case anything's changed.
+    let data = null;
+    const useCache = !username && window.getCached;
+    // Capture which tab asked for this render so the background refresh
+    // callback can verify we're STILL on Stats before re-rendering.
+    // Otherwise the callback would re-render Stats into whatever tab the
+    // user switched to (Chat, Achievements, etc.) because #alt-content is
+    // the same DOM node across tabs.
+    const initialPanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
+    const shouldStillRender = () => {
+      if (username) {
+        // Profile-modal render — check the overlay still exists + contains el
+        const overlay = document.getElementById('user-profile-overlay');
+        return !!overlay && overlay.contains(el);
+      }
+      // Tab render — check we're still on the same tab AND the node is live
+      const nowPanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
+      return nowPanel === initialPanel && document.contains(el);
+    };
+
+    if (useCache) {
+      const { data: cached, isStale } = window.getCached('stats');
+      if (cached) {
+        data = cached;
+        if (isStale) {
+          window.hub.get(endpoint).then(fresh => {
+            if (fresh && 'totalMinutes' in fresh) {
+              window.setCache('stats', fresh);
+              if (shouldStillRender()) render(el, username);
+            }
+          }).catch(() => {});
+        }
+      }
+    }
+    if (!data) {
+      try {
+        data = await window.hub.get(endpoint);
+        if (useCache && data && 'totalMinutes' in data) window.setCache('stats', data);
+      } catch (e) {
+        console.error('[stats] load failed', e);
+        data = null;
+      }
+      // Another guard: between the time we kicked off the fetch and got a
+      // response, the user may have switched tabs. Bail out of the final
+      // render if so — don't overwrite whatever they're looking at now.
+      if (!shouldStillRender()) return;
     }
     // main.js returns { raw: '' } for non-JSON responses (e.g. the Java backend
     // 404'd because it's running an older build without /api/stats/me).
@@ -372,9 +624,11 @@
     if (isEmpty) {
       const hint = data && data.error
         ? esc(data.error)
-        : 'Stats endpoint unavailable — please fully close the launcher (both windows) and reopen to load the latest backend.';
+        : (username
+            ? 'Could not load this user\'s profile. They may have their profile hidden, or the backend needs a restart.'
+            : 'Stats endpoint unavailable — please fully close the launcher (both windows) and reopen to load the latest backend.');
       el.innerHTML = `
-        <div class="alt-header"><h2>STATS</h2><p>Your personal playtime dashboard</p></div>
+        <div class="alt-header"><h2>${title}</h2><p>${subtitle}</p></div>
         <div class="sd-empty">${hint}</div>
       `;
       return;
@@ -422,4 +676,124 @@
   }
 
   window.renderStats = render;
+
+  // Dedicated achievements-only render for the ACHIEVE sidebar tab. Fetches
+  // the stats data and draws only the hero totals + achievements grid, no
+  // heatmap / milestones / top servers (those live on the Stats tab).
+  // Persisted filter choice so it survives tab switches
+  let _achFilter = 'all'; // 'all' | 'unlocked' | 'locked'
+
+  window.renderAchievements = async function renderAchievements(el) {
+    el.innerHTML = `
+      <div class="alt-header"><h2>ACHIEVEMENTS</h2><p>Track your milestones across all servers</p></div>
+      <div class="sd-loading">Loading achievements…</div>
+    `;
+    let data = null;
+    // Same anti-race guard as the Stats tab: only update DOM if the user
+    // is still on the Achievements tab when the fetch resolves.
+    const initialPanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
+    const shouldStillRender = () =>
+      document.querySelector('.rs-tab.active')?.dataset?.panel === initialPanel
+      && document.contains(el);
+
+    if (window.getCached) {
+      const { data: cached, isStale } = window.getCached('stats');
+      if (cached) {
+        data = cached;
+        if (isStale) {
+          window.hub.get('/api/stats/me').then(fresh => {
+            if (fresh && 'totalMinutes' in fresh) {
+              window.setCache('stats', fresh);
+              if (shouldStillRender()) window.renderAchievements(el);
+            }
+          }).catch(() => {});
+        }
+      }
+    }
+    if (!data) {
+      try {
+        data = await window.hub.get('/api/stats/me');
+        if (data && 'totalMinutes' in data && window.setCache) window.setCache('stats', data);
+      } catch (e) {}
+      if (!shouldStillRender()) return;
+    }
+    const isEmpty = !data || data.error || (typeof data === 'object' && 'raw' in data) || !('totalMinutes' in data);
+    if (isEmpty) {
+      el.innerHTML = `
+        <div class="alt-header"><h2>ACHIEVEMENTS</h2><p>Track your milestones across all servers</p></div>
+        <div class="sd-empty">Could not load achievements. Please try again in a moment.</div>
+      `;
+      return;
+    }
+    // Match the Stats-tab level curve
+    (data.topServers || []).forEach(s => { s.level = levelFor(s.minutes); });
+    const badges  = computeHubBadges(data);
+    const earned  = badges.filter(b => b.unlocked).length;
+
+    function drawBadges() {
+      const list = _achFilter === 'unlocked' ? badges.filter(b => b.unlocked)
+                  : _achFilter === 'locked'   ? badges.filter(b => !b.unlocked)
+                  : badges;
+      const grid = el.querySelector('.sd-badge-grid');
+      if (!grid) return;
+      grid.innerHTML = list.length
+        ? list.map(b => `
+            <div class="sd-badge ${b.unlocked ? 'unlocked' : 'locked'}" data-tip="${esc(b.name)} — ${esc(b.sub)}">
+              <span class="sd-badge-icon">${b.icon}</span>
+              <div class="sd-badge-body">
+                <div class="sd-badge-name">${esc(b.name)}</div>
+                <div class="sd-badge-sub">${esc(b.sub)}</div>
+              </div>
+            </div>`).join('')
+        : `<div class="sd-empty small">
+            ${_achFilter === 'unlocked' ? "You haven't unlocked any yet — start playing to earn your first badge!"
+              : "You've unlocked all of them — nothing left to chase here. Legend."}
+           </div>`;
+    }
+
+    el.innerHTML = `
+      <div class="alt-header">
+        <h2>ACHIEVEMENTS</h2>
+        <p><b style="color:#e0c87a">${earned}</b> / ${badges.length} unlocked</p>
+      </div>
+      <div class="ach-filter-row">
+        <button class="ach-filter ${_achFilter === 'all' ? 'active' : ''}" data-filter="all">All · ${badges.length}</button>
+        <button class="ach-filter ${_achFilter === 'unlocked' ? 'active' : ''}" data-filter="unlocked">Unlocked · ${earned}</button>
+        <button class="ach-filter ${_achFilter === 'locked' ? 'active' : ''}" data-filter="locked">Locked · ${badges.length - earned}</button>
+      </div>
+      <div class="sd-section">
+        <div class="sd-badge-grid"></div>
+      </div>
+    `;
+    el.querySelectorAll('.ach-filter').forEach(b => {
+      b.addEventListener('click', () => {
+        _achFilter = b.dataset.filter;
+        el.querySelectorAll('.ach-filter').forEach(x => x.classList.toggle('active', x.dataset.filter === _achFilter));
+        drawBadges();
+      });
+    });
+    drawBadges();
+  };
+
+  // Open another user's public profile in a centered overlay modal.
+  window.openUserProfile = function openUserProfile(username) {
+    if (!username) return;
+    const prior = document.getElementById('user-profile-overlay');
+    if (prior) prior.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'user-profile-overlay';
+    overlay.innerHTML = `
+      <div class="upm-box" onclick="event.stopPropagation()">
+        <button class="upm-close" id="upm-close" title="Close">✕</button>
+        <div class="upm-body" id="upm-body"></div>
+      </div>
+    `;
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) overlay.remove();
+    });
+    document.body.appendChild(overlay);
+    overlay.querySelector('#upm-close').addEventListener('click', () => overlay.remove());
+    // Render into the body directly — no flex/alt-panel interference.
+    render(overlay.querySelector('#upm-body'), username);
+  };
 })();

@@ -1201,7 +1201,8 @@ body > * { position: relative; z-index: 1; }
   pointer-events: none;
   z-index: 2;
 }
-/* banner vignette */
+/* banner vignette + subtle gold pulse glow. GPU-animated, no per-frame
+   decode cost like the WebP animations would incur with 30 banners visible. */
 .card-banner::before {
   content: '';
   position: absolute;
@@ -1209,6 +1210,16 @@ body > * { position: relative; z-index: 1; }
   background: linear-gradient(90deg, rgba(0,0,0,0.3) 0%, transparent 30%, transparent 70%, rgba(0,0,0,0.5) 100%);
   pointer-events: none;
   z-index: 1;
+  box-shadow: inset 0 0 30px rgba(240,192,96,0.0);
+  animation: rh-card-pulse 4.5s ease-in-out infinite;
+}
+@keyframes rh-card-pulse {
+  0%, 100% { box-shadow: inset 0 0 22px rgba(240,192,96,0.06); }
+  50%      { box-shadow: inset 0 0 40px rgba(240,192,96,0.22); }
+}
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .card-banner::before { animation: none; }
 }
 
 /* ── CARD INFO ── */
@@ -1734,6 +1745,11 @@ body > * { position: relative; z-index: 1; }
 .alt-panel::-webkit-scrollbar { width: 6px; }
 .alt-panel::-webkit-scrollbar-track { background: #0e0c08; }
 .alt-panel::-webkit-scrollbar-thumb { background: #4a3a18; border-radius: 3px; }
+/* When openDM() is used, the host container gets .dm-host so its own
+   padding gets neutralized — the .dm-wrap inside manages layout end-to-end.
+   Prevents the "panel jumps wider/narrower" visual when toggling between
+   conversation list and an open DM. */
+.dm-host { padding: 0 !important; overflow: hidden !important; }
 
 .alt-header { margin-bottom: 14px; }
 /* The h2 duplicates the slide-panel-title shown in the panel's top bar,
@@ -2428,6 +2444,16 @@ body > * { position: relative; z-index: 1; }
   color: #6a5a3a; letter-spacing: 2px; margin: 0 0 10px; text-transform: uppercase;
 }
 .sd-description { font-family: 'IM Fell English', serif; font-size: 0.9rem; color: #a89060; line-height: 1.7; margin: 0; white-space: pre-wrap; }
+.sd-empty-section {
+  font-family: 'IM Fell English', serif;
+  font-size: 0.82rem;
+  color: #6a5a3a;
+  font-style: italic;
+  padding: 10px 12px;
+  background: rgba(14,10,6,0.4);
+  border: 1px dashed #2a2010;
+  border-radius: 3px;
+}
 .sd-changelog {
   font-family: 'IM Fell English', serif; font-size: 0.85rem; color: #8a7a5a; line-height: 1.6;
   background: #0e0c08; border: 1px solid #2a2010; border-radius: 4px; padding: 12px 14px;
@@ -2733,6 +2759,20 @@ body > * { position: relative; z-index: 1; }
 }
 .dp-req { color: #cc4444; margin-left: 2px; }
 .dp-hint { font-size: 0.62rem; color: #5a4a28; font-style: italic; margin-left: 4px; }
+.dp-size-hint {
+  font-size: 0.64rem;
+  color: #7a6a4a;
+  font-style: italic;
+  padding: 3px 4px 1px;
+  line-height: 1.4;
+}
+.dp-size-hint b {
+  color: #c8a840;
+  font-weight: 700;
+  font-style: normal;
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.3px;
+}
 .dp-input {
   background: #0e0c08; border: 1px solid #2e2410; border-radius: 3px;
   padding: 7px 10px; color: #d4b86a; font-family: 'IM Fell English', serif;

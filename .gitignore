@@ -6,3 +6,12 @@ java-backend/
 RSPSHub.jar
 badge-preview.html
 .idea/
+
+# Ops / deploy scripts — these may embed VPS + DB credentials. NEVER commit.
+scripts/
+.env
+.env.*
+*.pem
+*.key
+credentials*
+NEW_CREDENTIALS*

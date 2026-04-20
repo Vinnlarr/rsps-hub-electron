@@ -3,6 +3,131 @@
    #1a1510 bg · #e0c87a gold · #c8a840 accent · #8a7a5a muted
 ══════════════════════════════════════════════════════════ */
 
+/* ── Achievement filter tabs (ALL / UNLOCKED / LOCKED) ─ */
+.ach-filter-row {
+  display: flex;
+  gap: 6px;
+  padding: 0 14px 12px;
+}
+.ach-filter {
+  flex: 1;
+  padding: 8px 10px;
+  background: rgba(14,10,6,0.6);
+  border: 1px solid #3a2e14;
+  border-radius: 3px;
+  color: #8a7a5a;
+  font-family: 'Cinzel', serif;
+  font-size: 0.65rem;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ach-filter:hover { color: #c8a840; border-color: #6b5228; }
+.ach-filter.active {
+  color: #f0c060;
+  background: linear-gradient(180deg, rgba(200,168,64,0.12), rgba(14,10,6,0.6));
+  border-color: #c8a840;
+  box-shadow: inset 0 1px 0 rgba(240,192,96,0.15);
+}
+
+/* ── Palette-matched tooltip for achievements (data-tip) ─ */
+.sd-badge { position: relative; }
+.sd-badge[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: linear-gradient(180deg, #1a1408 0%, #0e0a06 100%);
+  border: 1px solid #6b5228;
+  color: #e0c87a;
+  font-family: 'Cinzel', serif;
+  font-size: 0.68rem;
+  font-style: normal;
+  letter-spacing: 0.3px;
+  padding: 7px 11px;
+  border-radius: 3px;
+  max-width: 280px;
+  width: max-content;
+  white-space: normal;
+  line-height: 1.4;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(240,192,96,0.15);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 50000;
+}
+.sd-badge[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ── Hub-wide achievement badges ──────────────────────── */
+.sd-badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+  padding: 6px 0;
+}
+.sd-badge {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #2a2010;
+  border-radius: 3px;
+  background: rgba(14,10,6,0.55);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.sd-badge.unlocked {
+  border-color: #6b5228;
+  background: linear-gradient(135deg, rgba(200,168,64,0.08), rgba(14,10,6,0.55) 60%);
+  box-shadow: inset 0 1px 0 rgba(240,192,96,0.08);
+}
+.sd-badge.unlocked:hover { transform: translateY(-1px); border-color: #c8a840; }
+.sd-badge.locked { opacity: 0.45; filter: grayscale(0.6); }
+.sd-badge-icon {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.35rem;
+  background: rgba(14,10,6,0.8);
+  border: 1px solid #3a2e14;
+  border-radius: 3px;
+}
+.sd-badge.unlocked .sd-badge-icon {
+  background: radial-gradient(circle at center, rgba(240,192,96,0.12), rgba(14,10,6,0.8));
+}
+.sd-badge-body { min-width: 0; }
+.sd-badge-name {
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.3px;
+  color: #e0c87a;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sd-badge.locked .sd-badge-name { color: #8a7a5a; }
+.sd-badge-sub {
+  font-size: 0.62rem;
+  color: #7a6a4a;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sd-badge-count {
+  margin-top: 8px;
+  text-align: right;
+  font-family: 'Cinzel', serif;
+  font-size: 0.65rem;
+  letter-spacing: 1.5px;
+  color: #c8a840;
+  font-weight: 700;
+}
+
 .sd-loading,
 .sd-empty {
   color: #8a7a5a;
@@ -160,6 +285,35 @@
   transform: scale(1.4);
   z-index: 2;
   box-shadow: 0 0 6px rgba(240,192,96,0.5);
+}
+/* Palette-matched hover tooltip for heatmap cells (data-tip instead of
+   native title= which renders as an OS-white box). */
+.sd-cell[data-tip] { position: relative; }
+.sd-cell[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  background: linear-gradient(180deg, #1a1408 0%, #0e0a06 100%);
+  border: 1px solid #6b5228;
+  color: #e0c87a;
+  font-family: 'Cinzel', serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.3px;
+  padding: 5px 9px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.75), inset 0 1px 0 rgba(240,192,96,0.12);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 50000;
+}
+.sd-cell[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(0.72);
+  transform-origin: bottom center;
 }
 .sd-cell.sd-l0 { background: #1a1408; }
 .sd-cell.sd-l1 { background: #3a2a10; border-color: rgba(200,168,64,0.15); }
