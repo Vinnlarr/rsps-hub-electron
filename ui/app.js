@@ -288,6 +288,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const pt = await api.getPlaytime();
     if (pt && pt.perServer) {
       state.playtime = pt.perServer; // { "ServerName": minutesPlayed }
+      // Sync local playtime map up to the server so the leaderboard has accurate
+      // per-server history (session_log only started recording recently).
+      if (state.user?.username) {
+        window.hub.post('/api/users/sync-playtime', { per_server: pt.perServer }).catch(() => {});
+      }
     }
   } catch {}
   updatePlaytimeStatus();
@@ -378,17 +383,25 @@ function populateAccountDropdown() {
   const displayName = p.displayName || state.user?.username || 'Player';
   const accountUsername = state.user?.username || '';
 
-  // Avatar
+  // Avatar — update BOTH the dropdown avatar (account-avatar-img) AND the
+  // always-visible top-right nav chip avatar (nav-avatar-img). Before this
+  // fix the nav chip only ever showed the user's initial letter.
   const avatarImg  = document.getElementById('account-avatar-img');
   const initial    = document.getElementById('account-initial');
-  if (p.avatarPath && avatarImg) {
+  const navImg     = document.getElementById('nav-avatar-img');
+  const navInitial = document.getElementById('user-initial');
+  if (p.avatarPath) {
     const src = 'file:///' + p.avatarPath.replace(/\\/g, '/') + '?t=' + Date.now();
-    avatarImg.src = src;
-    avatarImg.style.display = '';
-    if (initial) initial.style.display = 'none';
+    if (avatarImg) { avatarImg.src = src; avatarImg.style.display = ''; }
+    if (navImg)    { navImg.src    = src; navImg.style.display    = ''; }
+    if (initial)    initial.style.display    = 'none';
+    if (navInitial) navInitial.style.display = 'none';
   } else {
     if (avatarImg) avatarImg.style.display = 'none';
-    if (initial) { initial.style.display = ''; initial.textContent = displayName[0].toUpperCase(); }
+    if (navImg)    navImg.style.display    = 'none';
+    const ch = (displayName[0] || '?').toUpperCase();
+    if (initial)    { initial.style.display    = ''; initial.textContent    = ch; }
+    if (navInitial) { navInitial.style.display = ''; navInitial.textContent = ch; }
   }
 
   const displaynameEl = document.getElementById('account-displayname');
@@ -921,11 +934,16 @@ async function renderAltContent(tab, el) {
   if (!el) return;
 
   if (tab === 'stats') {
-    el.innerHTML = '<p class="loading-msg">Loading stats...</p>';
-    try {
-      const data = await api.getPlaytime();
-      el.innerHTML = buildStatsHTML(data);
-    } catch { el.innerHTML = '<p class="empty-msg">Could not load stats.</p>'; }
+    if (window.renderStats) {
+      window.renderStats(el);
+    } else {
+      // Fallback for the old basic stats view if the dashboard module hasn't loaded.
+      el.innerHTML = '<p class="loading-msg">Loading stats...</p>';
+      try {
+        const data = await api.getPlaytime();
+        el.innerHTML = buildStatsHTML(data);
+      } catch { el.innerHTML = '<p class="empty-msg">Could not load stats.</p>'; }
+    }
   }
 
   else if (tab === 'friends') {
@@ -944,13 +962,8 @@ async function renderAltContent(tab, el) {
   }
 
   else if (tab === 'leaderboard') {
-    el.innerHTML = `
-      <div class="alt-header"><h2>LEADERBOARD</h2><p>Coming Soon</p></div>
-      <div class="coming-soon-wrap">
-        <div class="coming-soon-icon">🏆</div>
-        <div class="coming-soon-title">Coming Soon</div>
-        <div class="coming-soon-sub">The leaderboard is currently in development.<br>Check back soon!</div>
-      </div>`;
+    if (window.renderLeaderboard) window.renderLeaderboard(el);
+    else el.innerHTML = '<p class="loading-msg">Loading leaderboard…</p>';
   }
 
   else if (tab === 'library') {
@@ -1305,7 +1318,13 @@ function bindFriendsEvents(el) {
   el.querySelectorAll('.friend-remove-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const username = btn.dataset.username;
-      if (!confirm(`Remove ${username} from your friends?`)) return;
+      const ok = await rhConfirm(`Remove ${username} from your friends?`, {
+        title: 'Remove friend',
+        confirmText: 'Remove',
+        cancelText: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
       try {
         await api.removeFriend(username);
         btn.closest('.friend-row')?.remove();
@@ -3030,7 +3049,10 @@ function renderDevEditor(el, server) {
 
   // Delete
   el.querySelector('#dp-delete')?.addEventListener('click', async () => {
-    if (!confirm(`Delete "${s.name}"? This cannot be undone.`)) return;
+    const ok = await rhConfirm(`Delete "${s.name}"? This cannot be undone.`, {
+      title: 'Delete server', confirmText: 'Delete', cancelText: 'Cancel', danger: true,
+    });
+    if (!ok) return;
     const btn = el.querySelector('#dp-delete');
     btn.disabled = true;
     try {
@@ -3227,6 +3249,49 @@ const SERVER_PREF_TAGS = ['PvP','Economy','OSRS','Hardcore','Leagues','Vanilla',
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Palette-matching confirm/alert modal. Replaces native window.confirm().
+// rhConfirm(message, { title, confirmText, cancelText, danger }) -> Promise<boolean>
+function rhConfirm(message, opts = {}) {
+  return new Promise(resolve => {
+    const {
+      title       = 'Are you sure?',
+      confirmText = 'Confirm',
+      cancelText  = 'Cancel',
+      danger      = false,
+    } = opts;
+    const overlay = document.createElement('div');
+    overlay.className = 'rh-confirm-overlay';
+    overlay.innerHTML = `
+      <div class="rh-confirm">
+        <div class="rh-confirm-title">${escHtml(title)}</div>
+        <div class="rh-confirm-msg">${escHtml(message)}</div>
+        <div class="rh-confirm-btns">
+          <button class="rh-confirm-cancel">${escHtml(cancelText)}</button>
+          <button class="rh-confirm-ok ${danger ? 'danger' : ''}">${escHtml(confirmText)}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    const close = (result) => {
+      overlay.classList.remove('show');
+      setTimeout(() => overlay.remove(), 200);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') close(false);
+      if (e.key === 'Enter')  close(true);
+    };
+    document.addEventListener('keydown', onKey);
+    overlay.querySelector('.rh-confirm-cancel').addEventListener('click', () => close(false));
+    overlay.querySelector('.rh-confirm-ok').addEventListener('click', () => close(true));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+    // Focus the OK button by default for quick Enter-confirm
+    setTimeout(() => overlay.querySelector('.rh-confirm-ok')?.focus(), 50);
+  });
 }
 
 function setToggleHtml(id, checked) {
