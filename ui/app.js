@@ -1435,10 +1435,18 @@ async function openDM(el, username) {
     msgEl.scrollTop = msgEl.scrollHeight;
   }
 
-  // Render from local store immediately (no flicker), then silently merge server msgs
+  // Render from local store immediately (no flicker), then replace with
+  // the server's authoritative message list. We keep optimistic pending
+  // sends (not yet confirmed by the server) so they don't disappear.
   renderMessages();
   api.getMessages(username)
-    .then(data => { if (data.messages?.length) { dmStoreMerge(username, data.messages); renderMessages(); } })
+    .then(data => {
+      if (!data || !data.messages) return;
+      const pending = dmStoreGet(username).filter(m => m.pending);
+      DM_STORE[username] = [...data.messages, ...pending];
+      dmStoreSave();
+      renderMessages();
+    })
     .catch(() => {});
 
   async function doSend() {
@@ -2410,20 +2418,16 @@ function startMessagePolling() {
       for (const c of data.conversations) {
         const username = c.username || c.with_user || c.other_user;
         if (!username) continue;
-        const serverLast = c.last_message || '';
-        const serverTs   = c.last_timestamp || '';
-        const local = dmStoreGet(username);
-        const localLast = local.at(-1);
-        // New message if server's last doesn't match local last
-        if (serverLast && (!localLast || (localLast.content !== serverLast || localLast.timestamp !== serverTs))) {
-          // Only badge if not currently in that DM
-          const activePanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
-          if (!(activePanel === 'chat' && state.activeDM === username)) {
-            newCount++;
-            // Merge it in
-            dmStoreMerge(username, [{ sender: username, content: serverLast, timestamp: serverTs, isOwn: false }]);
-          }
-        }
+        // `last_message` from the conversations endpoint is whichever message
+        // is newest — could be ours or theirs. We CANNOT assume it's incoming,
+        // so never merge it into DM_STORE (that was the "hey copied from me to
+        // them" bug). Only badge based on the server's `unread` count, which
+        // is specifically messages where receiver=me AND is_read=0.
+        const unread = parseInt(c.unread || '0', 10) || 0;
+        if (unread <= 0) continue;
+        const activePanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
+        if (activePanel === 'chat' && state.activeDM === username) continue;
+        newCount += unread;
       }
       if (newCount > 0) addUnread('chat', newCount);
     } catch {}
