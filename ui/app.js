@@ -3620,6 +3620,27 @@ function buildSettingsHTML(s) {
     `).join('')}
   </div>
 
+  <!-- ── ACCOUNT ── -->
+  <div class="set-section">
+    <div class="set-section-hdr">🔐&nbsp; Account</div>
+    <div class="set-row set-col">
+      <label class="set-label" for="set-pw-current">Current Password</label>
+      <input class="set-input" id="set-pw-current" type="password" autocomplete="current-password">
+    </div>
+    <div class="set-row set-col">
+      <label class="set-label" for="set-pw-new">New Password</label>
+      <input class="set-input" id="set-pw-new" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+    </div>
+    <div class="set-row set-col">
+      <label class="set-label" for="set-pw-confirm">Confirm New Password</label>
+      <input class="set-input" id="set-pw-confirm" type="password" autocomplete="new-password">
+    </div>
+    <div class="set-row set-between">
+      <div id="set-pw-msg" class="set-sub" style="color:#888"></div>
+      <button class="set-browse-btn" id="set-pw-submit">Change Password</button>
+    </div>
+  </div>
+
   <!-- ── STAFF ── -->
   ${state.user?.isStaff ? `
   <div class="set-section" style="border-left:2px solid #c8a840">
@@ -3688,6 +3709,34 @@ function bindSettingsEvents(el, initial) {
   // Staff panel shortcuts
   el.querySelector('#set-open-staff')?.addEventListener('click',   () => openDevPortal('all-servers'));
   el.querySelector('#set-open-pending')?.addEventListener('click', () => openDevPortal('pending'));
+
+  // Change password
+  el.querySelector('#set-pw-submit')?.addEventListener('click', async () => {
+    const cur = el.querySelector('#set-pw-current');
+    const nw  = el.querySelector('#set-pw-new');
+    const cf  = el.querySelector('#set-pw-confirm');
+    const msg = el.querySelector('#set-pw-msg');
+    const btn = el.querySelector('#set-pw-submit');
+    const setMsg = (text, color = '#c96') => { msg.textContent = text; msg.style.color = color; };
+    if (!cur.value || !nw.value || !cf.value) return setMsg('Fill in all three password fields.');
+    if (nw.value.length < 8)      return setMsg('New password must be at least 8 characters.');
+    if (nw.value !== cf.value)    return setMsg('New passwords do not match.');
+    if (nw.value === cur.value)   return setMsg('New password must be different from current.');
+    btn.disabled = true; setMsg('Updating…', '#888');
+    try {
+      const res = await window.hub.post('/api/auth/change-password', { current: cur.value, new: nw.value });
+      if (res && res.success) {
+        setMsg('Password changed. Other devices have been signed out.', '#4caf50');
+        cur.value = nw.value = cf.value = '';
+      } else {
+        setMsg(res?.error || 'Failed to change password.');
+      }
+    } catch (err) {
+      setMsg((err && err.message) || 'Network error.');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // Launcher toggles
   el.querySelector('#set-minimize')?.addEventListener('change', e =>
