@@ -3659,7 +3659,27 @@ function buildSettingsHTML(s) {
       <span class="set-label">Logged in as</span>
       <span class="set-value">${escHtml(state.user?.username)}</span>
     </div>
-    <div class="set-account-btns">
+    <div class="set-row set-col" style="margin-top:8px">
+      <div class="set-label">Change Password</div>
+      <div class="set-sub" style="margin-bottom:6px">Requires your current password. Other devices will be signed out.</div>
+      ${[
+        ['set-pw-current', 'Current password',                                       'current-password'],
+        ['set-pw-new',     '8+ chars, upper + lower + number + special',             'new-password'],
+        ['set-pw-confirm', 'Confirm new password',                                   'new-password'],
+      ].map(([id, ph, ac]) => `
+        <div class="set-pw-wrap" style="position:relative;margin-bottom:6px">
+          <input class="set-input" id="${id}" type="password" autocomplete="${ac}" placeholder="${ph}" style="padding-right:42px;width:100%">
+          <button type="button" class="set-pw-eye" data-target="${id}"
+            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:0;color:#888;cursor:pointer;font-size:14px;padding:4px 6px"
+            aria-label="Show password">👁</button>
+        </div>
+      `).join('')}
+      <div class="set-row set-between">
+        <div id="set-pw-msg" class="set-sub" style="color:#888"></div>
+        <button class="set-browse-btn" id="set-pw-submit">Change Password</button>
+      </div>
+    </div>
+    <div class="set-account-btns" style="margin-top:10px">
       <button class="set-danger-btn" id="set-logout">Logout</button>
     </div>
   </div>
@@ -3717,6 +3737,49 @@ function bindSettingsEvents(el, initial) {
   });
 
   // Logout
+  // Password show/hide eye toggles
+  el.querySelectorAll('.set-pw-eye').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = el.querySelector('#' + btn.dataset.target);
+      if (!input) return;
+      const shown = input.type === 'text';
+      input.type = shown ? 'password' : 'text';
+      btn.textContent = shown ? '👁' : '🙈';
+      btn.setAttribute('aria-label', shown ? 'Show password' : 'Hide password');
+    });
+  });
+
+  el.querySelector('#set-pw-submit')?.addEventListener('click', async () => {
+    const cur = el.querySelector('#set-pw-current');
+    const nw  = el.querySelector('#set-pw-new');
+    const cf  = el.querySelector('#set-pw-confirm');
+    const msg = el.querySelector('#set-pw-msg');
+    const btn = el.querySelector('#set-pw-submit');
+    const setMsg = (text, color = '#c96') => { msg.textContent = text; msg.style.color = color; };
+    if (!cur.value || !nw.value || !cf.value) return setMsg('Fill in all three password fields.');
+    if (nw.value.length < 8)                return setMsg('New password must be at least 8 characters.');
+    if (!/[A-Z]/.test(nw.value))            return setMsg('New password must contain an uppercase letter.');
+    if (!/[a-z]/.test(nw.value))            return setMsg('New password must contain a lowercase letter.');
+    if (!/[0-9]/.test(nw.value))            return setMsg('New password must contain a number.');
+    if (!/[^A-Za-z0-9]/.test(nw.value))     return setMsg('New password must contain a special character.');
+    if (nw.value !== cf.value)              return setMsg('New passwords do not match.');
+    if (nw.value === cur.value)             return setMsg('New password must be different from current.');
+    btn.disabled = true; setMsg('Updating…', '#888');
+    try {
+      const res = await window.hub.post('/api/auth/change-password', { current: cur.value, new: nw.value });
+      if (res && res.success) {
+        setMsg('Password changed. Other devices have been signed out.', '#4caf50');
+        cur.value = nw.value = cf.value = '';
+      } else {
+        setMsg(res?.error || 'Failed to change password.');
+      }
+    } catch (err) {
+      setMsg((err && err.message) || 'Network error.');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   el.querySelector('#set-logout')?.addEventListener('click', async () => {
     try { await api.logout(); } catch {}
     await logoutCleanup();
