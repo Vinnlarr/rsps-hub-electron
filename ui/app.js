@@ -2631,9 +2631,36 @@ function startMessagePolling() {
 }
 
 let _heartbeatInterval = null;
+let _cachedVersion = null;
+async function collectHeartbeatMeta() {
+  try {
+    if (!_cachedVersion) _cachedVersion = await window.hub.getVersion();
+  } catch {}
+  const meta = {};
+  if (_cachedVersion) meta.version = _cachedVersion;
+  // Current tab: pull from live DOM if available, else from state
+  const domTab = document.querySelector('.rs-tab.active')?.dataset?.tab;
+  const tab = domTab || state.activeTab;
+  if (tab) meta.tab = tab;
+  // Music: only report if actively playing (not paused)
+  try {
+    const M = window.RH_MUSIC;
+    if (M && M.current && !M.paused) {
+      const name = M.current.name || '';
+      const cat  = M.current.category ? ` (${M.current.category})` : '';
+      if (name) meta.music = (name + cat).slice(0, 120);
+    }
+  } catch {}
+  return meta;
+}
 function startHeartbeat() {
   if (_heartbeatInterval) return;
-  const ping = () => window.hub.post('/api/heartbeat', {}).catch(() => {});
+  const ping = async () => {
+    try {
+      const meta = await collectHeartbeatMeta();
+      await window.hub.post('/api/heartbeat', meta);
+    } catch {}
+  };
   ping();
   _heartbeatInterval = setInterval(ping, 60_000);
 }
