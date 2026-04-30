@@ -1330,7 +1330,6 @@ function openNewsDetail(post, container) {
           <span class="news-ts">${formatNewsTs(post.created_at)}${post.edited_at ? ' · edited' : ''}</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
-          <button class="news-btn" id="news-detail-copy">🔗 Copy link</button>
           <button class="news-modal-close" id="news-detail-close">✕</button>
         </div>
       </div>
@@ -1344,8 +1343,22 @@ function openNewsDetail(post, container) {
           ${post.view_count > 0 ? `<span>👁 ${post.view_count} view${post.view_count === 1 ? '' : 's'}</span>` : ''}
         </div>
         <div class="news-detail-comments">
-          <div class="news-modal-label" style="margin-top:18px">💬 Comments — coming soon</div>
-          <p style="color:#6a5a38;font-size:0.86rem">Threaded replies are on the way. For now, react above or jump to the chat tab.</p>
+          <div class="news-modal-label" style="margin-top:18px">💬 <span id="news-cmt-count">0</span> Comments</div>
+          <div class="news-cmt-list" id="news-cmt-list"></div>
+          <div class="news-cmt-write">
+            <textarea class="news-modal-input" id="news-cmt-body" rows="3" maxlength="500" placeholder="Add a comment…"></textarea>
+            <div class="news-cmt-emoji-picker" id="news-cmt-emoji-picker" style="display:none">
+              ${NEWS_EMOJI.map(e => `<button type="button" class="news-emoji" data-emoji="${e}">${e}</button>`).join('')}
+            </div>
+            <div class="news-cmt-foot">
+              <button type="button" class="news-tb-btn" id="news-cmt-emoji-btn" data-tip="Insert emoji">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+              </button>
+              <span class="news-cmt-counter" id="news-cmt-counter">0 / 500</span>
+              <span class="news-cmt-msg" id="news-cmt-msg"></span>
+              <button class="news-btn news-btn-primary" id="news-cmt-submit">Post comment</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1369,19 +1382,6 @@ function openNewsDetail(post, container) {
     if (lbImg && modal.contains(lbImg)) { openImageLightbox(lbImg.src); return; }
   });
 
-  // Copy link
-  modal.querySelector('#news-detail-copy').addEventListener('click', async () => {
-    const url = `https://rspshub.net/news/${post.id}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      showToast('Link copied to clipboard', 'success');
-    } catch {
-      // Fallback
-      const ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta);
-      ta.select(); document.execCommand('copy'); ta.remove();
-      showToast('Link copied to clipboard', 'success');
-    }
-  });
 
   // Re-render the reactions row from current post state. Used by both the
   // optimistic update and the server-confirmed update without touching scroll.
@@ -1460,11 +1460,237 @@ function openNewsDetail(post, container) {
   });
 
   // Stop ALL click/mousedown events from leaking out of the modal to handlers
-  // behind (e.g. the news tab's image-click → lightbox handler). Internal
-  // handlers still run because they're attached earlier in the registration
-  // order or to descendants.
+  // behind (e.g. the news tab's image-click → lightbox handler).
   modal.addEventListener('mousedown', e => e.stopPropagation());
   modal.addEventListener('click',     e => e.stopPropagation());
+
+  // Profile clicks inside the modal — handle directly since the document-level
+  // delegation never sees the event (we stopPropagation above).
+  modal.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-open-profile]');
+    if (el && window.openUserProfile) {
+      window.openUserProfile(el.dataset.openProfile);
+    }
+  });
+
+  // ── COMMENTS ──────────────────────────────────────────────────────────
+  function renderCmtItem(c, isReply = false) {
+    const ago = formatNewsTs(c.created_at) + (c.edited_at ? ' · edited' : '');
+    const initial = (c.username || '?')[0].toUpperCase();
+    const avatarUrl = c.has_avatar ? `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(c.username)}.jpg` : '';
+    return `
+      <div class="news-cmt-item ${isReply ? 'is-reply' : ''}" data-cmt-id="${c.id}">
+        <div class="news-cmt-avatar">
+          ${avatarUrl
+            ? `<img src="${escAttr(avatarUrl)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span style="display:none">${escHtml(initial)}</span>`
+            : `<span>${escHtml(initial)}</span>`}
+        </div>
+        <div class="news-cmt-content">
+          <div class="news-cmt-row">
+            <span class="news-cmt-name lb-clickable" data-open-profile="${escAttr(c.username)}">${escHtml(c.username)}</span>
+            <span class="news-cmt-ts" data-ts="${escAttr(c.created_at)}">${ago}</span>
+            ${c.can_edit ? `<button class="news-cmt-action" data-edit-cmt="${c.id}" title="Edit">✎</button>` : ''}
+            ${(c.is_own || state.user?.isStaff) ? `<button class="news-cmt-action" data-delete-cmt="${c.id}" title="Delete">🗑</button>` : ''}
+          </div>
+          <div class="news-cmt-body">${renderNewsBody(c.body)}</div>
+          <div class="news-cmt-actions">
+            <button class="news-cmt-vote ${c.my_vote === 1 ? 'voted' : ''}" data-vote-cmt="${c.id}" data-vote="1" ${c.is_own ? 'disabled' : ''} title="${c.is_own ? 'Cannot vote on your own' : 'Thumbs up'}">👍 <span class="rc">${c.up_votes || 0}</span></button>
+            <button class="news-cmt-vote ${c.my_vote === -1 ? 'voted-down' : ''}" data-vote-cmt="${c.id}" data-vote="-1" ${c.is_own ? 'disabled' : ''} title="${c.is_own ? 'Cannot vote on your own' : 'Thumbs down'}">👎 <span class="rc">${c.down_votes || 0}</span></button>
+            ${!isReply ? `<button class="news-cmt-reply-btn" data-reply-cmt="${c.id}" data-reply-to="${escAttr(c.username)}">↩ Reply</button>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async function loadComments() {
+    const listEl  = modal.querySelector('#news-cmt-list');
+    const countEl = modal.querySelector('#news-cmt-count');
+    if (!listEl) return;
+    let res; try { res = await window.hub.get('/api/news/comments?post_id=' + post.id); } catch {}
+    const items = res?.comments || [];
+    countEl.textContent = items.length;
+    if (!items.length) {
+      listEl.innerHTML = `<div class="news-cmt-empty">No comments yet — be the first.</div>`;
+      return;
+    }
+    // Group: top-level comments + their replies.
+    const tops = items.filter(c => !c.parent_id);
+    const replies = {};
+    items.filter(c => c.parent_id).forEach(c => {
+      (replies[c.parent_id] = replies[c.parent_id] || []).push(c);
+    });
+    listEl.innerHTML = tops.map(c => `
+      <div class="news-cmt-thread">
+        ${renderCmtItem(c, false)}
+        ${(replies[c.id] || []).map(r => renderCmtItem(r, true)).join('')}
+        <div class="news-cmt-reply-form" id="news-cmt-reply-form-${c.id}" style="display:none"></div>
+      </div>
+    `).join('');
+  }
+  loadComments();
+
+  // Live character counter for comments
+  const cmtBodyEl = modal.querySelector('#news-cmt-body');
+  const cmtCounter = modal.querySelector('#news-cmt-counter');
+  function updateCmtCounter() {
+    const n = cmtBodyEl.value.length;
+    cmtCounter.textContent = `${n} / 500`;
+    cmtCounter.classList.toggle('warn',  n > 400 && n <= 500);
+    cmtCounter.classList.toggle('danger', n > 500);
+  }
+  cmtBodyEl?.addEventListener('input', updateCmtCounter);
+
+  // Emoji picker for comments
+  const cmtEmojiBtn = modal.querySelector('#news-cmt-emoji-btn');
+  const cmtEmojiPicker = modal.querySelector('#news-cmt-emoji-picker');
+  cmtEmojiBtn?.addEventListener('mousedown', e => e.preventDefault()); // keep textarea focus
+  cmtEmojiBtn?.addEventListener('click', () => {
+    cmtEmojiPicker.style.display = cmtEmojiPicker.style.display === 'none' ? 'flex' : 'none';
+  });
+  cmtEmojiPicker?.addEventListener('mousedown', e => e.preventDefault());
+  cmtEmojiPicker?.querySelectorAll('.news-emoji').forEach(b => {
+    b.addEventListener('click', () => {
+      const emoji = b.dataset.emoji;
+      const start = cmtBodyEl.selectionStart, end = cmtBodyEl.selectionEnd;
+      cmtBodyEl.value = cmtBodyEl.value.substring(0, start) + emoji + cmtBodyEl.value.substring(end);
+      const pos = start + emoji.length;
+      cmtBodyEl.setSelectionRange(pos, pos);
+      cmtBodyEl.focus();
+      updateCmtCounter();
+    });
+  });
+
+  modal.querySelector('#news-cmt-submit')?.addEventListener('click', async () => {
+    const body = cmtBodyEl.value.trim();
+    const msg = modal.querySelector('#news-cmt-msg');
+    if (!body) { msg.textContent = 'Write something first.'; msg.style.color = '#c96'; return; }
+    if (body.length > 500) { msg.textContent = `Too long (${body.length} / 500).`; msg.style.color = '#c84040'; return; }
+    msg.textContent = 'Posting…'; msg.style.color = '#888';
+    try {
+      const res = await window.hub.post('/api/news/comments/post', { post_id: post.id, body });
+      if (res?.ok) {
+        cmtBodyEl.value = '';
+        msg.textContent = '';
+        cmtEmojiPicker.style.display = 'none';
+        updateCmtCounter();
+        await loadComments();
+      } else { msg.textContent = res?.error || 'Failed to post comment.'; msg.style.color = '#c84040'; }
+    } catch { msg.textContent = 'Network error.'; msg.style.color = '#c84040'; }
+  });
+
+  // Comment edit / delete (delegated)
+  modal.querySelector('#news-cmt-list')?.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('[data-edit-cmt]');
+    if (editBtn) {
+      const item = editBtn.closest('[data-cmt-id]');
+      const bodyEl = item.querySelector('.news-cmt-body');
+      const original = bodyEl.dataset.original ?? bodyEl.textContent.trim();
+      bodyEl.dataset.original = original;
+      bodyEl.innerHTML = `
+        <textarea class="news-modal-input" maxlength="2000" rows="3">${escHtml(original)}</textarea>
+        <div class="news-cmt-foot">
+          <button class="news-btn" data-cancel-edit>Cancel</button>
+          <button class="news-btn news-btn-primary" data-save-edit>Save</button>
+        </div>
+      `;
+      bodyEl.querySelector('[data-cancel-edit]').addEventListener('click', () => loadComments());
+      bodyEl.querySelector('[data-save-edit]').addEventListener('click', async () => {
+        const newBody = bodyEl.querySelector('textarea').value.trim();
+        if (!newBody) return;
+        try {
+          await window.hub.post('/api/news/comments/edit', { id: +editBtn.dataset.editCmt, body: newBody });
+          await loadComments();
+        } catch { showToast('Failed to save', 'error'); }
+      });
+      return;
+    }
+    const delBtn = e.target.closest('[data-delete-cmt]');
+    if (delBtn) {
+      const ok = await confirmThemed('Delete this comment? This cannot be undone.', {
+        title: 'Delete comment', okLabel: 'Delete', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await window.hub.post('/api/news/comments/delete', { id: +delBtn.dataset.deleteCmt });
+        await loadComments();
+      } catch { showToast('Failed to delete', 'error'); }
+      return;
+    }
+
+    // Thumbs up / down
+    const voteBtn = e.target.closest('[data-vote-cmt]');
+    if (voteBtn) {
+      if (voteBtn.disabled) return;
+      const id   = +voteBtn.dataset.voteCmt;
+      const vote = +voteBtn.dataset.vote; // 1 or -1
+      // Toggle: if already in this direction, clearing it
+      const wasVoted = voteBtn.classList.contains('voted') || voteBtn.classList.contains('voted-down');
+      const sameDirection = (vote === 1 && voteBtn.classList.contains('voted'))
+                         || (vote === -1 && voteBtn.classList.contains('voted-down'));
+      const sendVote = sameDirection ? 0 : vote;
+      try {
+        const res = await window.hub.post('/api/news/comments/vote', { id, vote: sendVote });
+        if (res?.ok) {
+          // Update both buttons in this comment (up + down counts/states)
+          const item = voteBtn.closest('[data-cmt-id]');
+          item.querySelectorAll('[data-vote-cmt]').forEach(b => {
+            const dir = +b.dataset.vote;
+            const rc = b.querySelector('.rc');
+            if (rc) rc.textContent = dir === 1 ? res.up_votes : res.down_votes;
+            b.classList.toggle('voted',      dir ===  1 && res.my_vote ===  1);
+            b.classList.toggle('voted-down', dir === -1 && res.my_vote === -1);
+          });
+        }
+      } catch { showToast('Failed to vote', 'error'); }
+      return;
+    }
+
+    // Reply button → show inline reply form under the parent comment
+    const replyBtn = e.target.closest('[data-reply-cmt]');
+    if (replyBtn) {
+      const parentId = +replyBtn.dataset.replyCmt;
+      const formHost = modal.querySelector('#news-cmt-reply-form-' + parentId);
+      if (!formHost) return;
+      if (formHost.style.display !== 'none') {
+        // Toggle off
+        formHost.style.display = 'none';
+        formHost.innerHTML = '';
+        return;
+      }
+      formHost.style.display = '';
+      formHost.innerHTML = `
+        <textarea class="news-modal-input news-cmt-reply-body" maxlength="500" rows="2" placeholder="Reply to ${escHtml(replyBtn.dataset.replyTo)}…"></textarea>
+        <div class="news-cmt-foot">
+          <span class="news-cmt-counter news-cmt-reply-counter">0 / 500</span>
+          <button class="news-btn" data-cancel-reply>Cancel</button>
+          <button class="news-btn news-btn-primary" data-post-reply>Reply</button>
+        </div>
+      `;
+      const ta  = formHost.querySelector('textarea');
+      const ctr = formHost.querySelector('.news-cmt-reply-counter');
+      ta.addEventListener('input', () => {
+        const n = ta.value.length;
+        ctr.textContent = `${n} / 500`;
+        ctr.classList.toggle('warn',  n > 400 && n <= 500);
+        ctr.classList.toggle('danger', n > 500);
+      });
+      ta.focus();
+      formHost.querySelector('[data-cancel-reply]').addEventListener('click', () => {
+        formHost.style.display = 'none'; formHost.innerHTML = '';
+      });
+      formHost.querySelector('[data-post-reply]').addEventListener('click', async () => {
+        const body = ta.value.trim();
+        if (!body) return;
+        if (body.length > 500) { showToast('Reply too long', 'error'); return; }
+        try {
+          await window.hub.post('/api/news/comments/post', { post_id: post.id, parent_id: parentId, body });
+          formHost.style.display = 'none'; formHost.innerHTML = '';
+          await loadComments();
+        } catch { showToast('Failed to post reply', 'error'); }
+      });
+    }
+  });
 
   // Increment view count (fire-and-forget)
   try { window.hub.post('/api/news/view', { post_id: post.id }); } catch {}
@@ -2094,6 +2320,9 @@ function renderNewsCard(p, section, isStaff, myUsername) {
   const viewBadge = (p.view_count > 0)
     ? `<span class="news-view-count" title="${p.view_count} view${p.view_count === 1 ? '' : 's'}">👁 ${p.view_count}</span>`
     : '';
+  const cmtBadge = (p.comment_count > 0)
+    ? `<span class="news-view-count" title="${p.comment_count} comment${p.comment_count === 1 ? '' : 's'}">💬 ${p.comment_count}</span>`
+    : '';
   const pollBadge = p.poll
     ? `<span class="news-poll-badge" title="This post has a poll">📊 Poll</span>` : '';
   const titleName = section === 'hub' ? 'RSPS Hub'
@@ -2154,6 +2383,7 @@ function renderNewsCard(p, section, isStaff, myUsername) {
             ${playerLabel}
             ${tagHtml}
             ${pollBadge}
+            ${cmtBadge}
             ${viewBadge}
             <span class="news-ts">${ts}</span>
           </div>
@@ -3343,6 +3573,16 @@ function showServerDetail(server) {
   const escHandler = e => { if (e.key === 'Escape') closeServerDetail(); };
   document.addEventListener('keydown', escHandler);
   overlay._escHandler = escHandler;
+
+  // Profile clicks inside the modal (review authors etc.) — handle directly
+  // since the .sd-modal stopPropagation blocks the document-level delegation.
+  overlay.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-open-profile]');
+    if (el && window.openUserProfile) {
+      e.stopPropagation();
+      window.openUserProfile(el.dataset.openProfile);
+    }
+  });
 
   overlay.querySelector('#sd-close-btn').addEventListener('click', e => {
     e.stopPropagation();

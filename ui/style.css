@@ -3893,6 +3893,118 @@ h5.news-md-h { font-size: 0.88rem; color: #c8a840; }
 .news-detail-reactions .news-react { font-size: 0.92rem; padding: 5px 12px; }
 .news-detail-stats { color: #6a5a38; font-size: 0.78rem; margin-top: 8px; }
 
+/* News post comments */
+.news-detail-comments { margin-top: 8px; }
+.news-cmt-list { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.news-cmt-empty {
+  color: #6a5a38; font-size: 0.86rem; font-style: italic;
+  padding: 10px 0; text-align: center;
+}
+.news-cmt-item {
+  display: flex; gap: 10px;
+  padding: 10px 12px;
+  background: #14100a;
+  border: 1px solid #2e2410;
+  border-radius: 6px;
+}
+.news-cmt-avatar {
+  width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #4a3a28, #14100a);
+  border: 1px solid #4a3820;
+  color: #e0d5c0; font-family: 'Inter', sans-serif; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  font-size: 0.94rem;
+}
+.news-cmt-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.news-cmt-content { flex: 1; min-width: 0; }
+.news-cmt-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 0.78rem; margin-bottom: 4px;
+}
+.news-cmt-name { color: #e3c87a; font-weight: 700; font-size: 0.86rem; }
+.news-cmt-ts   { color: #6a5a38; font-size: 0.74rem; margin-left: auto; }
+.news-cmt-action {
+  background: transparent; border: none; color: #6a5a38;
+  cursor: pointer; padding: 2px 5px; border-radius: 3px;
+  font-size: 0.86rem; transition: all 0.12s;
+}
+.news-cmt-action:hover { color: #c8a840; background: rgba(200,168,64,0.08); }
+.news-cmt-body { color: #cdc0a0; font-size: 0.88rem; line-height: 1.5; }
+.news-cmt-write {
+  margin-top: 12px; padding: 10px 12px;
+  background: #14100a;
+  border: 1px solid #3a2e14;
+  border-radius: 6px;
+}
+.news-cmt-write textarea {
+  background: #0e0c08; border: 1px solid #2e2410; color: #e0d5c0;
+  font-family: 'Inter', sans-serif; font-size: 0.88rem;
+  resize: vertical; min-height: 64px;
+}
+.news-cmt-foot {
+  display: flex; justify-content: flex-end; gap: 8px; align-items: center;
+  margin-top: 8px;
+}
+.news-cmt-foot .news-cmt-msg { color: #888; font-size: 0.8rem; min-height: 16px; }
+.news-cmt-counter { color: #6a5a38; font-size: 0.74rem; margin-right: auto; }
+.news-cmt-counter.warn   { color: #d8a868; }
+.news-cmt-counter.danger { color: #ff7a7a; font-weight: 600; }
+.news-cmt-emoji-picker {
+  display: flex; flex-wrap: wrap; gap: 2px;
+  margin-top: 6px;
+  padding: 8px;
+  background: #0e0c08; border: 1px solid #2e2410; border-radius: 4px;
+  max-height: 160px; overflow-y: auto;
+}
+
+/* Comment thread (top-level + indented replies + reply form) */
+.news-cmt-thread { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.news-cmt-item.is-reply {
+  margin-left: 28px;
+  border-left: 2px solid #3a2e14;
+}
+.news-cmt-actions {
+  display: flex; gap: 4px; align-items: center;
+  margin-top: 6px;
+}
+.news-cmt-vote {
+  background: transparent; border: 1px solid #2e2410; color: #8a7a5a;
+  padding: 2px 8px; border-radius: 12px;
+  font-size: 0.78rem; cursor: pointer; transition: all 0.12s;
+  display: inline-flex; align-items: center; gap: 3px;
+  font-family: 'Inter', sans-serif;
+}
+.news-cmt-vote:hover { background: #1a1408; border-color: #4a3820; color: #e0c87a; }
+.news-cmt-vote.voted {
+  background: rgba(122,216,138,0.10); border-color: #7ad88a; color: #7ad88a;
+}
+.news-cmt-vote.voted-down {
+  background: rgba(255,122,122,0.10); border-color: #ff7a7a; color: #ff7a7a;
+}
+.news-cmt-vote:disabled { opacity: 0.5; cursor: not-allowed; }
+.news-cmt-reply-btn {
+  background: transparent; border: none; color: #8a7a5a;
+  padding: 2px 8px; cursor: pointer;
+  font-size: 0.76rem; font-family: 'Inter', sans-serif;
+  transition: color 0.12s;
+}
+.news-cmt-reply-btn:hover { color: #c8a840; }
+.news-cmt-reply-form {
+  margin-left: 44px; margin-top: 4px;
+  padding: 8px 10px;
+  background: #0e0c08; border: 1px solid #3a2e14; border-radius: 4px;
+}
+.news-cmt-reply-form textarea {
+  background: #14100a; border: 1px solid #2e2410; color: #e0d5c0;
+  font-family: 'Inter', sans-serif; font-size: 0.86rem;
+  resize: vertical; min-height: 50px; width: 100%;
+  padding: 6px 8px; border-radius: 3px;
+  outline: none;
+}
+.news-cmt-reply-form textarea:focus { border-color: #c8a840; }
+
 /* Lightbox */
 .news-lightbox {
   position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 9700;
