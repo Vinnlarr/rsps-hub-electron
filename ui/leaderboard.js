@@ -73,7 +73,10 @@
   }
 
   function rowHtml(r, opts = {}) {
-    const lvl = levelFor(r.minutes);
+    // Hub level = lifetime skill total returned by the server (sum of per-server
+    // tier levels). Always the user's true level regardless of period filter.
+    // Fall back to the old period-derived level only if the server didn't send it.
+    const lvl = (typeof r.skillTotal === 'number' && r.skillTotal > 0) ? r.skillTotal : levelFor(r.minutes);
     const cls = [
       'lb-row',
       r.rank === 1 ? 'lb-gold'   : '',
@@ -93,7 +96,7 @@
         </div>
         <div class="lb-metric">
           <div class="lb-metric-val">${fmtHours(r.minutes)}</div>
-          <div class="lb-metric-sub">Lv ${lvl}</div>
+          <div class="lb-metric-sub">Hub Lv ${lvl}</div>
         </div>
       </div>
     `;

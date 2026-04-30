@@ -278,7 +278,7 @@ let state = {
   activeTab:  'store',
   activeTag:  'All',
   search:     '',
-  sortOrder:  'players',
+  sortOrder:  'rating',
   favourites: new Set(),
   profile:    { displayName: 'Player', bio: '', visibility: 'online', avatarPath: null },
   playtime:   {},   // { serverName: minutesPlayed }
@@ -355,6 +355,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       startFriendRequestPolling();
       startFriendOnlinePolling();
       startAnnouncementPolling();
+      startNewsNotificationPolling();
+      startPlaytimeRefresh();
       // Prefetch tab data so Stats/Friends/Chat open instantly from cache.
       prefetchTabs();
     }
@@ -404,6 +406,8 @@ function setupWindowControls() {
     if (!open) {
       renderNotifDropdown();
       notifDropdown.style.display = '';
+      notifBtn.classList.add('dropdown-open');
+      notifBtn.classList.remove('rh-tip'); // suppress hover tooltip while open
       markNotifsRead();
     }
   });
@@ -415,6 +419,8 @@ function setupWindowControls() {
     if (!open) {
       populateAccountDropdown();
       acctDropdown.style.display = '';
+      acctBtn.classList.add('dropdown-open');
+      acctBtn.classList.remove('rh-tip'); // suppress hover tooltip while open
     }
   });
 
@@ -423,6 +429,18 @@ function setupWindowControls() {
   acctDropdown?.addEventListener('click',  e => e.stopPropagation());
 
   document.addEventListener('click', closeAllDropdowns);
+
+  // Global delegation: any element with [data-open-profile="username"] opens
+  // that user's public profile modal. Used by reviews, news, leaderboard, friends.
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-open-profile]');
+    if (!el) return;
+    const username = el.dataset.openProfile;
+    if (username && window.openUserProfile) {
+      e.stopPropagation();
+      window.openUserProfile(username);
+    }
+  });
 
   // Logout
   document.getElementById('btn-logout')?.addEventListener('click', async () => {
@@ -435,6 +453,13 @@ function setupWindowControls() {
 function closeAllDropdowns() {
   document.getElementById('notif-dropdown').style.display  = 'none';
   document.getElementById('account-dropdown').style.display = 'none';
+  // Restore hover tooltip class on the trigger buttons
+  for (const id of ['btn-notifications', 'btn-account']) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    b.classList.remove('dropdown-open');
+    if (!b.classList.contains('rh-tip')) b.classList.add('rh-tip');
+  }
 }
 
 function updateNavbarAvatar() {
@@ -501,8 +526,11 @@ function populateAccountDropdown() {
   if (status) { status.textContent = vis.label; status.style.color = vis.color; }
   if (visLabel) visLabel.textContent = '— ' + (p.visibility || 'Online');
 
-  // Total playtime
-  const totalMins = Object.values(state.playtime).reduce((a, m) => a + m, 0);
+  // Total playtime — prefer the authoritative number from /api/stats/me (same
+  // field the Stats tab + status bar use). Fall back to summing perServer.
+  const totalMins = (typeof _playtimeTotalMins === 'number' && _playtimeTotalMins !== null)
+    ? _playtimeTotalMins
+    : Object.values(state.playtime).reduce((a, m) => a + m, 0);
   if (playtime) playtime.textContent = totalMins > 0 ? formatMinutes(Math.round(totalMins)) : '—';
   if (favs)     favs.textContent     = state.favourites.size;
 }
@@ -591,7 +619,7 @@ async function openChangeAvatar() {
             onclick="browseAvatar()">
             BROWSE...
           </button>
-          <p id="avatar-chosen-name" style="font-family:'IM Fell English',serif;font-size:0.72rem;color:#6a5a3a;margin-top:8px;min-height:16px;font-style:italic;"></p>
+          <p id="avatar-chosen-name" style="font-family:'Inter',sans-serif;font-size:0.78rem;color:#7a6a4a;margin-top:8px;min-height:16px;"></p>
         </div>
         <div class="rs-modal-footer">
           <button class="action-btn play-btn" id="avatar-save-btn" style="width:90px;height:34px;font-size:0.72rem" onclick="confirmAvatar()" disabled>SAVE</button>
@@ -738,6 +766,8 @@ function getFilteredServers() {
 
   // Sort
   if (state.sortOrder === 'players')   list.sort((a, b) => (b.hubPlayers || 0) - (a.hubPlayers || 0));
+  if (state.sortOrder === 'rating')    list.sort((a, b) => (+b.avg_rating || 0) - (+a.avg_rating || 0) || (b.review_count || 0) - (a.review_count || 0));
+  if (state.sortOrder === 'reviews')   list.sort((a, b) => (b.review_count || 0) - (a.review_count || 0) || (+b.avg_rating || 0) - (+a.avg_rating || 0));
   if (state.sortOrder === 'name-asc')  list.sort((a, b) => a.name.localeCompare(b.name));
   if (state.sortOrder === 'name-desc') list.sort((a, b) => b.name.localeCompare(a.name));
 
@@ -805,6 +835,9 @@ function buildServerCard(server) {
       <p class="card-desc">${escHtml(truncate(server.description || '', 200))}</p>
       <div class="card-tags">
         ${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}
+        ${server.review_count > 0
+          ? `<span class="card-rating" title="${server.review_count} review${server.review_count === 1 ? '' : 's'}">★ ${(+server.avg_rating).toFixed(1)} <span class="card-rating-count">(${server.review_count})</span></span>`
+          : ''}
       </div>
     </div>
     <div class="card-actions">
@@ -1154,78 +1187,1429 @@ async function renderAltContent(tab, el) {
   }
 
   else if (tab === 'news') {
-    const renderNews = async () => {
-      el.innerHTML = `<div class="alt-header"><h2>NEWS</h2><p>Latest updates from RSPS Hub</p></div><p class="empty-msg" style="padding:24px 0">Loading…</p>`;
-      let announcementsData = null;
-      let fetchErr = null;
-      try {
-        announcementsData = await fetch('https://api.therspshub.com/api/announcements/list.php').then(r => r.json());
-      } catch (e) { fetchErr = e?.message || String(e); }
+    await renderNewsTab(el);
+  }
+}
 
-      const announcements = announcementsData?.announcements || [];
-      const serversWithChangelog = state.servers.filter(s => s.changelog && s.changelog.trim());
-
-      const isStaff = !!state.user?.isStaff;
-      const announcementCards = announcements.map(a => `
-        <div class="news-card" data-ann-id="${a.id}">
-          <div class="news-card-header">
-            <div class="news-server-icon" style="background:linear-gradient(135deg,#c8a840,#8a6820);color:#fff;font-family:'Cinzel',serif;font-weight:700">H</div>
-            <div class="news-server-meta">
-              <span class="news-server-name">${escHtml(a.title)}</span>
-              <span class="news-server-tag">HUB ANNOUNCEMENT</span>
-            </div>
-            ${isStaff ? `<button class="news-delete-btn" data-id="${a.id}" title="Delete announcement" style="margin-left:auto;background:none;border:none;color:#5a3a2a;font-size:0.8rem;cursor:pointer;padding:2px 6px;border-radius:3px;transition:color 0.12s" onmouseover="this.style.color='#e07070'" onmouseout="this.style.color='#5a3a2a'">✕</button>` : ''}
-          </div>
-          <div class="news-body" style="white-space:pre-wrap">${escHtml(a.message)}</div>
+// ── THEMED CONFIRM ────────────────────────────────────────────────────────
+// Drop-in replacement for window.confirm() that matches our palette.
+// Returns a Promise<boolean>.
+function confirmThemed(message, opts = {}) {
+  const title       = opts.title       || 'Confirm';
+  const okLabel     = opts.okLabel     || 'OK';
+  const cancelLabel = opts.cancelLabel || 'Cancel';
+  const danger      = !!opts.danger;
+  return new Promise(resolve => {
+    const modal = document.createElement('div');
+    modal.className = 'news-modal-backdrop';
+    modal.innerHTML = `
+      <div class="news-modal" style="width:min(420px,90vw)">
+        <div class="news-modal-hdr">
+          <h3>${escHtml(title)}</h3>
         </div>
-      `).join('');
-
-      const changelogCards = serversWithChangelog.map(s => `
-        <div class="news-card">
-          <div class="news-card-header">
-            <div class="news-server-icon" style="background:${bannerColor(s.name)}">${escHtml(s.name[0].toUpperCase())}</div>
-            <div class="news-server-meta">
-              <span class="news-server-name">${escHtml(s.name)}</span>
-              <span class="news-server-tag">CHANGELOG</span>
-            </div>
-          </div>
-          <div class="news-body">${escHtml(s.changelog).replace(/\n/g, '<br>')}</div>
+        <div class="news-modal-body" style="color:#cdc0a0">${escHtml(message)}</div>
+        <div class="news-modal-foot">
+          <button class="news-btn" data-act="cancel">${escHtml(cancelLabel)}</button>
+          <button class="news-btn ${danger ? 'news-btn-danger' : 'news-btn-primary'}" data-act="ok">${escHtml(okLabel)}</button>
         </div>
-      `).join('');
-
-      const errBanner = fetchErr
-        ? `<p style="color:#c84040;font-size:0.72rem;padding:6px 0">⚠ Failed to load announcements: ${escHtml(fetchErr)}</p>`
-        : (announcementsData && !announcementsData.announcements
-            ? `<p style="color:#c84040;font-size:0.72rem;padding:6px 0">⚠ Unexpected response: ${escHtml(JSON.stringify(announcementsData).slice(0,100))}</p>`
-            : '');
-
-      if (!announcementCards && !changelogCards) {
-        el.innerHTML = `
-          <div class="alt-header"><h2>NEWS</h2><p>Latest updates from RSPS Hub</p></div>
-          ${errBanner}
-          <p class="empty-msg">No news yet. Check back soon!</p>
-        `;
-      } else {
-        el.innerHTML = `
-          <div class="alt-header"><h2>NEWS</h2><p>Latest updates from RSPS Hub</p></div>
-          ${errBanner}${announcementCards}${changelogCards}
-        `;
-      }
+      </div>
+    `;
+    const close = (val) => { modal.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+    const onKey = e => {
+      if (e.key === 'Escape') close(false);
+      if (e.key === 'Enter')  close(true);
     };
-    await renderNews();
+    document.addEventListener('keydown', onKey);
+    modal.addEventListener('click', e => {
+      const btn = e.target.closest('[data-act]');
+      if (btn) close(btn.dataset.act === 'ok');
+      else if (e.target === modal) close(false);
+    });
+    document.body.appendChild(modal);
+    setTimeout(() => modal.querySelector('[data-act="ok"]').focus(), 50);
+  });
+}
 
-    // Delete announcement buttons (staff only)
-    el.addEventListener('click', async e => {
-      const btn = e.target.closest('.news-delete-btn');
-      if (!btn) return;
-      btn.disabled = true;
-      try {
-        await window.hub.post('/api/announcements/delete', { id: parseInt(btn.dataset.id) });
-        btn.closest('[data-ann-id]').remove();
-        showToast('Announcement deleted.', 'info');
-      } catch { btn.disabled = false; showToast('Failed to delete', 'error'); }
+// Manual list toggle — execCommand misbehaves in some Electron builds.
+// Handles: not-in-list → wrap, same type → unwrap, different type → convert.
+function toggleListInEditor(editor, type /* 'ul'|'ol' */) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !editor.contains(sel.anchorNode)) {
+    document.execCommand(type === 'ul' ? 'insertUnorderedList' : 'insertOrderedList');
+    return;
+  }
+  let n = sel.anchorNode;
+  if (n.nodeType === Node.TEXT_NODE) n = n.parentNode;
+  let list = null;
+  while (n && n !== editor) {
+    const tag = n.tagName?.toLowerCase();
+    if (tag === 'ul' || tag === 'ol') { list = n; break; }
+    n = n.parentNode;
+  }
+  if (list) {
+    if (list.tagName.toLowerCase() === type) {
+      // Unwrap — convert each <li> to a <div>
+      const parent = list.parentNode;
+      const frag = document.createDocumentFragment();
+      list.querySelectorAll(':scope > li').forEach(li => {
+        const div = document.createElement('div');
+        while (li.firstChild) div.appendChild(li.firstChild);
+        frag.appendChild(div);
+      });
+      parent.insertBefore(frag, list);
+      parent.removeChild(list);
+    } else {
+      // Convert UL ↔ OL
+      const newList = document.createElement(type);
+      while (list.firstChild) newList.appendChild(list.firstChild);
+      list.parentNode.replaceChild(newList, list);
+    }
+  } else {
+    // Plain text — wrap selection
+    document.execCommand(type === 'ul' ? 'insertUnorderedList' : 'insertOrderedList');
+  }
+}
+
+function renderPoll(post) {
+  const poll = post.poll;
+  if (!poll || !poll.options || !poll.options.length) return '';
+  const total = poll.options.reduce((s, o) => s + (o.votes || 0), 0);
+  const closed = poll.closes_at && new Date(poll.closes_at.replace(' ','T') + 'Z').getTime() < Date.now();
+  const haveVoted = poll.options.some(o => o.my_vote);
+  const multi = !!poll.multi_choice;
+  const optsHtml = poll.options.map(o => {
+    const pct = total ? Math.round(((o.votes || 0) / total) * 100) : 0;
+    const marker = multi
+      ? (o.my_vote ? '☑' : '☐')
+      : (o.my_vote ? '●' : '○');
+    return `
+      <button type="button" class="news-poll-opt-btn ${o.my_vote ? 'voted' : ''}" data-poll-vote="${o.id}" data-poll-post="${post.id}" ${closed ? 'disabled' : ''}>
+        <span class="news-poll-bar" style="width:${pct}%"></span>
+        <span class="news-poll-marker">${marker}</span>
+        <span class="news-poll-label">${escHtml(o.label)}</span>
+        <span class="news-poll-votes">${o.votes || 0} · ${pct}%</span>
+      </button>
+    `;
+  }).join('');
+  return `
+    <div class="news-poll-render">
+      <div class="news-poll-q">📊 ${escHtml(poll.question)}</div>
+      <div class="news-poll-list">${optsHtml}</div>
+      <div class="news-poll-foot">
+        ${total} vote${total === 1 ? '' : 's'} · ${poll.multi_choice ? 'multiple choices allowed' : 'single choice'}${closed ? ' · CLOSED' : ''}
+      </div>
+    </div>
+  `;
+}
+
+// Open a themed full-content post view. Reuses the news-modal palette.
+function openNewsDetail(post, container) {
+  const sec = post.section;
+  const reactions = NEWS_REACTIONS[sec] || ['🔥','❤️','👀'];
+  const myReacts = new Set(post.my_reactions || []);
+  const counts   = post.reactions || {};
+  const titleName = sec === 'hub' ? 'RSPS Hub'
+                  : sec === 'server' ? (post.server_name || 'Server')
+                  : (post.username || '?');
+  const reactBtns = reactions.map(em => `
+    <span class="news-react ${myReacts.has(em) ? 'reacted' : ''}" data-react-emoji="${em}">
+      ${em} <span class="rc">${counts[em] || 0}</span>
+    </span>
+  `).join('');
+
+  const modal = document.createElement('div');
+  modal.className = 'news-modal-backdrop news-detail-backdrop';
+  modal.innerHTML = `
+    <div class="news-modal news-detail-modal">
+      <div class="news-modal-hdr">
+        <div class="news-detail-hdr-meta">
+          ${post.tag ? `<span class="news-tag tag-${post.tag.toLowerCase()}">${escHtml(post.tag)}</span>` : ''}
+          <span class="news-server-name">${escHtml(titleName)}</span>
+          <span class="news-dot">·</span>
+          <span class="news-author">${escHtml(post.username)}</span>
+          <span class="news-ts">${formatNewsTs(post.created_at)}${post.edited_at ? ' · edited' : ''}</span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="news-btn" id="news-detail-copy">🔗 Copy link</button>
+          <button class="news-modal-close" id="news-detail-close">✕</button>
+        </div>
+      </div>
+      <div class="news-modal-body">
+        <h2 class="news-detail-title">${escHtml(post.title)}</h2>
+        <div class="news-detail-body">${renderNewsBody(post.body)}</div>
+        ${post.image_url ? `<div class="news-card-img" data-lightbox="${escAttr(post.image_url)}"><img src="${escAttr(post.image_url)}" alt="" draggable="false"></div>` : ''}
+        ${renderPoll(post)}
+        <div class="news-detail-reactions">${reactBtns}</div>
+        <div class="news-detail-stats">
+          ${post.view_count > 0 ? `<span>👁 ${post.view_count} view${post.view_count === 1 ? '' : 's'}</span>` : ''}
+        </div>
+        <div class="news-detail-comments">
+          <div class="news-modal-label" style="margin-top:18px">💬 Comments — coming soon</div>
+          <p style="color:#6a5a38;font-size:0.86rem">Threaded replies are on the way. For now, react above or jump to the chat tab.</p>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => { modal.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  modal.querySelector('#news-detail-close').addEventListener('click', e => { e.stopPropagation(); close(); });
+
+  // Image click → lightbox. Guard with contains() so a click that bubbled in
+  // from a stacked modal (e.g. compose-while-editing) can't trigger us.
+  modal.addEventListener('click', e => {
+    if (!modal.contains(e.target)) return;
+    const img = e.target.closest('.news-card-img');
+    if (img && modal.contains(img)) {
+      const url = img.dataset.lightbox || img.querySelector('img')?.src;
+      if (url) openImageLightbox(url);
+      return;
+    }
+    const lbImg = e.target.closest('.news-detail-body img');
+    if (lbImg && modal.contains(lbImg)) { openImageLightbox(lbImg.src); return; }
+  });
+
+  // Copy link
+  modal.querySelector('#news-detail-copy').addEventListener('click', async () => {
+    const url = `https://rspshub.net/news/${post.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Link copied to clipboard', 'success');
+    } catch {
+      // Fallback
+      const ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy'); ta.remove();
+      showToast('Link copied to clipboard', 'success');
+    }
+  });
+
+  // Re-render the reactions row from current post state. Used by both the
+  // optimistic update and the server-confirmed update without touching scroll.
+  function rerenderReactionsRow() {
+    const reactRow = modal.querySelector('.news-detail-reactions');
+    if (!reactRow) return;
+    const myR = new Set(post.my_reactions || []);
+    const cnt = post.reactions || {};
+    reactRow.innerHTML = (NEWS_REACTIONS[sec] || ['🔥','❤️','👀']).map(em => `
+      <span class="news-react ${myR.has(em) ? 'reacted' : ''}" data-react-emoji="${em}">
+        ${em} <span class="rc">${cnt[em] || 0}</span>
+      </span>
+    `).join('');
+  }
+  function rerenderPollBlock() {
+    const oldPoll = modal.querySelector('.news-poll-render');
+    if (!oldPoll) return;
+    const tmp = document.createElement('div'); tmp.innerHTML = renderPoll(post);
+    const newPoll = tmp.firstElementChild;
+    if (newPoll) oldPoll.replaceWith(newPoll);
+    else oldPoll.remove();
+  }
+
+  // Sync the underlying feed card's reaction display so closing the modal
+  // doesn't reveal stale counts/states. No re-render of the whole feed.
+  function syncCardReactions() {
+    if (!container) return;
+    const cardEl = container.querySelector(`[data-post-id="${post.id}"]`);
+    if (!cardEl) return;
+    const myR = new Set(post.my_reactions || []);
+    cardEl.querySelectorAll('[data-react-emoji]').forEach(btn => {
+      const em = btn.dataset.reactEmoji;
+      btn.classList.toggle('reacted', myR.has(em));
+      const rc = btn.querySelector('.rc');
+      const newCount = post.reactions?.[em] || 0;
+      if (rc) rc.textContent = newCount;
+      else btn.innerHTML = `${em} ${newCount || ''}`.trim();
     });
   }
+
+  // Reactions + poll votes inside detail view — fully optimistic, server response
+  // updates local state. NO full feed reload, NO scroll jump.
+  modal.addEventListener('click', async (e) => {
+    const r = e.target.closest('[data-react-emoji]');
+    if (r) {
+      const emoji = r.dataset.reactEmoji;
+      try {
+        const res = await window.hub.post('/api/news/react', { post_id: post.id, emoji });
+        if (res?.ok) {
+          post.reactions    = res.reactions    || {};
+          post.my_reactions = res.my_reactions || [];
+          rerenderReactionsRow();
+          // Mirror change to feed list + the card's DOM
+          const card = _newsState.posts.find(p => p.id === post.id);
+          if (card) { card.reactions = post.reactions; card.my_reactions = post.my_reactions; }
+          syncCardReactions();
+        }
+      } catch { showToast('Failed to react', 'error'); }
+      return;
+    }
+    const v = e.target.closest('[data-poll-vote]');
+    if (v) {
+      try {
+        const res = await window.hub.post('/api/news/poll-vote', {
+          post_id: +v.dataset.pollPost, option_id: +v.dataset.pollVote
+        });
+        if (res?.ok && res.poll) {
+          post.poll = res.poll;
+          rerenderPollBlock();
+          const card = _newsState.posts.find(p => p.id === post.id);
+          if (card) card.poll = res.poll;
+        }
+      } catch { showToast('Vote failed', 'error'); }
+      return;
+    }
+  });
+
+  // Stop ALL click/mousedown events from leaking out of the modal to handlers
+  // behind (e.g. the news tab's image-click → lightbox handler). Internal
+  // handlers still run because they're attached earlier in the registration
+  // order or to descendants.
+  modal.addEventListener('mousedown', e => e.stopPropagation());
+  modal.addEventListener('click',     e => e.stopPropagation());
+
+  // Increment view count (fire-and-forget)
+  try { window.hub.post('/api/news/view', { post_id: post.id }); } catch {}
+
+  document.body.appendChild(modal);
+}
+
+// Open a themed image-lightbox overlay.
+function openImageLightbox(url) {
+  const ov = document.createElement('div');
+  ov.className = 'news-lightbox';
+  ov.innerHTML = `
+    <button class="news-lightbox-close" title="Close">✕</button>
+    <img src="${escAttr(url)}" alt="" draggable="false">
+  `;
+  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  ov.addEventListener('mousedown', e => e.stopPropagation());
+  ov.addEventListener('click', e => {
+    e.stopPropagation();
+    if (e.target === ov || e.target.classList.contains('news-lightbox-close')) close();
+  });
+  document.body.appendChild(ov);
+}
+
+// Themed prompt — like window.prompt() but matches launcher palette. Returns
+// Promise<string|null>. null if cancelled, string (possibly empty) if OK'd.
+function promptThemed(title, label, defaultValue = '') {
+  return new Promise(resolve => {
+    const modal = document.createElement('div');
+    modal.className = 'news-modal-backdrop';
+    modal.innerHTML = `
+      <div class="news-modal" style="width:min(420px,90vw)">
+        <div class="news-modal-hdr"><h3>${escHtml(title)}</h3></div>
+        <div class="news-modal-body">
+          <label class="news-modal-label">${escHtml(label)}</label>
+          <input class="news-modal-input" type="text" id="prompt-input" value="${escAttr(defaultValue)}">
+        </div>
+        <div class="news-modal-foot">
+          <button class="news-btn" data-act="cancel">Cancel</button>
+          <button class="news-btn news-btn-primary" data-act="ok">OK</button>
+        </div>
+      </div>
+    `;
+    const input = () => modal.querySelector('#prompt-input');
+    const close = (val) => { modal.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+    const onKey = e => {
+      if (e.key === 'Escape') close(null);
+      if (e.key === 'Enter')  close(input().value);
+    };
+    document.addEventListener('keydown', onKey);
+    modal.addEventListener('click', e => {
+      const btn = e.target.closest('[data-act]');
+      if (btn) close(btn.dataset.act === 'ok' ? input().value : null);
+      else if (e.target === modal) close(null);
+    });
+    document.body.appendChild(modal);
+    setTimeout(() => { input().focus(); input().select(); }, 50);
+  });
+}
+
+// ── NEWS TAB ───────────────────────────────────────────────────────────────
+// Three sections: Hub (staff-only), Servers (dev posts), Community (any user).
+// Permissions enforced server-side; UI only hides the compose box accordingly.
+
+// Tiny safe markdown renderer for post bodies. Order matters:
+// 1) escape everything, 2) walk allowlisted patterns, 3) line breaks last.
+// Image URLs are restricted to our own /uploads/news/ — anything else is a
+// dead pattern and renders as plain text. Same security posture as before,
+// just lets posts mix several images and bits of formatting between them.
+// Domains we trust enough to drop the warning icon for. Everything else
+// renders with a ⚠ badge next to the hostname so users know to be careful.
+const NEWS_TRUSTED_DOMAINS = new Set([
+  'youtube.com','youtu.be','m.youtube.com',
+  'discord.gg','discord.com',
+  'github.com','gitlab.com',
+  'twitch.tv',
+  'twitter.com','x.com',
+  'reddit.com','old.reddit.com',
+  'imgur.com','i.imgur.com',
+  'rspshub.net','www.rspshub.net','therspshub.com','api.therspshub.com',
+  'wikipedia.org','en.wikipedia.org',
+  'runescape.wiki','oldschool.runescape.wiki',
+]);
+
+function newsHostnameOf(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname.toLowerCase().replace(/^www\./, '');
+  } catch { return ''; }
+}
+
+function renderNewsBody(text) {
+  // Process line-level patterns FIRST (headers, lists) before escaping, working
+  // on lines and emitting raw HTML. Inline patterns run on inner text.
+  const inline = (s) => {
+    let h = escHtml(s);
+    h = h.replace(
+      /!\[([^\]]*)\]\((https:\/\/api\.therspshub\.com\/uploads\/news\/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|gif|webp))\)/g,
+      (_, alt, url) => `<img class="news-md-img" src="${url}" alt="${escAttr(alt)}" loading="lazy" draggable="false">`
+    );
+    h = h.replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)<>]+)\)/g,
+      (_, label, url) => {
+        const host = newsHostnameOf(url);
+        const trusted = NEWS_TRUSTED_DOMAINS.has(host);
+        const badge = host
+          ? `<span class="news-link-host${trusted ? ' trusted' : ' untrusted'}" title="${trusted ? 'Trusted source' : 'Unverified link — check before clicking'}">${trusted ? '✓' : '⚠'} ${escHtml(host)}</span>`
+          : '';
+        return `<a href="${escAttr(url)}" target="_blank" rel="noopener">${label}</a>${badge}`;
+      }
+    );
+    h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+    h = h.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+    h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    // @mentions — username chars match users.username constraints (2-32 alnum/_)
+    h = h.replace(/(^|[^\w@])@([A-Za-z0-9_]{2,32})/g,
+      (_, lead, name) => `${lead}<span class="news-mention" data-mention="${escAttr(name)}">@${escHtml(name)}</span>`);
+    return h;
+  };
+
+  // Walk lines: collect bullet/numbered groups into <ul>/<ol>, otherwise emit
+  // headers or paragraph chunks.
+  const lines = (text || '').split('\n');
+  const out = [];
+  let listType = null;     // 'ul' | 'ol' | null
+  let listItems = [];
+  const flushList = () => {
+    if (!listType) return;
+    out.push('<' + listType + ' class="news-md-list">' + listItems.map(li => '<li>' + inline(li) + '</li>').join('') + '</' + listType + '>');
+    listType = null; listItems = [];
+  };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    let m;
+    if ((m = line.match(/^(#{1,3})\s+(.+)$/))) {
+      flushList();
+      const level = Math.min(3, m[1].length) + 2; // h3..h5 (h1/h2 reserved for page titles)
+      out.push('<h' + level + ' class="news-md-h">' + inline(m[2]) + '</h' + level + '>');
+    } else if ((m = line.match(/^[-*]\s+(.+)$/))) {
+      if (listType !== 'ul') { flushList(); listType = 'ul'; }
+      listItems.push(m[1]);
+    } else if ((m = line.match(/^\d+\.\s+(.+)$/))) {
+      if (listType !== 'ol') { flushList(); listType = 'ol'; }
+      listItems.push(m[1]);
+    } else if (line === '') {
+      flushList();
+      out.push('<br>');
+    } else {
+      flushList();
+      out.push(inline(line));
+    }
+  }
+  flushList();
+  // Join with line breaks where adjacent inline lines aren't already block-level
+  return out.map((chunk, i) => {
+    if (i === 0) return chunk;
+    const prev = out[i-1];
+    const isBlock = (s) => /^<(h\d|ul|ol|br)/i.test(s);
+    return (isBlock(prev) || isBlock(chunk)) ? chunk : '<br>' + chunk;
+  }).join('');
+}
+// Used by escAttr above to be defensive with already-escaped strings used as attrs
+function escAttr(s) { return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
+
+// Walk a contentEditable node tree and produce markdown for storage.
+// Stripping anything we don't recognise — same security posture as the
+// renderNewsBody allowlist, just running in reverse.
+function newsEditorToMarkdown(root) {
+  function walk(node) {
+    let out = '';
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        out += child.textContent;
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const t = child.tagName.toLowerCase();
+        if (t === 'br') out += '\n';
+        else if (t === 'strong' || t === 'b')   out += '**' + walk(child) + '**';
+        else if (t === 'em'     || t === 'i')   out += '*'  + walk(child) + '*';
+        else if (t === 'del'    || t === 's' || t === 'strike') out += '~~' + walk(child) + '~~';
+        else if (t === 'code')                  out += '`'  + walk(child) + '`';
+        else if (t === 'a') {
+          const href = child.getAttribute('href') || '';
+          out += '[' + (walk(child) || href) + '](' + href + ')';
+        }
+        else if (t === 'img') {
+          const src = child.getAttribute('src') || '';
+          const alt = child.getAttribute('alt') || '';
+          out += '![' + alt + '](' + src + ')';
+        }
+        else if (t === 'h1' || t === 'h2' || t === 'h3' || t === 'h4' || t === 'h5' || t === 'h6') {
+          if (out && !out.endsWith('\n')) out += '\n';
+          // Map any heading level down to ###/##/# (caps to three #) for our renderer
+          const hashes = '###'.slice(0, Math.min(3, Math.max(1, t === 'h1' ? 1 : t === 'h2' ? 2 : 3)));
+          out += hashes + ' ' + walk(child).trim() + '\n';
+        }
+        else if (t === 'ul' || t === 'ol') {
+          if (out && !out.endsWith('\n')) out += '\n';
+          let n = 1;
+          for (const li of child.children) {
+            if (li.tagName.toLowerCase() !== 'li') continue;
+            out += (t === 'ol' ? (n++) + '. ' : '- ') + walk(li).trim() + '\n';
+          }
+        }
+        else if (t === 'div' || t === 'p') {
+          if (out && !out.endsWith('\n')) out += '\n';
+          out += walk(child);
+          if (!out.endsWith('\n')) out += '\n';
+        }
+        else {
+          out += walk(child);
+        }
+      }
+    }
+    return out;
+  }
+  return walk(root).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Bigger emoji set for the picker. Organised loosely by category so the grid
+// reads roughly: RSPS-flavour → faces → gestures → symbols → food → animals → hearts.
+const NEWS_EMOJI = [
+  // ── RSPS / OSRS adventure flavour ──
+  '⚔️','🗡️','🛡️','🏹','🪓','🔨','⚒️','🪛','🧰','⛏️','🪨','🪵','🌳','🌲','🌿','🍃',
+  '🍂','🌾','🪴','🌺','🌷','🌹','🪻','🍀','🌱','🥕','🍓','🍇','🥚','🍗','🍖','🥩',
+  '🐟','🐠','🐡','🦞','🦀','🦐','🐍','🐀','🦴','🐲','🐉','🦄','🦊','🐺','🦁','🐯',
+  '🦅','🦉','🦇','🦂','🕷️','🕸️','🐙','🦑','💀','☠️','👻','👹','👺','👽','👾','🤖',
+  '🧙','🧝','🧌','🧚','🧛','🧟','🧞','🧜','🧑‍🚀','🥷','🤺','🏇','⛷️','🏊','🧗','🚣',
+  '🪄','📜','🗺️','🔮','🧿','🪬','⚱️','🪦','🚪','🪟','🪞','🛏️','🏰','🏯','🛕','⛩️',
+  '🌋','🏔️','⛰️','🗻','🏝️','🏖️','🏟️','🌌','🌠','🌟','✨','💫','⭐','☄️','⚡','🔥',
+  '❄️','💨','💦','🌊','🌪️','🌈','☀️','🌙','⛅','☁️','🪐','🌍','🌎','🌏','🍯','🧪',
+  '💊','💉','🩹','⚗️','🪤','🪜','🧲','🪙','💰','💸','💎','👑','🏆','🥇','🥈','🥉',
+  '🏅','🎖️','🎗️','🎁','🎉','🎊','🎯','🎲','🎮','🕹️','🪅','🎰',
+  // ── Faces — happy / love / playful ──
+  '😀','😃','😄','😁','😆','😅','😂','🤣','🥲','🥹','😊','😇','🙂','🙃','😉','😌',
+  '😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🥸',
+  '🤩','🥳','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢',
+  '😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😱','😨','😰','😥','😓','🤗','🤔',
+  '🤭','🤫','🤥','😶','😐','😑','😬','🙄','😯','😦','😧','😮','😲','🥱','😴','🤤',
+  '😪','😵','🤐','🥴','🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😈','👿','👹','👺',
+  '🤡','💩','👻','💀','☠️','👽','👾','🤖','🎃','😺','😸','😹','😻','😼','😽','🙀',
+  // Hand gestures + body
+  '👋','🤚','🖐️','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆',
+  '🖕','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✍️',
+  '💪','🦾','🦵','🦶','👂','🦻','👃','👀','👁️','👅','👄','🫦','🧠','🦷','💋','🩸',
+  // Symbols / status / reactions
+  '💯','💢','💥','💫','💦','💨','🕳️','💣','💬','👁️‍🗨️','🗨️','🗯️','💭','💤','✨','⭐',
+  '🌟','⚡','☄️','🔥','🌈','☀️','🌙','⛅','☁️','❄️','🌪️','🎯','🎲','🎮','🕹️','🎰',
+  '✅','❌','❓','❗','‼️','⁉️','♨️','🚫','⛔','📛','🔞','✔️','☑️','📌','📍','🔔',
+  '🔕','📣','📢','💡','🔆','🔅','🔎','🔍','🔒','🔓','🔑','🗝️','🛡️','⚔️','🗡️','🏹',
+  '🪓','🔨','⚒️','🛠️','⚙️','🪛','🧰','🔧','🪤','🪜','🧲','🧪','💊','💉','🩹','🩺',
+  // Currency / money / value
+  '💎','💰','💸','💵','💴','💶','💷','🪙','💳','🧾','📊','📈','📉','📅','🛒','📦',
+  // Trophies / awards / events
+  '🏆','🥇','🥈','🥉','🏅','🎖️','🏵️','🎗️','🎁','🎉','🎊','🎈','🎂','🪅','🎵','🎶',
+  '🎤','🎧','🎷','🎺','🎻','🥁','🪘','🎸','🪕','🎼','🚀','✈️','🛸','🛰️','⚓','🚂',
+  // Foods / drinks
+  '🍗','🍖','🍤','🥩','🍣','🍱','🍔','🍟','🌭','🍕','🥪','🌮','🌯','🥘','🍝','🍜',
+  '🍲','🥗','🍿','🥨','🥐','🍞','🥖','🥯','🧀','🥚','🍳','🥞','🧇','🥓','🥪','🍙',
+  '🍚','🍘','🍢','🍡','🍧','🍨','🍦','🥧','🍰','🎂','🧁','🍮','🍭','🍬','🍫','🍩',
+  '🍪','☕','🍵','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🍾','🥤','🧃','🧉','🧊',
+  // Animals / nature
+  '🐉','🐲','🦄','🐎','🐂','🐗','🐺','🦊','🦝','🐱','🐶','🦁','🐯','🐅','🐆','🦓',
+  '🐍','🦎','🐊','🐢','🦖','🦕','🐦','🦅','🦉','🦇','🐺','🐗','🐀','🦴','🐟','🐠',
+  '🐡','🦈','🐙','🦑','🦞','🦀','🌳','🌲','🌴','🌵','🌷','🌸','🌹','🌺','🌻','🍀',
+  // Hearts
+  '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','💖','💗','💓','💞',
+  '💕','💟','💝','💘','💌',
+];
+
+
+const NEWS_TAGS = {
+  hub:       ['Update', 'Event', 'News'],
+  server:    ['Update', 'Event', 'Drop', 'Maintenance'],
+  community: ['Guide',  'Review', 'LFG', 'Discussion'],
+};
+const NEWS_REACTIONS = {
+  hub:       ['🔥', '❤️', '👀'],
+  server:    ['🔥', '❤️', '🎉'],
+  community: ['👍', '👎', '💬'],
+};
+
+let _newsState = { section: 'hub', filterTag: null, posts: [], sort: 'new', search: '', bookmarked: false };
+let _newsSearchTimer = null;
+
+async function refreshNewsUnreadBadges(el) {
+  try {
+    const res = await window.hub.get('/api/news/unread');
+    const counts = res?.unread || {};
+    el.querySelectorAll('[data-unread]').forEach(b => {
+      const n = counts[b.dataset.unread] || 0;
+      if (n > 0) { b.textContent = n > 99 ? '99+' : n; b.style.display = 'inline-block'; }
+      else       { b.style.display = 'none'; }
+    });
+    // Also tell the bottom-nav News button there's something new
+    const total = Object.values(counts).reduce((a,b) => a + (b || 0), 0);
+    document.querySelector('.rs-tab[data-tab="news"]')?.classList.toggle('has-unread', total > 0);
+  } catch {}
+}
+
+function newsDraftKey(section) { return 'news_draft_' + section; }
+function loadNewsDraft(section) {
+  try { return JSON.parse(localStorage.getItem(newsDraftKey(section)) || 'null'); } catch { return null; }
+}
+function saveNewsDraft(section, draft) {
+  try {
+    if (!draft || (!draft.title && !draft.body)) localStorage.removeItem(newsDraftKey(section));
+    else localStorage.setItem(newsDraftKey(section), JSON.stringify(draft));
+  } catch {}
+}
+function clearNewsDraft(section) { try { localStorage.removeItem(newsDraftKey(section)); } catch {} }
+
+async function renderNewsTab(el) {
+  el.innerHTML = `
+    <div class="alt-header">
+      <h2>NEWS</h2>
+      <p>Latest from the hub, servers, and players</p>
+      <button class="news-mark-read-btn" id="news-mark-all" title="Mark all sections as read">✓ Mark all read</button>
+    </div>
+    <div class="news-toptabs">
+      <button class="news-toptab active" data-sec="hub">💎 Hub <span class="news-unread-badge" data-unread="hub" style="display:none">0</span></button>
+      <button class="news-toptab"        data-sec="server">⚔️ Servers <span class="news-unread-badge" data-unread="server" style="display:none">0</span></button>
+      <button class="news-toptab"        data-sec="community">💬 Community <span class="news-unread-badge" data-unread="community" style="display:none">0</span></button>
+    </div>
+    <div class="news-controls">
+      <input type="search" id="news-search" class="news-search" placeholder="🔎 Search title or body…">
+      <select id="news-sort" class="news-sort">
+        <option value="new">Newest</option>
+        <option value="top_week">Top this week</option>
+        <option value="top_all">Top all time</option>
+      </select>
+    </div>
+    <div id="news-filters" class="news-filters"></div>
+    <div id="news-compose-host"></div>
+    <div id="news-feed" class="news-feed"><p class="empty-msg" style="padding:24px 0">Loading…</p></div>
+  `;
+  el.querySelector('#news-mark-all').addEventListener('click', async () => {
+    try {
+      await window.hub.post('/api/news/mark-read', { section: 'all' });
+      await refreshNewsUnreadBadges(el);
+      showToast('All sections marked as read', 'success');
+    } catch { showToast('Failed', 'error'); }
+  });
+  // Search debounced
+  el.querySelector('#news-search').addEventListener('input', (e) => {
+    clearTimeout(_newsSearchTimer);
+    _newsSearchTimer = setTimeout(() => {
+      _newsState.search = e.target.value.trim();
+      loadAndRenderNews(el);
+    }, 300);
+  });
+  el.querySelector('#news-sort').addEventListener('change', (e) => {
+    _newsState.sort = e.target.value;
+    loadAndRenderNews(el);
+  });
+  el.querySelectorAll('.news-toptab').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      el.querySelectorAll('.news-toptab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _newsState.section = btn.dataset.sec;
+      _newsState.filterTag = null;
+      // Mark this section as read since the user is viewing it
+      try { window.hub.post('/api/news/mark-read', { section: _newsState.section }); } catch {}
+      await loadAndRenderNews(el);
+      refreshNewsUnreadBadges(el);
+    });
+  });
+  await loadAndRenderNews(el);
+  // Initial mark-read for the default (hub) section + badges
+  try { window.hub.post('/api/news/mark-read', { section: _newsState.section }); } catch {}
+  refreshNewsUnreadBadges(el);
+
+  // Event delegation — all interactions on cards live here.
+  el.addEventListener('click', async (e) => {
+    // Username clicks open the player profile — short-circuit before any
+    // card-open handlers further down would intercept.
+    if (e.target.closest('[data-open-profile]')) return;
+
+    // Intercept any link inside a news post — confirm before navigating away.
+    // Stops accidental clicks on phishing links posted by other users.
+    const link = e.target.closest('.news-card-snippet a');
+    if (link) {
+      e.preventDefault();
+      const url = link.getAttribute('href') || '';
+      const ok = await confirmThemed(
+        `This link will open in your browser:\n\n${url}\n\nOnly visit links from people you trust.`,
+        { title: 'Open external link?', okLabel: 'Open', cancelLabel: 'Cancel' }
+      );
+      if (ok && /^https?:\/\//i.test(url)) {
+        if (window.hub?.openExternal) window.hub.openExternal(url);
+        else window.open(url, '_blank', 'noopener');
+      }
+      return;
+    }
+
+    const reactBtn = e.target.closest('[data-react-emoji]');
+    if (reactBtn) {
+      const cardEl = reactBtn.closest('[data-post-id]');
+      const postId = +cardEl.dataset.postId;
+      const emoji  = reactBtn.dataset.reactEmoji;
+      try {
+        const res = await window.hub.post('/api/news/react', { post_id: postId, emoji });
+        if (res?.ok) {
+          // Update local card data and re-render JUST this card's reactions
+          const post = _newsState.posts.find(p => p.id === postId);
+          if (post) {
+            post.reactions = res.reactions || {};
+            post.my_reactions = res.my_reactions || [];
+            // Find each react button on this card and update it without scrolling.
+            const myR = new Set(post.my_reactions || []);
+            cardEl.querySelectorAll('[data-react-emoji]').forEach(btn => {
+              const em = btn.dataset.reactEmoji;
+              btn.classList.toggle('reacted', myR.has(em));
+              const rc = btn.querySelector('.rc');
+              const newCount = post.reactions?.[em] || 0;
+              if (rc) rc.textContent = newCount;
+              else {
+                // some templates render the count inline next to emoji — handle both
+                btn.innerHTML = `${em} ${newCount || ''}`.trim();
+              }
+            });
+          }
+        }
+      } catch { showToast('Failed to react', 'error'); }
+      return;
+    }
+    const reportBtn = e.target.closest('[data-report-id]');
+    if (reportBtn) {
+      const ok = await confirmThemed('Report this post for staff review?', {
+        title: 'Report post', okLabel: 'Report', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await window.hub.post('/api/news/report', { post_id: +reportBtn.dataset.reportId });
+        showToast('Reported. Staff will review.', 'info');
+      } catch { showToast('Failed to report.', 'error'); }
+      return;
+    }
+    const delBtn = e.target.closest('[data-delete-id]');
+    if (delBtn) {
+      const ok = await confirmThemed('Delete this post? This cannot be undone.', {
+        title: 'Delete post', okLabel: 'Delete', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await window.hub.post('/api/news/moderate', { post_id: +delBtn.dataset.deleteId, action: 'delete' });
+        await loadAndRenderNews(el);
+      } catch { showToast('Failed to delete.', 'error'); }
+      return;
+    }
+    const pinBtn = e.target.closest('[data-pin-id]');
+    if (pinBtn) {
+      const action = pinBtn.dataset.pinAction; // 'pin' or 'unpin'
+      try {
+        await window.hub.post('/api/news/moderate', { post_id: +pinBtn.dataset.pinId, action });
+        await loadAndRenderNews(el);
+      } catch {}
+      return;
+    }
+    const bmBtn = e.target.closest('[data-bookmark-id]');
+    if (bmBtn) {
+      const wasMarked = bmBtn.classList.contains('is-bookmarked');
+      // Optimistic toggle so the click feels instant
+      bmBtn.classList.toggle('is-bookmarked');
+      bmBtn.textContent = wasMarked ? '☆' : '★';
+      try {
+        await window.hub.post('/api/news/bookmark', { post_id: +bmBtn.dataset.bookmarkId });
+        // If user is currently filtering by bookmarks, refresh so it disappears
+        if (_newsState.bookmarked) await loadAndRenderNews(el);
+      } catch {
+        // Revert on error
+        bmBtn.classList.toggle('is-bookmarked');
+        bmBtn.textContent = wasMarked ? '★' : '☆';
+        showToast('Failed to bookmark', 'error');
+      }
+      return;
+    }
+    const editBtn = e.target.closest('[data-edit-id]');
+    if (editBtn) {
+      const post = _newsState.posts.find(p => p.id === +editBtn.dataset.editId);
+      if (post) openNewsCompose(el, post);
+      return;
+    }
+    const srvPinBtn = e.target.closest('[data-server-pin-id]');
+    if (srvPinBtn) {
+      try {
+        await window.hub.post('/api/news/pin-server', {
+          post_id: +srvPinBtn.dataset.serverPinId,
+          action:  srvPinBtn.dataset.serverPinAction
+        });
+        await loadAndRenderNews(el);
+      } catch { showToast('Failed to update pin', 'error'); }
+      return;
+    }
+    const composeOpen = e.target.closest('#news-compose-open');
+    if (composeOpen) { openNewsCompose(el); return; }
+
+    const readMoreBtn = e.target.closest('[data-readmore-id]');
+    if (readMoreBtn) {
+      const post = _newsState.posts.find(p => p.id === +readMoreBtn.dataset.readmoreId);
+      if (post) openNewsDetail(post, el);
+      return;
+    }
+
+    // Image click anywhere in a card → lightbox
+    const imgInCard = e.target.closest('.news-card-img img, .news-card-snippet img');
+    if (imgInCard) { e.preventDefault(); openImageLightbox(imgInCard.src); return; }
+
+    // Click anywhere on the card body (title/snippet area) → open detail view.
+    // Action buttons handled above already return early.
+    const cardClick = e.target.closest('[data-post-id]');
+    if (cardClick && (e.target.closest('.news-card-title, .news-card-snippet, .news-card-body, .news-card-content'))
+        && !e.target.closest('.news-btn, .news-react, [data-react-emoji], a')) {
+      const post = _newsState.posts.find(p => p.id === +cardClick.dataset.postId);
+      if (post) openNewsDetail(post, el);
+    }
+  });
+}
+
+async function loadAndRenderNews(el) {
+  const filtersHost = el.querySelector('#news-filters');
+  const composeHost = el.querySelector('#news-compose-host');
+  const feedHost    = el.querySelector('#news-feed');
+  const sec = _newsState.section;
+  const isStaff = !!state.user?.isStaff;
+  const myUsername = state.user?.username || '';
+
+  // Filters bar
+  const tags = NEWS_TAGS[sec];
+  filtersHost.innerHTML = `
+    <div class="news-chip ${!_newsState.filterTag && !_newsState.bookmarked ? 'active' : ''}" data-tag="">All</div>
+    ${tags.map(t => `<div class="news-chip ${_newsState.filterTag === t && !_newsState.bookmarked ? 'active' : ''}" data-tag="${t}">${t}</div>`).join('')}
+    <div class="news-chip news-chip-bm ${_newsState.bookmarked ? 'active' : ''}" data-bookmarked="1">⭐ Bookmarked</div>
+  `;
+  filtersHost.querySelectorAll('.news-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      if (chip.dataset.bookmarked) {
+        _newsState.bookmarked = !_newsState.bookmarked;
+      } else {
+        _newsState.filterTag = chip.dataset.tag || null;
+        _newsState.bookmarked = false;
+      }
+      loadAndRenderNews(el);
+    });
+  });
+
+  // Compose box (shown if user is allowed to post in this section)
+  let canPost = false, composeLabel = '';
+  if (sec === 'hub') {
+    canPost = isStaff;
+    composeLabel = `Post hub-wide announcement as <strong>Staff</strong> — visible to every user.`;
+  } else if (sec === 'server') {
+    const myServers = (state.servers || []).filter(s =>
+      s.submitted_by === myUsername || (isStaff && s.approved));
+    canPost = myServers.length > 0;
+    if (canPost) {
+      composeLabel = `Post a server announcement for <strong>${escHtml(myServers[0].name)}</strong> — patch notes, events, drops, or maintenance.`;
+    }
+  } else { // community
+    canPost = !!state.user;
+    composeLabel = `Post to community as <strong>${escHtml(myUsername)}</strong> — guide, review, looking-for-group, or discussion.`;
+  }
+  composeHost.innerHTML = canPost ? `
+    <div class="news-compose ${sec === 'community' ? 'community' : ''}" id="news-compose-open">
+      <div class="news-compose-pen">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      </div>
+      <div class="news-compose-label">${composeLabel}</div>
+    </div>
+  ` : '';
+
+  // Feed
+  feedHost.innerHTML = `<p class="empty-msg" style="padding:24px 0">Loading…</p>`;
+  let posts = [];
+  try {
+    const qs = new URLSearchParams({ section: sec });
+    if (_newsState.filterTag) qs.set('tag', _newsState.filterTag);
+    if (_newsState.sort && _newsState.sort !== 'new') qs.set('sort', _newsState.sort);
+    if (_newsState.search)     qs.set('q', _newsState.search);
+    if (_newsState.bookmarked) qs.set('bookmarked', '1');
+    const res = await window.hub.get('/api/news/list?' + qs.toString());
+    posts = res?.posts || [];
+  } catch {}
+  _newsState.posts = posts;
+
+  if (!posts.length) {
+    feedHost.innerHTML = `<p class="empty-msg" style="padding:24px 0">No posts yet. Be the first.</p>`;
+    return;
+  }
+
+  feedHost.innerHTML = posts.map(p => renderNewsCard(p, sec, isStaff, myUsername)).join('');
+}
+
+function renderNewsCard(p, section, isStaff, myUsername) {
+  const isOwn = (p.username === myUsername);
+  const reactions = NEWS_REACTIONS[section];
+  const myReacts = new Set(p.my_reactions || []);
+  const counts   = p.reactions || {};
+  const cardClass = (section === 'community') ? 'news-card community'
+                  : (p.pinned ? 'news-card pinned' : (p.server_pinned ? 'news-card server-pinned' : 'news-card'));
+
+  // Crest: hub uses gold sigil, server uses server color, community uses player avatar
+  let crestHtml;
+  if (section === 'hub') {
+    crestHtml = `<div class="news-crest hub">⌬</div>`;
+  } else if (section === 'server') {
+    const accent = p.accent_color || '#ff981f';
+    const initial = escHtml((p.server_name || 'S')[0].toUpperCase());
+    crestHtml = p.server_icon
+      ? `<div class="news-crest server" style="background-image:url(${escHtml(p.server_icon)})"></div>`
+      : `<div class="news-crest server" style="background:linear-gradient(135deg,${accent},#1a1408);color:#fff">${initial}</div>`;
+  } else {
+    crestHtml = `<div class="news-crest player">${escHtml((p.username || '?')[0].toUpperCase())}</div>`;
+  }
+
+  const tagHtml = p.tag ? `<span class="news-tag tag-${p.tag.toLowerCase()}">${escHtml(p.tag)}</span>` : '';
+  const pinTag  = p.pinned        ? `<div class="news-pin-tag">📌 Pinned</div>`
+                : p.server_pinned ? `<div class="news-pin-tag server">⭐ Pinned by server owner</div>` : '';
+  const viewBadge = (p.view_count > 0)
+    ? `<span class="news-view-count" title="${p.view_count} view${p.view_count === 1 ? '' : 's'}">👁 ${p.view_count}</span>`
+    : '';
+  const pollBadge = p.poll
+    ? `<span class="news-poll-badge" title="This post has a poll">📊 Poll</span>` : '';
+  const titleName = section === 'hub' ? 'RSPS Hub'
+                  : section === 'server' ? (p.server_name || 'Server')
+                  : (p.username || '?');
+
+  const reactBtns = reactions.map(em => `
+    <span class="news-react ${myReacts.has(em) ? 'reacted' : ''}" data-react-emoji="${em}">
+      ${em} ${counts[em] || ''}
+    </span>
+  `).join('');
+
+  // Action buttons row
+  const actions = [];
+  if (section === 'server') actions.push(`<button class="news-btn" data-visit-server="${p.server_id}">Visit server</button>`);
+  actions.push(`<button class="news-btn news-btn-primary" data-readmore-id="${p.id}">Read more</button>`);
+  // Bookmark — anyone, on any post
+  actions.push(`<button class="news-btn news-btn-bookmark ${p.is_bookmarked ? 'is-bookmarked' : ''}" data-bookmark-id="${p.id}" title="${p.is_bookmarked ? 'Remove bookmark' : 'Bookmark'}">${p.is_bookmarked ? '★' : '☆'}</button>`);
+  // Edit — own post within 1h, or staff
+  if (p.can_edit) {
+    actions.push(`<button class="news-btn" data-edit-id="${p.id}">Edit</button>`);
+  }
+  // Server-owner pin — server-section posts only, owner or staff
+  if (section === 'server' && p.can_pin_server) {
+    actions.push(p.server_pinned
+      ? `<button class="news-btn" data-server-pin-id="${p.id}" data-server-pin-action="unpin">Unpin</button>`
+      : `<button class="news-btn" data-server-pin-id="${p.id}" data-server-pin-action="pin">Pin to server</button>`);
+  }
+  if (section === 'community' && !isOwn) {
+    actions.push(`<button class="news-btn news-btn-report" data-report-id="${p.id}">⚐ Report</button>`);
+  }
+  if (isStaff || isOwn) {
+    actions.push(`<button class="news-btn news-btn-danger" data-delete-id="${p.id}">Delete</button>`);
+  }
+  if (isStaff && section === 'hub') {
+    actions.push(p.pinned
+      ? `<button class="news-btn" data-pin-id="${p.id}" data-pin-action="unpin">Unpin</button>`
+      : `<button class="news-btn" data-pin-id="${p.id}" data-pin-action="pin">Pin</button>`);
+  }
+  if (p.edited_at) {
+    actions.push(`<span class="news-edited-mark" title="Edited ${formatNewsTs(p.edited_at)}">✎ edited</span>`);
+  }
+
+  const ts = formatNewsTs(p.created_at);
+  const playerLabel = section === 'community'
+    ? `<span class="news-player-name lb-clickable" data-open-profile="${escAttr(p.username)}">${escHtml(p.username)}</span>`
+    : `<span class="news-server-name">${escHtml(titleName)}</span>
+       <span class="news-dot">·</span>
+       <span class="news-author">${escHtml(p.username)}</span>`;
+
+  return `
+    <div class="${cardClass}" data-post-id="${p.id}">
+      <div class="news-card-body">
+        ${crestHtml}
+        <div class="news-card-content">
+          ${pinTag}
+          <div class="news-meta-row">
+            ${playerLabel}
+            ${tagHtml}
+            ${pollBadge}
+            ${viewBadge}
+            <span class="news-ts">${ts}</span>
+          </div>
+          <div class="news-card-title">${escHtml(p.title)}</div>
+          <div class="news-card-snippet">${renderNewsBody(p.body)}</div>
+          ${p.image_url ? `<div class="news-card-img"><img src="${escHtml(p.image_url)}" alt="" loading="lazy" draggable="false"></div>` : ''}
+          <div class="news-card-actions">
+            ${actions.join('')}
+            <div class="news-reactions">${reactBtns}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function formatNewsTs(iso) {
+  if (!iso) return '';
+  const t = new Date(iso.replace(' ', 'T') + 'Z').getTime();
+  const diff = Math.floor((Date.now() - t) / 1000);
+  if (diff < 60)        return 'just now';
+  if (diff < 3600)      return Math.floor(diff / 60)   + 'm ago';
+  if (diff < 86400)     return Math.floor(diff / 3600) + 'h ago';
+  if (diff < 86400 * 7) return Math.floor(diff / 86400) + 'd ago';
+  return new Date(t).toLocaleDateString();
+}
+
+function openNewsCompose(el, editPost = null) {
+  const sec = editPost ? editPost.section : _newsState.section;
+  const tags = NEWS_TAGS[sec];
+  const myUsername = state.user?.username || '';
+  const draft = !editPost ? loadNewsDraft(sec) : null;
+
+  let serverOpts = '';
+  if (sec === 'server') {
+    const myServers = (state.servers || []).filter(s =>
+      s.submitted_by === myUsername || (state.user?.isStaff && s.approved));
+    const selectedServerId = editPost ? editPost.server_id : (draft?.server_id || (myServers[0] && myServers[0].id));
+    serverOpts = `
+      <label class="news-modal-label" for="news-cmp-server">Server</label>
+      <select class="news-modal-input" id="news-cmp-server" ${editPost ? 'disabled' : ''}>
+        ${myServers.map(s => `<option value="${s.id}" ${s.id === selectedServerId ? 'selected' : ''}>${escHtml(s.name)}</option>`).join('')}
+      </select>
+    `;
+  }
+  const modal = document.createElement('div');
+  modal.className = 'news-modal-backdrop';
+  const initialTitle = editPost?.title ?? draft?.title ?? '';
+  const initialBody  = editPost?.body  ?? draft?.body  ?? '';
+  const initialTag   = editPost?.tag   ?? draft?.tag   ?? '';
+  const headerLabel = editPost
+    ? (sec === 'hub' ? 'Edit hub announcement' : sec === 'server' ? 'Edit server announcement' : 'Edit community post')
+    : (sec === 'hub' ? 'New hub announcement' : sec === 'server' ? 'New server announcement' : 'New community post');
+  const draftHint = !editPost && draft && (draft.title || draft.body)
+    ? `<div class="news-draft-hint">📝 Draft restored. <button type="button" class="news-link-btn" id="news-cmp-discard">discard</button></div>`
+    : '';
+  modal.innerHTML = `
+    <div class="news-modal">
+      <div class="news-modal-hdr">
+        <h3>${headerLabel}</h3>
+        <button class="news-modal-close" id="news-cmp-close">✕</button>
+      </div>
+      <div class="news-modal-body">
+        ${draftHint}
+        ${serverOpts}
+        <label class="news-modal-label" for="news-cmp-tag">Tag</label>
+        <select class="news-modal-input" id="news-cmp-tag">
+          <option value="">(none)</option>
+          ${tags.map(t => `<option value="${t}" ${t === initialTag ? 'selected' : ''}>${t}</option>`).join('')}
+        </select>
+        <label class="news-modal-label" for="news-cmp-title">Title</label>
+        <input class="news-modal-input" id="news-cmp-title" type="text" maxlength="160" placeholder="Short, punchy headline" value="${escAttr(initialTitle)}">
+        <label class="news-modal-label" for="news-cmp-body">Body</label>
+        <div class="news-toolbar">
+          <button type="button" class="news-tb-btn" data-tb="bold"      data-tip="Bold (Ctrl+B)"><strong>B</strong></button>
+          <button type="button" class="news-tb-btn" data-tb="italic"    data-tip="Italic (Ctrl+I)"><em>I</em></button>
+          <button type="button" class="news-tb-btn" data-tb="strike"    data-tip="Strikethrough"><span style="text-decoration:line-through">S</span></button>
+          <button type="button" class="news-tb-btn" data-tb="header"    data-tip="Heading"><strong>H</strong></button>
+          <button type="button" class="news-tb-btn" data-tb="ul"        data-tip="Bulleted list">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.2"/><circle cx="3.5" cy="12" r="1.2"/><circle cx="3.5" cy="18" r="1.2"/></svg>
+          </button>
+          <button type="button" class="news-tb-btn" data-tb="ol"        data-tip="Numbered list">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18h-2c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
+          </button>
+          <button type="button" class="news-tb-btn" data-tb="link"   data-tip="Insert link">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          </button>
+          <button type="button" class="news-tb-btn" data-tb="image"  data-tip="Insert image">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          </button>
+          <button type="button" class="news-tb-btn" data-tb="emoji"  data-tip="Insert emoji">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+          </button>
+          <span class="news-tb-hint">supports **bold** · *italic* · [text](url) · ![](image)</span>
+          <input type="file" id="news-cmp-img-file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none">
+        </div>
+        <div class="news-modal-input news-body-editor" id="news-cmp-body" contenteditable="true" data-placeholder="Write your post. Toolbar buttons format the selection. Multiple images supported."></div>
+        <div class="news-counter" id="news-counter">
+          <span class="news-counter-chars">0 / 8000 characters</span>
+          <span class="news-counter-sep">·</span>
+          <span class="news-counter-imgs">0 / 10 images</span>
+        </div>
+
+        <div class="news-emoji-picker" id="news-emoji-picker" style="display:none">
+          ${NEWS_EMOJI.map(e => `<button type="button" class="news-emoji" data-emoji="${e}">${e}</button>`).join('')}
+        </div>
+
+        <div class="news-poll-compose" id="news-poll-compose">
+          <button type="button" class="news-btn" id="news-poll-toggle">📊 Attach poll</button>
+          <div class="news-poll-fields" id="news-poll-fields" style="display:none">
+            <label class="news-modal-label">Poll question</label>
+            <input class="news-modal-input" id="news-poll-q" type="text" maxlength="255" placeholder="e.g. Which raid should we add next?">
+            <label class="news-modal-label">Options (2–8)</label>
+            <div id="news-poll-opts">
+              <input class="news-modal-input news-poll-opt" type="text" maxlength="160" placeholder="Option 1">
+              <input class="news-modal-input news-poll-opt" type="text" maxlength="160" placeholder="Option 2">
+            </div>
+            <button type="button" class="news-btn" id="news-poll-add-opt" style="margin-top:6px">+ Add option</button>
+            <label class="news-poll-multi-label">
+              <input type="checkbox" id="news-poll-multi">
+              <span>Allow voters to pick more than one option</span>
+            </label>
+            <button type="button" class="news-btn news-btn-report" id="news-poll-remove" style="margin-top:6px">Remove poll</button>
+          </div>
+        </div>
+
+        <div class="news-modal-msg" id="news-cmp-msg"></div>
+      </div>
+      <div class="news-modal-foot">
+        <button class="news-btn" id="news-cmp-cancel">Cancel</button>
+        <button class="news-btn news-btn-primary" id="news-cmp-submit">${editPost ? 'Save changes' : 'Post'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Belt-and-braces: nothing clicked inside the compose modal bubbles out
+  modal.addEventListener('mousedown', e => e.stopPropagation());
+  modal.addEventListener('click',     e => e.stopPropagation());
+
+  const close = () => modal.remove();
+  modal.querySelector('#news-cmp-close').addEventListener('click', e => { e.stopPropagation(); close(); });
+  modal.querySelector('#news-cmp-cancel').addEventListener('click', e => { e.stopPropagation(); close(); });
+  // Don't close on backdrop click — too easy to lose a long post in progress.
+
+  const bodyEl  = modal.querySelector('#news-cmp-body');
+  const titleEl = modal.querySelector('#news-cmp-title');
+  const tagEl   = modal.querySelector('#news-cmp-tag');
+  const imgFile = modal.querySelector('#news-cmp-img-file');
+  const msgEl   = modal.querySelector('#news-cmp-msg');
+  const emojiPicker = modal.querySelector('#news-emoji-picker');
+
+  const MAX_CHARS = 8000;
+  const MAX_IMAGES = 10;
+  // Pre-fill the contentEditable with rendered markdown (for edit / draft restore)
+  bodyEl.innerHTML = renderNewsBody(initialBody);
+
+  function updateCounters() {
+    const md = newsEditorToMarkdown(bodyEl);
+    const chars = md.length;
+    const imgs = bodyEl.querySelectorAll('img').length;
+    const charEl = modal.querySelector('.news-counter-chars');
+    const imgEl  = modal.querySelector('.news-counter-imgs');
+    const counter = modal.querySelector('#news-counter');
+    if (charEl) charEl.textContent = `${chars} / ${MAX_CHARS} characters`;
+    if (imgEl)  imgEl.textContent  = `${imgs} / ${MAX_IMAGES} images`;
+    counter?.classList.toggle('warn',   chars > MAX_CHARS * 0.8 || imgs > MAX_IMAGES * 0.8);
+    counter?.classList.toggle('danger', chars > MAX_CHARS       || imgs > MAX_IMAGES);
+  }
+  updateCounters();
+  bodyEl.addEventListener('input', updateCounters);
+
+  // Shared image-upload helper used by toolbar/paste/drop
+  async function uploadAndInsertImage(file) {
+    if (!file || !file.type?.startsWith('image/')) return false;
+    if (file.size > 5 * 1024 * 1024) { msgEl.textContent = 'Image too large (max 5MB).'; return false; }
+    if (bodyEl.querySelectorAll('img').length >= MAX_IMAGES) {
+      msgEl.textContent = `Image limit reached (${MAX_IMAGES} max).`; return false;
+    }
+    msgEl.textContent = 'Uploading image…';
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const res = await window.hub.post('/api/news/upload-image', { image: reader.result });
+          if (res?.ok && res.url) {
+            insertHtmlAtCaret(`<img class="news-md-img" src="${escAttr(res.url)}" alt="" draggable="false"><br>`);
+            captureSelection(); msgEl.textContent = ''; updateCounters(); resolve(true);
+          } else { msgEl.textContent = res?.error || 'Image upload failed.'; resolve(false); }
+        } catch (err) { msgEl.textContent = err?.message || 'Image upload failed.'; resolve(false); }
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Paste handling: image from clipboard → upload; otherwise plain-text paste.
+  bodyEl.addEventListener('paste', async (e) => {
+    const items = (e.clipboardData || window.clipboardData).items || [];
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = it.getAsFile();
+        await uploadAndInsertImage(file);
+        return;
+      }
+    }
+    e.preventDefault();
+    const txt = (e.clipboardData || window.clipboardData).getData('text/plain');
+    document.execCommand('insertText', false, txt);
+  });
+
+  // Drag-drop: image files dropped into the editor get uploaded + inserted at cursor.
+  bodyEl.addEventListener('dragover', (e) => { e.preventDefault(); bodyEl.classList.add('drag-over'); });
+  bodyEl.addEventListener('dragleave', () => bodyEl.classList.remove('drag-over'));
+  bodyEl.addEventListener('drop', async (e) => {
+    e.preventDefault(); bodyEl.classList.remove('drag-over');
+    const files = e.dataTransfer?.files || [];
+    for (const f of files) await uploadAndInsertImage(f);
+  });
+
+  // Selection focus tracking — captures on every selectionchange while modal is open.
+  // selectionchange fires reliably whenever the user moves the caret or makes
+  // a new selection, which is more robust than the keyup/mouseup hack.
+  let savedRange = null;
+  const captureSelection = () => {
+    const sel = window.getSelection();
+    if (sel.rangeCount && bodyEl.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange();
+  };
+  const onSelChange = () => captureSelection();
+  document.addEventListener('selectionchange', onSelChange);
+  // Cleanup when modal closes
+  const oldRemove = modal.remove.bind(modal);
+  modal.remove = () => { document.removeEventListener('selectionchange', onSelChange); oldRemove(); };
+  function restoreSelection() {
+    if (!savedRange) { bodyEl.focus(); return; }
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+  }
+
+  // Insert raw text at the current caret (used by emoji picker)
+  function insertTextAtCaret(text) {
+    bodyEl.focus(); restoreSelection();
+    document.execCommand('insertText', false, text);
+  }
+  // Insert HTML (used by image insert)
+  function insertHtmlAtCaret(html) {
+    bodyEl.focus(); restoreSelection();
+    document.execCommand('insertHTML', false, html);
+  }
+
+  // ── DRAFTS (only for new posts; never overwrite while editing) ──
+  if (!editPost) {
+    const persist = () => {
+      const serverEl = modal.querySelector('#news-cmp-server');
+      saveNewsDraft(sec, {
+        title: titleEl.value,
+        body:  newsEditorToMarkdown(bodyEl),
+        tag:   tagEl.value,
+        server_id: serverEl ? +serverEl.value : null,
+      });
+    };
+    titleEl.addEventListener('input', persist);
+    bodyEl.addEventListener('input',  persist);
+    tagEl.addEventListener('change',  persist);
+    const discardBtn = modal.querySelector('#news-cmp-discard');
+    if (discardBtn) discardBtn.addEventListener('click', () => {
+      clearNewsDraft(sec);
+      titleEl.value = ''; bodyEl.innerHTML = ''; tagEl.value = '';
+      modal.querySelector('.news-draft-hint')?.remove();
+    });
+  }
+
+  // ── KEYBOARD SHORTCUTS ──
+  bodyEl.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = e.key.toLowerCase();
+    if (k === 'b')      { e.preventDefault(); document.execCommand('bold'); captureSelection(); }
+    else if (k === 'i') { e.preventDefault(); document.execCommand('italic'); captureSelection(); }
+    else if (k === 'enter') { e.preventDefault(); modal.querySelector('#news-cmp-submit').click(); }
+  });
+
+  // Mousedown on toolbar buttons must NOT steal focus from the editor —
+  // otherwise execCommand has no selection to act on.
+  modal.querySelectorAll('.news-tb-btn').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+  });
+
+  modal.querySelectorAll('.news-tb-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.tb;
+      bodyEl.focus(); restoreSelection();
+      if (action === 'bold')   { document.execCommand('bold');   captureSelection(); return; }
+      if (action === 'italic') { document.execCommand('italic'); captureSelection(); return; }
+      if (action === 'strike') { document.execCommand('strikeThrough'); captureSelection(); return; }
+      if (action === 'header') {
+        // Toggle between paragraph and h3 for the current line
+        const cur = document.queryCommandValue('formatBlock')?.toLowerCase() || '';
+        document.execCommand('formatBlock', false, cur.includes('h3') ? 'p' : 'h3');
+        captureSelection(); return;
+      }
+      if (action === 'ul')     { toggleListInEditor(bodyEl, 'ul'); captureSelection(); return; }
+      if (action === 'ol')     { toggleListInEditor(bodyEl, 'ol'); captureSelection(); return; }
+      if (action === 'image')  return imgFile.click();
+      if (action === 'emoji')  {
+        emojiPicker.style.display = (emojiPicker.style.display === 'none') ? 'flex' : 'none';
+        return;
+      }
+      if (action === 'link') {
+        const url = await promptThemed('Insert link', 'URL (https:// or http://)', '');
+        if (url == null) return;
+        if (!/^https?:\/\//i.test(url)) { msgEl.textContent = 'Link must start with http:// or https://'; return; }
+        bodyEl.focus(); restoreSelection();
+        const sel = window.getSelection();
+        if (sel.toString()) {
+          document.execCommand('createLink', false, url);
+        } else {
+          insertHtmlAtCaret(`<a href="${escAttr(url)}">${escHtml(url)}</a>`);
+        }
+        captureSelection();
+      }
+    });
+  });
+
+  // Stop emoji picker mousedowns from blurring the editor
+  emojiPicker.addEventListener('mousedown', (e) => e.preventDefault());
+
+  emojiPicker.querySelectorAll('.news-emoji').forEach(b => {
+    b.addEventListener('click', () => {
+      insertTextAtCaret(b.dataset.emoji);
+      captureSelection();
+      // Stay open — user might want to add several. Toggle the smile button to close.
+    });
+  });
+
+  // Image button just delegates to the shared helper.
+  imgFile.addEventListener('change', async () => {
+    const file = imgFile.files?.[0];
+    if (file) await uploadAndInsertImage(file);
+    imgFile.value = '';
+  });
+
+  // Poll compose UI
+  const pollFields = modal.querySelector('#news-poll-fields');
+  const pollOpts   = modal.querySelector('#news-poll-opts');
+  modal.querySelector('#news-poll-toggle').addEventListener('click', () => {
+    pollFields.style.display = pollFields.style.display === 'none' ? 'block' : 'none';
+  });
+  modal.querySelector('#news-poll-remove').addEventListener('click', () => {
+    pollFields.style.display = 'none';
+    modal.querySelector('#news-poll-q').value = '';
+    pollOpts.querySelectorAll('.news-poll-opt').forEach(i => i.value = '');
+  });
+  modal.querySelector('#news-poll-add-opt').addEventListener('click', () => {
+    const count = pollOpts.querySelectorAll('.news-poll-opt').length;
+    if (count >= 8) return;
+    const inp = document.createElement('input');
+    inp.className = 'news-modal-input news-poll-opt';
+    inp.type = 'text'; inp.maxLength = 160;
+    inp.placeholder = `Option ${count + 1}`;
+    pollOpts.appendChild(inp);
+  });
+
+  // Pre-fill poll fields when editing a post that already has a poll
+  if (editPost && editPost.poll && editPost.poll.options?.length) {
+    pollFields.style.display = 'block';
+    modal.querySelector('#news-poll-q').value = editPost.poll.question || '';
+    modal.querySelector('#news-poll-multi').checked = !!editPost.poll.multi_choice;
+    // Replace default 2 inputs with one per existing option
+    pollOpts.innerHTML = '';
+    editPost.poll.options.forEach((o, i) => {
+      const inp = document.createElement('input');
+      inp.className = 'news-modal-input news-poll-opt';
+      inp.type = 'text'; inp.maxLength = 160;
+      inp.placeholder = `Option ${i + 1}`;
+      inp.value = o.label || '';
+      pollOpts.appendChild(inp);
+    });
+  }
+
+  modal.querySelector('#news-cmp-submit').addEventListener('click', async () => {
+    const title = titleEl.value.trim();
+    const body  = newsEditorToMarkdown(bodyEl);
+    const tag   = tagEl.value || null;
+    if (!title || !body) { msgEl.textContent = 'Title and body are required.'; return; }
+    if (body.length > MAX_CHARS) {
+      msgEl.textContent = `Body is too long (${body.length} / ${MAX_CHARS} characters). Trim it down before posting.`;
+      return;
+    }
+    const imgCount = bodyEl.querySelectorAll('img').length;
+    if (imgCount > MAX_IMAGES) {
+      msgEl.textContent = `Too many images (${imgCount} / ${MAX_IMAGES} max).`;
+      return;
+    }
+    if (title.length > 160) {
+      msgEl.textContent = `Title too long (${title.length} / 160 characters).`;
+      return;
+    }
+    msgEl.textContent = editPost ? 'Saving…' : 'Posting…';
+    try {
+      let res;
+      if (editPost) {
+        const editPayload = { post_id: editPost.id, title, body, tag };
+        // Poll changes: 'remove' if user closed the poll fields, otherwise replace if filled
+        if (pollFields.style.display === 'none') {
+          if (editPost.poll) editPayload.poll_action = 'remove';
+        } else {
+          const q = modal.querySelector('#news-poll-q').value.trim();
+          const opts = Array.from(pollOpts.querySelectorAll('.news-poll-opt'))
+            .map(i => i.value.trim()).filter(v => v);
+          if (q && opts.length >= 2) {
+            editPayload.poll = {
+              question: q, options: opts,
+              multi_choice: modal.querySelector('#news-poll-multi').checked ? 1 : 0,
+            };
+          }
+        }
+        res = await window.hub.post('/api/news/edit', editPayload);
+      } else {
+        const payload = { section: sec, title, body, tag };
+        if (sec === 'server') payload.server_id = +modal.querySelector('#news-cmp-server').value;
+        if (pollFields.style.display !== 'none') {
+          const q = modal.querySelector('#news-poll-q').value.trim();
+          const opts = Array.from(pollOpts.querySelectorAll('.news-poll-opt'))
+            .map(i => i.value.trim()).filter(v => v);
+          if (q && opts.length >= 2) {
+            payload.poll = {
+              question: q, options: opts,
+              multi_choice: modal.querySelector('#news-poll-multi').checked ? 1 : 0,
+            };
+          } else if (q || opts.length) {
+            msgEl.textContent = 'Poll needs a question and at least 2 options.'; return;
+          }
+        }
+        res = await window.hub.post('/api/news/post', payload);
+      }
+      if (res?.ok) {
+        if (!editPost) clearNewsDraft(sec);
+        close();
+        await loadAndRenderNews(el);
+        showToast(editPost ? 'Saved.' : 'Posted.', 'success');
+      } else {
+        msgEl.textContent = res?.error || (editPost ? 'Failed to save.' : 'Failed to post.');
+      }
+    } catch (err) { msgEl.textContent = err?.message || 'Network error.'; }
+  });
+
+  setTimeout(() => {
+    // If draft/edit pre-filled the title, focus the body so they can keep typing
+    if (titleEl.value) {
+      bodyEl.focus();
+      // Move caret to end of editor
+      const range = document.createRange();
+      range.selectNodeContents(bodyEl);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      captureSelection();
+    } else {
+      titleEl.focus();
+    }
+  }, 50);
 }
 
 async function handleLibraryPlay(name) {
@@ -1316,7 +2700,7 @@ function buildFriendsHTML({ friends = [], requests = [] }) {
       <div class="friend-row friend-req-row" data-username="${r.username}">
         <div class="friend-avatar req">${r.username[0].toUpperCase()}</div>
         <div class="friend-info">
-          <span class="friend-name">${r.username}</span>
+          <span class="friend-name lb-clickable" data-open-profile="${escAttr(r.username)}">${escHtml(r.username)}</span>
           <span class="friend-status">Wants to be your friend</span>
         </div>
         <div class="friend-actions">
@@ -1348,7 +2732,7 @@ function friendRowHTML(f) {
     <div class="friend-row" data-username="${f.username}">
       <div class="friend-avatar ${f.online ? 'online' : ''}">${f.username[0].toUpperCase()}</div>
       <div class="friend-info">
-        <span class="friend-name">${f.username}</span>
+        <span class="friend-name lb-clickable" data-open-profile="${escAttr(f.username)}">${escHtml(f.username)}</span>
         <span class="friend-status">${statusText}</span>
       </div>
       <div class="friend-actions">
@@ -1472,7 +2856,7 @@ function renderConversationList(el, convos) {
       <div class="convo-row" data-username="${escHtml(c.username)}">
         <div class="friend-avatar">${c.username[0].toUpperCase()}</div>
         <div class="friend-info">
-          <span class="friend-name">${escHtml(c.username)}</span>
+          <span class="friend-name lb-clickable" data-open-profile="${escAttr(c.username)}">${escHtml(c.username)}</span>
           <span class="friend-status convo-preview">${escHtml(c.lastMsg || 'No messages yet')}</span>
         </div>
         ${c.lastTs ? `<span class="convo-ts">${escHtml(c.lastTs)}</span>` : ''}
@@ -1910,6 +3294,13 @@ function showServerDetail(server) {
             : `<div class="sd-empty-section">No changelog posted yet — check back later for patch notes.</div>`}
         </div>
 
+        <div class="sd-section" id="sd-reviews-section" data-server-id="${server.id || ''}">
+          <h3 class="sd-section-title">REVIEWS</h3>
+          <div class="sd-reviews-host">
+            <p class="sd-empty-section">Loading reviews…</p>
+          </div>
+        </div>
+
       </div>
 
       <!-- FOOTER ACTIONS -->
@@ -2009,9 +3400,177 @@ function showServerDetail(server) {
     }
   });
 
+  // ── Reviews wiring ──────────────────────────────────────────────────────
+  loadServerReviews(server, overlay);
+
   document.body.appendChild(overlay);
   // Animate in
   requestAnimationFrame(() => overlay.classList.add('open'));
+}
+
+// Render the reviews section (write box + list) for the given server.
+async function loadServerReviews(server, overlay) {
+  const host = overlay.querySelector('.sd-reviews-host');
+  if (!host || !server.id) return;
+  let data;
+  try { data = await window.hub.get('/api/reviews/list?server_id=' + server.id); } catch {}
+  if (!data) { host.innerHTML = `<div class="sd-empty-section">Couldn't load reviews.</div>`; return; }
+
+  const myReview = data.my_review;
+  const reviews  = data.reviews || [];
+  const avg      = data.avg_rating;
+  const count    = data.count || 0;
+  const elig     = data.eligibility || { can_review: true };
+
+  const stars = (n) => {
+    const filled = Math.round(n || 0);
+    return '★'.repeat(filled) + '☆'.repeat(5 - filled);
+  };
+
+  host.innerHTML = `
+    <div class="sd-reviews-summary">
+      ${count > 0
+        ? `<div class="sd-rev-avg">${stars(avg)} <span class="sd-rev-num">${avg.toFixed(1)}</span></div>
+           <div class="sd-rev-count">${count} review${count === 1 ? '' : 's'}</div>`
+        : `<div class="sd-rev-empty">No reviews yet — be the first.</div>`}
+    </div>
+
+    ${elig.can_review || myReview ? `
+    <div class="sd-rev-write" id="sd-rev-write">
+      <div class="sd-rev-write-hdr">${myReview ? '✎ Edit your review' : '✍ Write a review'}</div>
+      <div class="sd-rev-stars" id="sd-rev-stars" data-value="${myReview?.rating || 0}">
+        ${[1,2,3,4,5].map(n => `<span class="sd-star" data-n="${n}">${(myReview?.rating || 0) >= n ? '★' : '☆'}</span>`).join('')}
+      </div>
+      <textarea class="sd-rev-body" id="sd-rev-body" maxlength="2000" rows="4"
+        placeholder="Optional — what did you like / dislike? (max 2000 chars)">${escHtml(myReview?.body || '')}</textarea>
+      <div class="sd-rev-actions">
+        <span class="sd-rev-msg" id="sd-rev-msg"></span>
+        <button class="action-btn" id="sd-rev-submit" style="height:32px;font-size:0.72rem;min-width:120px">${myReview ? 'Save changes' : 'Post review'}</button>
+      </div>
+    </div>
+    ` : `
+    <div class="sd-rev-locked">
+      🔒 ${escHtml(elig.reason || 'You cannot review this server right now.')}
+    </div>
+    `}
+
+    <div class="sd-rev-list">
+      ${reviews.length
+        ? reviews.map(r => renderReviewItem(r)).join('')
+        : `<div class="sd-empty-section">Be the first to share your thoughts.</div>`}
+    </div>
+  `;
+
+  // Star picker
+  const starsEl = host.querySelector('#sd-rev-stars');
+  starsEl.querySelectorAll('.sd-star').forEach(s => {
+    s.addEventListener('click', () => {
+      const n = +s.dataset.n;
+      starsEl.dataset.value = n;
+      starsEl.querySelectorAll('.sd-star').forEach(st => {
+        st.textContent = +st.dataset.n <= n ? '★' : '☆';
+      });
+    });
+    s.addEventListener('mouseover', () => {
+      const n = +s.dataset.n;
+      starsEl.querySelectorAll('.sd-star').forEach(st => {
+        st.classList.toggle('hover', +st.dataset.n <= n);
+      });
+    });
+    s.addEventListener('mouseout', () => {
+      starsEl.querySelectorAll('.sd-star').forEach(st => st.classList.remove('hover'));
+    });
+  });
+
+  // Submit
+  host.querySelector('#sd-rev-submit').addEventListener('click', async () => {
+    const rating = +starsEl.dataset.value || 0;
+    const body   = host.querySelector('#sd-rev-body').value.trim();
+    const msg    = host.querySelector('#sd-rev-msg');
+    if (rating < 1) { msg.textContent = 'Pick a rating first.'; msg.style.color = '#c96'; return; }
+    msg.textContent = 'Saving…'; msg.style.color = '#888';
+    try {
+      const res = await window.hub.post('/api/reviews/submit', { server_id: server.id, rating, body });
+      if (res?.ok) {
+        msg.textContent = res.updated ? 'Review updated.' : 'Review posted.';
+        msg.style.color = '#7ad88a';
+        await loadServerReviews(server, overlay);
+        await loadServers(); // refresh card aggregates
+      } else {
+        msg.textContent = res?.error || 'Failed to save.'; msg.style.color = '#c84040';
+      }
+    } catch { msg.textContent = 'Network error.'; msg.style.color = '#c84040'; }
+  });
+
+  // Delete from the user's own review card (in the list, not the form)
+  host.querySelectorAll('[data-delete-rev]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ok = await confirmThemed('Delete your review of this server? This cannot be undone.', {
+        title: 'Delete review', okLabel: 'Delete', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await window.hub.post('/api/reviews/delete', { id: +btn.dataset.deleteRev });
+        await loadServerReviews(server, overlay);
+        await loadServers();
+      } catch { showToast('Failed to delete review', 'error'); }
+    });
+  });
+
+  // Report buttons on individual reviews
+  host.querySelectorAll('[data-report-rev]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await confirmThemed('Report this review for staff review?', {
+        title: 'Report review', okLabel: 'Report', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await window.hub.post('/api/reviews/report', { id: +btn.dataset.reportRev });
+        showToast('Reported. Staff will review.', 'info');
+      } catch { showToast('Report failed.', 'error'); }
+    });
+  });
+}
+
+function renderReviewItem(r) {
+  const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
+  const ts = formatNewsTs(r.created_at) + (r.edited_at ? ' · edited' : '');
+  const initial = (r.username || '?')[0].toUpperCase();
+  const avatarUrl = r.has_avatar ? `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(r.username)}.jpg` : '';
+  // Reviewer credentials so readers can judge authority
+  const onServer  = r.minutes_on_server || 0;
+  const onSrvLbl  = onServer >= 60 ? `${Math.round(onServer/60)}h on this server`
+                  : onServer > 0   ? `${onServer}m on this server` : 'New here';
+  const totalLbl  = r.hub_total_minutes >= 60 ? `${Math.round(r.hub_total_minutes/60)}h total` : `${r.hub_total_minutes||0}m total`;
+  const srvCount  = r.hub_servers_played || 0;
+  return `
+    <div class="sd-rev-item">
+      <div class="sd-rev-avatar">
+        ${avatarUrl
+          ? `<img src="${escAttr(avatarUrl)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+             <span style="display:none">${escHtml(initial)}</span>`
+          : `<span>${escHtml(initial)}</span>`}
+      </div>
+      <div class="sd-rev-content">
+        <div class="sd-rev-row">
+          <span class="sd-rev-name lb-clickable" data-open-profile="${escAttr(r.username)}">${escHtml(r.username)}</span>
+          <span class="sd-rev-stars-static">${stars}</span>
+          <span class="sd-rev-ts">${ts}</span>
+          ${!r.is_own ? `<button class="sd-rev-report" data-report-rev="${r.id}" title="Report">⚐</button>` : ''}
+          ${r.is_own ? `<button class="sd-rev-own-delete" data-delete-rev="${r.id}" title="Delete your review">🗑</button>` : ''}
+        </div>
+        <div class="sd-rev-creds">
+          <span title="Time this reviewer has played on this server">⏱ ${escHtml(onSrvLbl)}</span>
+          <span class="sd-rev-creds-sep">·</span>
+          <span title="Reviewer's total hub playtime">${escHtml(totalLbl)} on hub</span>
+          <span class="sd-rev-creds-sep">·</span>
+          <span title="Number of different servers this reviewer has played">${srvCount} server${srvCount === 1 ? '' : 's'} tried</span>
+        </div>
+        ${r.body ? `<div class="sd-rev-body-text">${escHtml(r.body).replace(/\n/g, '<br>')}</div>` : ''}
+      </div>
+    </div>
+  `;
 }
 
 function closeServerDetail() {
@@ -2227,7 +3786,8 @@ function setupAuthForms() {
     hideAuthScreen();
     closeAllDropdowns();
     startHeartbeat(); startMessagePolling(); startFriendRequestPolling();
-    startFriendOnlinePolling(); startAnnouncementPolling();
+    startFriendOnlinePolling(); startAnnouncementPolling(); startNewsNotificationPolling();
+    startPlaytimeRefresh();
     // Kick off background prefetch for expensive tab data so the first
     // click on Stats / Friends / Chat renders instantly from cache.
     prefetchTabs();
@@ -2316,11 +3876,39 @@ function showToast(msg, type = 'info') {
 
 // ── PLAYTIME STATUS BAR ───────────────────────────────────────────────────────
 
+// Cached authoritative total from the server; falls back to summing perServer
+// if the endpoint hasn't reported a totalMinutes field yet.
+let _playtimeTotalMins = null;
+
 function updatePlaytimeStatus() {
   const el = document.getElementById('status-playtime');
   if (!el) return;
-  const totalMins = Object.values(state.playtime).reduce((a, m) => a + m, 0);
-  el.textContent = '⏱ Total: ' + (totalMins > 0 ? formatMinutes(Math.round(totalMins)) : '—');
+  const totalMins = (_playtimeTotalMins !== null)
+    ? _playtimeTotalMins
+    : Object.values(state.playtime).reduce((a, m) => a + m, 0);
+  el.textContent = '⏱ RSPS Time: ' + (totalMins > 0 ? formatMinutes(Math.round(totalMins)) : '—');
+}
+
+// Refresh the cached playtime totals from the server every 60 seconds so the
+// status-bar agrees with the Stats tab even after long sessions / mid-game.
+let _playtimeRefreshTimer = null;
+function startPlaytimeRefresh() {
+  if (_playtimeRefreshTimer) return;
+  const refresh = async () => {
+    try {
+      // Pull from the SAME endpoint the Stats tab uses so the numbers agree.
+      const stats = await window.hub.get('/api/stats/me');
+      if (stats && typeof stats.totalMinutes === 'number') {
+        _playtimeTotalMins = stats.totalMinutes;
+      }
+      // Also keep state.playtime in sync for per-server displays elsewhere.
+      const pt = await api.getPlaytime().catch(() => null);
+      if (pt && pt.perServer) state.playtime = pt.perServer;
+      updatePlaytimeStatus();
+    } catch {}
+  };
+  refresh();
+  _playtimeRefreshTimer = setInterval(refresh, 60_000);
 }
 
 let _activeSessionInterval = null;
@@ -2417,12 +4005,17 @@ function updateBadge(panel) {
 const NOTIF_STORE = []; // { id, type, title, msg, ts, read }
 let _notifNextId  = 1;
 
+// Notification icons mapped by type. Anything not listed falls back to 🔔
 const NOTIF_ICONS = {
   'friend-request': '👤',
   'server-update':  '📢',
   'friend-online':  '🟢',
   'message':        '💬',
   'system':         '📣',
+  'mention':        '@',
+  'reaction':       '❤️',
+  'reply':          '💬',
+  'pin':            '📌',
 };
 
 function pushNotif(type, title, msg) {
@@ -2445,6 +4038,8 @@ function markNotifsRead() {
   NOTIF_STORE.forEach(n => n.read = true);
   updateNotifBadge();
   renderNotifDropdown();
+  // Also tell the server so the badge stays in sync across launches
+  try { window.hub.post('/api/notifications/mark-read', { all: true }); } catch {}
 }
 
 function clearAllNotifs() {
@@ -2474,7 +4069,7 @@ function renderNotifDropdown() {
     return;
   }
   list.innerHTML = NOTIF_STORE.map(n => `
-    <div class="notif-item${n.read ? '' : ' notif-unread'}">
+    <div class="notif-item${n.read ? '' : ' notif-unread'}" data-notif-id="${n.id}" ${n.postId ? `data-post-id="${n.postId}"` : ''}>
       <div class="notif-icon-wrap">${NOTIF_ICONS[n.type] || '🔔'}</div>
       <div class="notif-body">
         <div class="notif-title">${escHtml(n.title)}</div>
@@ -2483,6 +4078,42 @@ function renderNotifDropdown() {
       </div>
     </div>
   `).join('');
+  // Click handler — open post detail if the notification is tied to one
+  list.querySelectorAll('[data-post-id]').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const postId = +item.dataset.postId;
+      if (!postId) return;
+      // Find the post or fetch it (best-effort across sections)
+      let post = _newsState.posts.find(p => p.id === postId);
+      if (!post) {
+        try {
+          const lists = await Promise.all(['hub','server','community'].map(s =>
+            window.hub.get(`/api/news/list?section=${s}&limit=50`)));
+          for (const l of lists) {
+            const p = (l?.posts || []).find(pp => pp.id === postId);
+            if (p) { post = p; break; }
+          }
+        } catch {}
+      }
+      // Mark this single notification read
+      const id = item.dataset.notifId;
+      if (id?.startsWith('nn-')) {
+        try { await window.hub.post('/api/notifications/mark-read', { ids: [+id.slice(3)] }); } catch {}
+      }
+      const stored = NOTIF_STORE.find(n => n.id === id);
+      if (stored) stored.read = true;
+      updateNotifBadge();
+      item.classList.remove('notif-unread');
+      // Close dropdown
+      closeAllDropdowns();
+      // Open post detail
+      if (post) {
+        const newsPanel = document.querySelector('#slide-panel.open .panel-content') || document.body;
+        openNewsDetail(post, newsPanel);
+      }
+    });
+  });
 }
 
 // Seed mock notifications for testing
@@ -2500,6 +4131,65 @@ function seedMockNotifications() {
   }
   updateNotifBadge();
   renderNotifDropdown();
+}
+
+// ── NEWS NOTIFICATION POLLING ────────────────────────────────────────────────
+// Pulls mention/reaction/reply notifications from /api/notifications/list and
+// merges them into the existing NOTIF_STORE so they show in the bell dropdown.
+
+const _seenNewsNotifIds = new Set();
+let   _newsNotifInit    = false;
+
+function _newsNotifLabel(n) {
+  const verb = n.type === 'mention'  ? 'mentioned you'
+             : n.type === 'reaction' ? 'reacted to your post'
+             : n.type === 'reply'    ? 'replied to your post'
+             : n.type === 'pin'      ? 'pinned your post'
+             : 'has news for you';
+  return { title: `${n.from_username} ${verb}`, msg: n.preview || n.post_title || '' };
+}
+
+function startNewsNotificationPolling() {
+  const poll = async () => {
+    if (!state.user?.username) return;
+    let res;
+    try { res = await window.hub.get('/api/notifications/list?limit=20'); } catch { return; }
+    const items = res?.notifications || [];
+    // First load seeds the seen-set without surfacing toasts for old items
+    if (!_newsNotifInit) {
+      for (const n of items) {
+        const { title, msg } = _newsNotifLabel(n);
+        NOTIF_STORE.push({
+          id: 'nn-' + n.id, type: n.type, title, msg,
+          ts: new Date(n.created_at.replace(' ', 'T') + 'Z').getTime(),
+          read: !!n.read_at, postId: n.post_id,
+        });
+        _seenNewsNotifIds.add(n.id);
+      }
+      NOTIF_STORE.sort((a,b) => b.ts - a.ts);
+      updateNotifBadge();
+      renderNotifDropdown();
+      _newsNotifInit = true;
+      return;
+    }
+    // Subsequent polls: only push genuinely new items (still on top via pushNotif)
+    const fresh = items.filter(n => !_seenNewsNotifIds.has(n.id) && !n.read_at);
+    for (const n of fresh.reverse()) {
+      const { title, msg } = _newsNotifLabel(n);
+      NOTIF_STORE.unshift({
+        id: 'nn-' + n.id, type: n.type, title, msg,
+        ts: new Date(n.created_at.replace(' ', 'T') + 'Z').getTime(),
+        read: false, postId: n.post_id,
+      });
+      _seenNewsNotifIds.add(n.id);
+      showToast(`${NOTIF_ICONS[n.type] || '🔔'} ${title}`, 'info');
+    }
+    if (NOTIF_STORE.length > 50) NOTIF_STORE.length = 50;
+    updateNotifBadge();
+    renderNotifDropdown();
+  };
+  setTimeout(poll, 1_000);     // initial seed almost immediately after login
+  setInterval(poll, 10_000);   // then every 10s so mentions feel near-real-time
 }
 
 // ── FRIEND ONLINE POLLING ─────────────────────────────────────────────────────

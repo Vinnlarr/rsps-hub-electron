@@ -17,7 +17,7 @@
   border-radius: 3px;
   color: #8a7a5a;
   font-family: 'Cinzel', serif;
-  font-size: 0.65rem;
+  font-size: 0.76rem;
   letter-spacing: 2px;
   cursor: pointer;
   transition: all 0.15s;
@@ -42,7 +42,7 @@
   border: 1px solid #6b5228;
   color: #e0c87a;
   font-family: 'Cinzel', serif;
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   font-style: normal;
   letter-spacing: 0.3px;
   padding: 7px 11px;
@@ -111,9 +111,9 @@
 }
 .sd-badge.locked .sd-badge-name { color: #8a7a5a; }
 .sd-badge-sub {
-  font-size: 0.62rem;
+  font-size: 0.74rem;
   color: #7a6a4a;
-  font-style: italic;
+  font-style: normal;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -122,7 +122,7 @@
   margin-top: 8px;
   text-align: right;
   font-family: 'Cinzel', serif;
-  font-size: 0.65rem;
+  font-size: 0.76rem;
   letter-spacing: 1.5px;
   color: #c8a840;
   font-weight: 700;
@@ -134,7 +134,7 @@
   text-align: center;
   padding: 40px 20px;
   font-size: 0.82rem;
-  font-style: italic;
+  font-style: normal;
 }
 .sd-empty.small { padding: 20px 10px; font-size: 0.72rem; }
 
@@ -175,7 +175,7 @@
 }
 .sd-hero-label {
   font-family: 'Cinzel', serif;
-  font-size: 0.55rem;
+  font-size: 0.7rem;
   letter-spacing: 2px;
   color: #8a7a5a;
   font-weight: 700;
@@ -220,7 +220,7 @@
 }
 .sd-section-title {
   font-family: 'Cinzel', serif;
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   letter-spacing: 3px;
   color: #c8a840;
   margin: 0 0 2px;
@@ -230,7 +230,7 @@
   font-size: 0.66rem;
   color: #6a5a3a;
   margin: 0 0 12px;
-  font-style: italic;
+  font-style: normal;
 }
 .sd-grid-2 {
   display: grid;
@@ -259,7 +259,7 @@
   height: 12px;
 }
 .sd-month {
-  font-size: 0.55rem;
+  font-size: 0.7rem;
   color: #6a5a3a;
   font-family: 'Cinzel', serif;
   letter-spacing: 1px;
@@ -299,7 +299,7 @@
   border: 1px solid #6b5228;
   color: #e0c87a;
   font-family: 'Cinzel', serif;
-  font-size: 0.62rem;
+  font-size: 0.74rem;
   letter-spacing: 0.3px;
   padding: 5px 9px;
   border-radius: 3px;
@@ -337,7 +337,7 @@
   justify-content: flex-end;
   margin-top: 6px;
   padding-right: 4px;
-  font-size: 0.58rem;
+  font-size: 0.72rem;
   color: #6a5a3a;
   font-family: 'Cinzel', serif;
   letter-spacing: 1px;
@@ -376,7 +376,7 @@
 .sd-donut-icon { font-size: 1.2rem; line-height: 1; }
 .sd-donut-best {
   font-family: 'Cinzel', serif;
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   color: #f0c060;
   font-weight: 800;
   letter-spacing: 0.5px;
@@ -390,7 +390,7 @@
 .sd-donut-empty {
   padding: 30px 10px;
   color: #6a5a3a;
-  font-style: italic;
+  font-style: normal;
   font-size: 0.75rem;
   text-align: center;
 }
@@ -469,7 +469,7 @@
 .sd-ms-sub {
   font-size: 0.64rem;
   color: #6a5a3a;
-  font-style: italic;
+  font-style: normal;
 }
 
 /* ── MILESTONES (server tier progression) ────────────── */
@@ -504,7 +504,7 @@
 }
 .sd-ms-server-tier {
   font-family: 'Cinzel', serif;
-  font-size: 0.58rem;
+  font-size: 0.72rem;
   letter-spacing: 2px;
   font-weight: 800;
   padding: 2px 7px;
@@ -541,7 +541,7 @@
 .sd-ms-server-next {
   font-size: 0.64rem;
   color: #8a7a5a;
-  font-style: italic;
+  font-style: normal;
   font-family: 'Cinzel', serif;
   letter-spacing: 0.3px;
   padding-top: 1px;
@@ -565,7 +565,7 @@
 .sd-srv-row:hover { background: rgba(240,192,96,0.04); }
 .sd-srv-rank {
   font-family: 'Cinzel', serif;
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   color: #8a7a5a;
   font-weight: 700;
 }

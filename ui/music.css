@@ -175,8 +175,8 @@
   text-overflow: ellipsis;
 }
 .music-category {
-  font-family: 'IM Fell English', serif;
-  font-style: italic;
+  font-family: 'Inter', sans-serif;
+  font-style: normal;
   font-size: 0.7rem;
   color: #8a7a5a;
   letter-spacing: 2px;
@@ -200,7 +200,7 @@
   width: 82%; max-width: 440px;
   margin: 2px auto 0;
   font-family: 'Cinzel', serif;
-  font-size: 0.62rem;
+  font-size: 0.74rem;
   letter-spacing: 1.5px;
   color: #8a7a5a;
   position: relative; z-index: 2;
@@ -459,8 +459,8 @@
   border: 1px solid #3a2e14;
   padding: 0 14px;
   color: #d4c090;
-  font-family: 'IM Fell English', serif;
-  font-style: italic;
+  font-family: 'Inter', sans-serif;
+  font-style: normal;
   font-size: 0.85rem;
   outline: none;
 }
@@ -478,7 +478,7 @@
   background: rgba(30,26,16,0.85);
   border: 1px solid #3a2e14;
   font-family: 'Cinzel', serif;
-  font-size: 0.58rem;
+  font-size: 0.72rem;
   letter-spacing: 2px;
   color: #8a7a5a;
   cursor: pointer;
@@ -568,9 +568,9 @@
 }
 .music-row.playing .music-row-name { color: #f0e0a0; }
 .music-row-cat {
-  font-family: 'IM Fell English', serif;
-  font-style: italic;
-  font-size: 0.65rem;
+  font-family: 'Inter', sans-serif;
+  font-style: normal;
+  font-size: 0.76rem;
   color: #6a5a3a;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -579,7 +579,7 @@
 
 .music-row-dur {
   font-family: 'Cinzel', serif;
-  font-size: 0.65rem;
+  font-size: 0.76rem;
   color: #6a5a3a;
   letter-spacing: 1px;
   min-width: 42px;
@@ -607,8 +607,8 @@
   padding: 40px 20px;
   text-align: center;
   color: #5a4a28;
-  font-family: 'IM Fell English', serif;
-  font-style: italic;
+  font-family: 'Inter', sans-serif;
+  font-style: normal;
 }
 
 /* ── STATUS BAR MUSIC TOGGLE ─────────────────────────────── */
@@ -736,9 +736,9 @@
   text-overflow: ellipsis;
 }
 .music-mini-sub {
-  font-family: 'IM Fell English', serif;
-  font-style: italic;
-  font-size: 0.6rem;
+  font-family: 'Inter', sans-serif;
+  font-style: normal;
+  font-size: 0.74rem;
   color: #8a7a5a;
   white-space: nowrap;
   overflow: hidden;
@@ -833,7 +833,7 @@
   background: linear-gradient(180deg, #2a2010 0%, #141008 100%);
   color: #f0c060;
   font-family: 'Cinzel', serif;
-  font-size: 0.6rem;
+  font-size: 0.74rem;
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;

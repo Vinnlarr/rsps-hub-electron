@@ -47,7 +47,7 @@
   background: rgba(30,26,16,0.85);
   border: 1px solid #3a2e14;
   font-family: 'Cinzel', serif;
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   letter-spacing: 3px;
   color: #8a7a5a;
   cursor: pointer;
@@ -209,7 +209,7 @@
 
 .lb-you-tag {
   display: inline-block;
-  font-size: 0.55rem;
+  font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 1.5px;
   background: rgba(200,168,64,0.2);
@@ -222,12 +222,18 @@
 }
 
 .lb-sub {
-  font-family: 'IM Fell English', serif;
-  font-style: italic;
-  font-size: 0.68rem;
+  font-family: 'Inter', sans-serif;
+  font-style: normal;
+  font-size: 0.78rem;
   color: #6a5a3a;
   margin-top: 1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* Allow up to 2 lines so "Most played: ServerName" fits without truncation */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  line-height: 1.3;
 }
 
 .lb-metric { text-align: right; flex-shrink: 0; }
@@ -241,7 +247,7 @@
 .lb-gold .lb-metric-val { color: #f0e0a0; text-shadow: 0 0 6px rgba(240,192,96,0.4); }
 .lb-metric-sub {
   font-family: 'Cinzel', serif;
-  font-size: 0.6rem;
+  font-size: 0.74rem;
   color: #6a5a3a;
   letter-spacing: 1.5px;
   margin-top: 1px;
@@ -272,8 +278,8 @@
   padding: 50px 20px;
   text-align: center;
   color: #5a4a28;
-  font-family: 'IM Fell English', serif;
-  font-style: italic;
+  font-family: 'Inter', sans-serif;
+  font-style: normal;
   font-size: 0.9rem;
   line-height: 1.6;
 }

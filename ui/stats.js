@@ -422,8 +422,8 @@
       { icon:'👥',  name:'Social Butterfly',   sub:'5 friends added',             unlocked: false },
       { icon:'🌐',  name:'Community Pillar',   sub:'10 friends added',            unlocked: false },
       { icon:'⭐',  name:'Hub Ambassador',     sub:'25 friends added',            unlocked: false },
-      { icon:'📝',  name:'Reviewer',           sub:'Write a server review',       unlocked: false },
-      { icon:'⭐',  name:'Critic',             sub:'Write 10 server reviews',     unlocked: false },
+      { icon:'📝',  name:'Reviewer',           sub:'Write a server review',       unlocked: (data.reviewsWritten || 0) >= 1 },
+      { icon:'⭐',  name:'Critic',             sub:'Write 10 server reviews',     unlocked: (data.reviewsWritten || 0) >= 10 },
       { icon:'🎵',  name:'Music Lover',        sub:'Favorite a music track',      unlocked: false },
       { icon:'🎶',  name:'DJ',                 sub:'Favorite 25 music tracks',    unlocked: false },
     ];
@@ -647,10 +647,11 @@
     const topServers = buildTopServers(data.topServers || []);
     const mostPlayed = data.mostPlayed ? esc(data.mostPlayed) : '—';
 
+    const headerName = username ? `${esc(username).toUpperCase()}` : 'STATS';
     el.innerHTML = `
       <div class="alt-header">
-        <h2>STATS</h2>
-        <p>Most played: <b style="color:#e0c87a">${mostPlayed}</b> · Member since ${fmtDate(data.createdAt)}</p>
+        <h2>${headerName}</h2>
+        <p>${username ? `<b style="color:#e0c87a">${esc(username)}</b> · ` : ''}Most played: <b style="color:#e0c87a">${mostPlayed}</b> · Member since ${fmtDate(data.createdAt)}</p>
       </div>
 
       ${hero}

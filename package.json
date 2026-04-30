@@ -1,12 +1,14 @@
 {
   "name": "rsps-hub",
-  "version": "1.0.32",
+  "version": "1.0.33",
   "description": "RSPS Hub Launcher",
   "author": "RSPS Hub",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "prebuild": "node scripts/prebuild-jar.js",
+    "build": "electron-builder",
+    "build:skip-jar": "electron-builder"
   },
   "devDependencies": {
     "electron": "^31.0.0",
