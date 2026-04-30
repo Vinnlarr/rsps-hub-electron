@@ -1614,7 +1614,8 @@ function renderNewsBody(text) {
       listItems.push(m[1]);
     } else if (line === '') {
       flushList();
-      out.push('<br>');
+      // Empty line → double break so paragraphs are visually separated.
+      out.push('<br><br>');
     } else {
       flushList();
       out.push(inline(line));
@@ -1840,7 +1841,11 @@ async function renderNewsTab(el) {
   refreshNewsUnreadBadges(el);
 
   // Event delegation — all interactions on cards live here.
-  el.addEventListener('click', async (e) => {
+  // Detach previous listener if renderNewsTab was called more than once
+  // (e.g. user switched tabs and came back). Otherwise duplicate listeners
+  // fire on each click → openNewsDetail runs twice → two stacked modals.
+  if (el._newsClickHandler) el.removeEventListener('click', el._newsClickHandler);
+  el._newsClickHandler = async (e) => {
     // Username clicks open the player profile — short-circuit before any
     // card-open handlers further down would intercept.
     if (e.target.closest('[data-open-profile]')) return;
@@ -1983,7 +1988,8 @@ async function renderNewsTab(el) {
       const post = _newsState.posts.find(p => p.id === +cardClick.dataset.postId);
       if (post) openNewsDetail(post, el);
     }
-  });
+  };
+  el.addEventListener('click', el._newsClickHandler);
 }
 
 async function loadAndRenderNews(el) {
@@ -2174,6 +2180,16 @@ function formatNewsTs(iso) {
   if (diff < 86400 * 7) return Math.floor(diff / 86400) + 'd ago';
   return new Date(t).toLocaleDateString();
 }
+
+// Walk every element tagged with [data-ts] and refresh its relative-time label.
+// Avoids re-fetching the feed just to bump "just now" → "2m ago" → "5m ago".
+function refreshAllNewsTs() {
+  document.querySelectorAll('[data-ts]').forEach(el => {
+    el.textContent = formatNewsTs(el.dataset.ts);
+  });
+}
+// Tick every 30s so timestamps stay fresh while the launcher is open.
+setInterval(refreshAllNewsTs, 30_000);
 
 function openNewsCompose(el, editPost = null) {
   const sec = editPost ? editPost.section : _newsState.section;
