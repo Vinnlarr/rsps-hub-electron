@@ -2674,6 +2674,68 @@ body > * { position: relative; z-index: 1; }
   padding: 14px 20px;
   border-bottom: 1px solid rgba(255,255,255,0.04);
   align-items: flex-start;
+  transition: background 0.12s;
+}
+.dp-pending-row.dp-clickable { cursor: pointer; }
+.dp-pending-row.dp-clickable:hover { background: rgba(200,168,64,0.05); }
+.dp-view-hint {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.7rem;
+  color: #6a5a38;
+  font-weight: 400;
+  margin-left: 8px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Staff review section in server detail modal */
+.sd-staff-review {
+  border: 1px dashed rgba(255,122,122,0.30) !important;
+  background: rgba(255,122,122,0.04) !important;
+}
+.sd-staff-grid {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px; align-items: center;
+}
+.sd-staff-badge {
+  padding: 3px 10px; border-radius: 12px;
+  font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.sd-staff-badge.sd-staff-warn { background: rgba(255,160,80,0.15); color: #ffa050; border: 1px solid rgba(255,160,80,0.4); }
+.sd-staff-badge.sd-staff-ok   { background: rgba(122,216,138,0.12); color: #7ad88a; border: 1px solid rgba(122,216,138,0.4); }
+.sd-staff-meta { color: #8a7a5a; font-size: 0.78rem; }
+.sd-staff-meta b { color: #d8a868; font-weight: 600; }
+
+.sd-staff-urls { display: flex; flex-direction: column; gap: 6px; }
+.sd-staff-url {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: #14100a;
+  border: 1px solid #2e2410;
+  border-radius: 4px;
+  flex-wrap: wrap;
+}
+.sd-staff-url[data-kind="jar"] { border-color: #c84040; }
+.sd-staff-url-label {
+  color: #d8a868; font-size: 0.74rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  min-width: 200px;
+}
+.sd-staff-url[data-kind="jar"] .sd-staff-url-label { color: #ff7a7a; }
+.sd-staff-url-val {
+  flex: 1; min-width: 200px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.78rem;
+  color: #cdc0a0;
+  word-break: break-all;
+  background: #0e0c08;
+  padding: 4px 8px;
+  border-radius: 3px;
+  border: 1px solid #2e2410;
+}
+.sd-staff-open, .sd-staff-copy {
+  font-size: 0.74rem; padding: 4px 10px;
 }
 .dp-pending-info { flex: 1; min-width: 0; }
 .dp-pending-desc { font-size: 0.72rem; color: #6a5a38; margin-top: 4px; line-height: 1.4; }
@@ -3344,7 +3406,7 @@ body > * { position: relative; z-index: 1; }
   white-space: pre-wrap;
 }
 
-/* Rating badge on server cards in the list */
+/* Rating badge on server cards in the list (legacy, kept for fallback) */
 .card-rating {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 2px 8px;
@@ -3356,6 +3418,70 @@ body > * { position: relative; z-index: 1; }
   font-weight: 600;
 }
 .card-rating-count { color: #c8a840; font-weight: 400; opacity: 0.8; margin-left: 2px; }
+
+/* ── Server card v2: accent glow + visual stars + smart badges ─────── */
+.server-card:hover {
+  transform: translateY(-2px);
+  /* The --accent custom property is set per-card from server.accentColor */
+  box-shadow: 0 6px 24px rgba(0,0,0,0.9), 0 0 0 1px rgba(200,168,64,0.2);
+  border-color: var(--accent, #c8a840) !important;
+}
+
+/* Visual star rating row — replaces the small rating pill */
+.card-stars-row {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: auto; padding-left: 8px;
+}
+.card-stars {
+  color: #f0c060;
+  font-size: 0.92rem;
+  letter-spacing: 1px;
+  text-shadow: 0 0 4px rgba(240,192,96,0.3);
+}
+.card-stars-num   { color: #e0c87a; font-weight: 700; font-size: 0.82rem; font-family: 'Cinzel', serif; }
+.card-stars-count { color: #6a5a38; font-size: 0.74rem; }
+
+/* Smart badges in top-left of banner */
+.card-badges {
+  position: absolute;
+  top: 6px; left: 6px;
+  display: flex; gap: 4px;
+  z-index: 2;
+}
+.card-badge {
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+.card-badge.b-new {
+  background: rgba(122,216,138,0.95);
+  color: #14100a;
+}
+.card-badge.b-hot {
+  background: rgba(255,122,90,0.95);
+  color: #fff;
+}
+
+/* Animated pulse dot for "X Hub Players Online" when there ARE players */
+.player-pulse {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #4caf50;
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: cardPulse 1.6s ease-in-out infinite;
+}
+@keyframes cardPulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(76,175,80,0.5); }
+  50%      { box-shadow: 0 0 12px rgba(76,175,80,0.95); }
+}
 
 /* Reviewer credentials line in each review item */
 .sd-rev-creds {

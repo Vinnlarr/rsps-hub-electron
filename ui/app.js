@@ -343,7 +343,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const userData = await api.getUser();
     if (userData?.username) {
-      state.user = userData;
+      // /api/users/me returns is_staff (snake_case); normalize so client
+      // checks of state.user.isStaff (camelCase) work everywhere.
+      state.user = { ...userData, isStaff: !!(userData.is_staff ?? userData.isStaff) };
       await window.hub.setActiveUser(userData.username);
       // Now safe to load the caller's private DM history from disk.
       await dmStoreLoad();
@@ -806,17 +808,38 @@ function buildServerCard(server) {
   const rankName     = getRankName(level);
   const milestoneClr = getMilestoneColor(level);
   const tags         = (server.tags || []).slice(0, 4);
+  const accent       = server.accentColor || server.accent_color || '#c8a840';
+
+  // Smart badges
+  const createdAt = server.createdAt || server.created_at;
+  const ageDays   = createdAt ? (Date.now() - new Date(createdAt.replace(' ', 'T') + 'Z').getTime()) / 86_400_000 : 999;
+  const isNew     = ageDays <= 14;
+  const isActive  = players >= 5;
+
+  // Visual star pictograph from avg_rating
+  function starsFromRating(r) {
+    const v = +r || 0;
+    const full = Math.floor(v);
+    const half = (v - full) >= 0.5 ? 1 : 0;
+    return '★'.repeat(full) + (half ? '½' : '') + '☆'.repeat(5 - full - half);
+  }
 
   const bannerGradient = bannerColor(server.name);
   const card = document.createElement('div');
   card.className = 'server-card';
-  card.style.cssText = 'display:flex;align-items:stretch;min-height:115px;background:linear-gradient(135deg,#3a3020,#281e10);border:1px solid #6b5228;border-radius:4px;overflow:hidden;margin-bottom:0;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.8);';
+  card.style.cssText = `display:flex;align-items:stretch;min-height:115px;background:linear-gradient(135deg,#3a3020,#281e10);border:1px solid #6b5228;border-left:4px solid ${accent};border-radius:4px;overflow:hidden;margin-bottom:0;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.8), inset 4px 0 12px ${accent}33;transition:transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;`;
+  card.style.setProperty('--accent', accent);
   card.innerHTML = `
     <div class="card-banner" style="background:${bannerGradient};width:210px;min-width:210px;height:115px;position:relative;overflow:hidden;border-right:1px solid #3a2e14;">
       ${server.cardBannerUrl || server.bannerUrl
         ? `<img src="${escHtml(server.cardBannerUrl || server.bannerUrl)}" alt="${escHtml(server.name)}" onerror="this.style.display='none'">`
         : `<span class="banner-placeholder">${escHtml(server.name)}</span>`
       }
+      ${(isNew || isActive) ? `
+      <div class="card-badges">
+        ${isNew    ? '<span class="card-badge b-new">NEW</span>' : ''}
+        ${isActive ? '<span class="card-badge b-hot">🔥 ACTIVE</span>' : ''}
+      </div>` : ''}
     </div>
     <div class="card-info">
       <div class="card-header">
@@ -829,19 +852,23 @@ function buildServerCard(server) {
           data-orb="${escHtml(server.name[0].toUpperCase())}"
           data-xp="${Math.round(xpPct*100)}"
           data-time="${escHtml(calcTooltip(server.name, level, minutes).split('·')[1]?.trim() || 'Max level')}">
-          <span class="level-badge" style="border-color:${milestoneClr};color:${milestoneClr}">Lv. ${level}</span>
+          <span class="level-badge" style="border-color:${accent};color:${accent}">Lv. ${level}</span>
         </span>
+        ${server.review_count > 0 ? `
+          <span class="card-stars-row" title="${server.review_count} review${server.review_count === 1 ? '' : 's'}">
+            <span class="card-stars">${starsFromRating(server.avg_rating)}</span>
+            <span class="card-stars-num">${(+server.avg_rating).toFixed(1)}</span>
+            <span class="card-stars-count">· ${server.review_count}</span>
+          </span>
+        ` : ''}
       </div>
       <p class="card-desc">${escHtml(truncate(server.description || '', 200))}</p>
       <div class="card-tags">
         ${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}
-        ${server.review_count > 0
-          ? `<span class="card-rating" title="${server.review_count} review${server.review_count === 1 ? '' : 's'}">★ ${(+server.avg_rating).toFixed(1)} <span class="card-rating-count">(${server.review_count})</span></span>`
-          : ''}
       </div>
     </div>
     <div class="card-actions">
-      <span class="player-count">▲ ${formatNumber(players)} Hub Players Online</span>
+      <span class="player-count">${players > 0 ? '<span class="player-pulse"></span>' : '▲ '}${formatNumber(players)} Hub Players Online</span>
       <button class="action-btn ${isDownloaded ? 'play-btn' : 'install-btn'}"
               data-action="${isDownloaded ? 'play' : 'install'}"
               data-name="${server.name}">
@@ -2251,12 +2278,10 @@ async function loadAndRenderNews(el) {
     canPost = isStaff;
     composeLabel = `Post hub-wide announcement as <strong>Staff</strong> — visible to every user.`;
   } else if (sec === 'server') {
-    const myServers = (state.servers || []).filter(s =>
-      s.submitted_by === myUsername || (isStaff && s.approved));
-    canPost = myServers.length > 0;
-    if (canPost) {
-      composeLabel = `Post a server announcement for <strong>${escHtml(myServers[0].name)}</strong> — patch notes, events, drops, or maintenance.`;
-    }
+    // Open to any logged-in user. They pick a target server from the dropdown
+    // in the compose modal.
+    canPost = !!state.user;
+    composeLabel = `Post about a server — patch notes, events, drops, reviews, or discussion.`;
   } else { // community
     canPost = !!state.user;
     composeLabel = `Post to community as <strong>${escHtml(myUsername)}</strong> — guide, review, looking-for-group, or discussion.`;
@@ -2429,13 +2454,14 @@ function openNewsCompose(el, editPost = null) {
 
   let serverOpts = '';
   if (sec === 'server') {
-    const myServers = (state.servers || []).filter(s =>
-      s.submitted_by === myUsername || (state.user?.isStaff && s.approved));
-    const selectedServerId = editPost ? editPost.server_id : (draft?.server_id || (myServers[0] && myServers[0].id));
+    // Anyone can post about any approved server. List them all alphabetically.
+    const allServers = [...(state.servers || [])]
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const selectedServerId = editPost ? editPost.server_id : (draft?.server_id || (allServers[0] && allServers[0].id));
     serverOpts = `
       <label class="news-modal-label" for="news-cmp-server">Server</label>
       <select class="news-modal-input" id="news-cmp-server" ${editPost ? 'disabled' : ''}>
-        ${myServers.map(s => `<option value="${s.id}" ${s.id === selectedServerId ? 'selected' : ''}>${escHtml(s.name)}</option>`).join('')}
+        ${allServers.map(s => `<option value="${s.id}" ${s.id === selectedServerId ? 'selected' : ''}>${escHtml(s.name)}</option>`).join('')}
       </select>
     `;
   }
@@ -3540,12 +3566,45 @@ function showServerDetail(server) {
             : `<div class="sd-empty-section">No changelog posted yet — check back later for patch notes.</div>`}
         </div>
 
+        ${state.user?.isStaff ? `
+        <div class="sd-section sd-staff-review">
+          <h3 class="sd-section-title" style="color:#ff7a7a">⚠ STAFF REVIEW</h3>
+          <p class="sd-section-sub">Raw submission data — verify before approving. Anything sketchy here is on YOU once it's live.</p>
+          <div class="sd-staff-grid">
+            ${server.approved
+              ? `<span class="sd-staff-badge sd-staff-ok">✓ Approved</span>`
+              : `<span class="sd-staff-badge sd-staff-warn">⏳ Pending review</span>`}
+            ${server.submittedBy ? `<span class="sd-staff-meta">Submitted by <b>${escHtml(server.submittedBy)}</b></span>` : ''}
+            ${server.createdAt ? `<span class="sd-staff-meta">Submitted ${escHtml(server.createdAt)}</span>` : ''}
+          </div>
+          <div class="sd-staff-urls">
+            ${[
+              ['Jar download (RUN MALWARE SCAN)', server.jarUrl, 'jar'],
+              ['Website',  server.websiteUrl, 'web'],
+              ['Discord',  server.discordUrl, 'discord'],
+              ['Banner',   server.bannerUrl, 'img'],
+              ['Card banner', server.cardBannerUrl, 'img'],
+              ['Icon',     server.iconUrl, 'img'],
+            ].filter(([_, url]) => url).map(([label, url, kind]) => `
+              <div class="sd-staff-url" data-kind="${kind}">
+                <span class="sd-staff-url-label">${escHtml(label)}</span>
+                <code class="sd-staff-url-val">${escHtml(url)}</code>
+                <button class="sd-link-btn sd-staff-open" data-open-url="${escAttr(url)}">↗ Open</button>
+                <button class="sd-link-btn sd-staff-copy" data-copy-url="${escAttr(url)}">📋 Copy</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        ` : ''}
+
+        ${server.approved !== false && server.approved !== 0 ? `
         <div class="sd-section" id="sd-reviews-section" data-server-id="${server.id || ''}">
           <h3 class="sd-section-title">REVIEWS</h3>
           <div class="sd-reviews-host">
             <p class="sd-empty-section">Loading reviews…</p>
           </div>
         </div>
+        ` : ''}
 
       </div>
 
@@ -3581,6 +3640,23 @@ function showServerDetail(server) {
     if (el && window.openUserProfile) {
       e.stopPropagation();
       window.openUserProfile(el.dataset.openProfile);
+    }
+    // Staff review: open URL in browser
+    const openBtn = e.target.closest('[data-open-url]');
+    if (openBtn) {
+      e.stopPropagation();
+      const url = openBtn.dataset.openUrl;
+      if (window.hub?.openExternal) window.hub.openExternal(url);
+      else window.open(url, '_blank');
+    }
+    // Staff review: copy URL to clipboard
+    const copyBtn = e.target.closest('[data-copy-url]');
+    if (copyBtn) {
+      e.stopPropagation();
+      const url = copyBtn.dataset.copyUrl;
+      try {
+        navigator.clipboard.writeText(url).then(() => showToast('Copied to clipboard', 'success'));
+      } catch {}
     }
   });
 
@@ -3657,7 +3733,8 @@ function showServerDetail(server) {
   });
 
   // ── Reviews wiring ──────────────────────────────────────────────────────
-  loadServerReviews(server, overlay);
+  // Skip loading reviews for pending submissions — section isn't rendered.
+  if (server.approved !== false && server.approved !== 0) loadServerReviews(server, overlay);
 
   document.body.appendChild(overlay);
   // Animate in
@@ -4819,9 +4896,9 @@ function renderDevPending(el, servers) {
   const list = document.createElement('div');
   list.className = 'dp-server-list';
   list.innerHTML = servers.map(s => `
-    <div class="dp-pending-row" data-id="${s.id}">
+    <div class="dp-pending-row dp-clickable" data-id="${s.id}" title="Click to view full submission">
       <div class="dp-pending-info">
-        <div class="dp-server-name">${escHtml(s.name)}</div>
+        <div class="dp-server-name">${escHtml(s.name)} <span class="dp-view-hint">👁 click to review</span></div>
         <div class="dp-pending-desc">${escHtml((s.description || '').slice(0, 120))}${(s.description?.length || 0) > 120 ? '…' : ''}</div>
         <div class="dp-pending-meta">
           ${s.xpRate ? `<span>${escHtml(s.xpRate)} XP</span>` : ''}
@@ -4835,6 +4912,17 @@ function renderDevPending(el, servers) {
       </div>
     </div>
   `).join('');
+
+  // Click anywhere on the row (except action buttons) → open the same server
+  // detail modal that public users see, so staff can review banner/icon/desc/etc.
+  list.querySelectorAll('.dp-pending-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      const id = +row.dataset.id;
+      const server = servers.find(x => x.id === id);
+      if (server) showServerDetail(server);
+    });
+  });
 
   list.querySelectorAll('.dp-approve-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
