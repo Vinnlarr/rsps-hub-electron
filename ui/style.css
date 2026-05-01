@@ -1171,12 +1171,31 @@ body > * { position: relative; z-index: 1; }
   overflow: hidden;
   border-right: 1px solid #3a2e14;
   background: #0e0c08;
+  isolation: isolate;
+}
+.card-banner::after {
+  /* Right-edge fade into the card body + subtle corner vignette so the
+     image looks integrated, not pasted on. */
+  content: '';
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 70%, rgba(40,30,16,0.6) 100%),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.4) 100%);
+  z-index: 1;
 }
 .card-banner img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  image-rendering: -webkit-optimize-contrast;
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1), filter 0.3s ease;
+  filter: saturate(1.05) contrast(1.04);
+}
+.server-card:hover .card-banner img {
+  transform: scale(1.06);
+  filter: saturate(1.18) contrast(1.08) brightness(1.05);
 }
 .banner-placeholder {
   position: absolute;

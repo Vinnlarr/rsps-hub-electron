@@ -1354,7 +1354,7 @@ function openNewsDetail(post, container) {
           <span class="news-server-name">${escHtml(titleName)}</span>
           <span class="news-dot">·</span>
           <span class="news-author">${escHtml(post.username)}</span>
-          <span class="news-ts">${formatNewsTs(post.created_at)}${post.edited_at ? ' · edited' : ''}</span>
+          <span class="news-ts">${formatNewsTs(post.created_at)}${post.edited_at && sec !== 'hub' ? ' · edited' : ''}</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           <button class="news-modal-close" id="news-detail-close">✕</button>
@@ -2387,7 +2387,9 @@ function renderNewsCard(p, section, isStaff, myUsername) {
       ? `<button class="news-btn" data-pin-id="${p.id}" data-pin-action="unpin">Unpin</button>`
       : `<button class="news-btn" data-pin-id="${p.id}" data-pin-action="pin">Pin</button>`);
   }
-  if (p.edited_at) {
+  // Hide the edited mark on hub announcements — staff curates those and
+  // shouldn't have to broadcast every typo fix.
+  if (p.edited_at && section !== 'hub') {
     actions.push(`<span class="news-edited-mark" title="Edited ${formatNewsTs(p.edited_at)}">✎ edited</span>`);
   }
 
