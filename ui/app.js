@@ -1207,6 +1207,12 @@ async function renderAltContent(tab, el) {
   if (!el) el = document.getElementById('alt-content');
   if (!el) return;
 
+  // Strip the DM-only host class on every tab change. .dm-host applies
+  // `overflow: hidden !important` so the chat surface can manage its own
+  // scroll — leaving it on a non-DM tab kills scrolling everywhere
+  // (achievements / stats / friends list etc.) until reload.
+  el.classList.remove('dm-host');
+
   if (tab === 'stats') {
     if (window.renderStats) {
       window.renderStats(el);
