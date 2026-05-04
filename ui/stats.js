@@ -753,9 +753,11 @@
     }
 
     el.innerHTML = `
-      <div class="alt-header">
-        <h2>ACHIEVEMENTS</h2>
-        <p><b style="color:#e0c87a">${earned}</b> / ${badges.length} unlocked</p>
+      <div class="alt-header"><h2>ACHIEVEMENTS</h2></div>
+      <div class="ach-progress">
+        <div class="ach-progress-num"><span class="ach-progress-earned">${earned}</span><span class="ach-progress-slash"> / </span><span class="ach-progress-total">${badges.length}</span></div>
+        <div class="ach-progress-label">UNLOCKED</div>
+        <div class="ach-progress-bar"><div class="ach-progress-fill" style="width:${Math.round((earned / Math.max(1, badges.length)) * 100)}%"></div></div>
       </div>
       <div class="ach-filter-row">
         <button class="ach-filter ${_achFilter === 'all' ? 'active' : ''}" data-filter="all">All · ${badges.length}</button>

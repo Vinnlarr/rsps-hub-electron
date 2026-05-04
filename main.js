@@ -8,6 +8,22 @@ const os   = require('os');
 
 const RSPS_DIR      = path.join(os.homedir(), '.rsps_hub');
 const PROFILE_PATH  = path.join(RSPS_DIR, 'profile.json');
+// Persisted launcher-update preference. Read on startup BEFORE
+// electron-updater fires so toggling it actually takes effect.
+const UPDATER_PREF_PATH = path.join(RSPS_DIR, 'auto_update_launcher.json');
+function readAutoUpdateLauncher() {
+  try {
+    const raw = fs.readFileSync(UPDATER_PREF_PATH, 'utf8');
+    const j = JSON.parse(raw);
+    return typeof j.enabled === 'boolean' ? j.enabled : true; // default: on
+  } catch { return true; }
+}
+function writeAutoUpdateLauncher(enabled) {
+  try {
+    fs.mkdirSync(RSPS_DIR, { recursive: true });
+    fs.writeFileSync(UPDATER_PREF_PATH, JSON.stringify({ enabled: !!enabled }));
+  } catch (e) { console.error('[updater] failed saving pref:', e?.message); }
+}
 const AVATAR_PATH   = path.join(RSPS_DIR, 'avatar.png');
 const PLAYTIME_PATH = path.join(RSPS_DIR, 'playtime.json');
 // Legacy (pre-per-user) paths — still read as a fallback and auto-migrated to
@@ -440,7 +456,11 @@ ipcMain.handle('select-folder', async (_, defaultPath) => {
 function setupAutoUpdater() {
   if (!app.isPackaged) return;
 
-  autoUpdater.autoDownload = true;
+  // Honour the user's "Auto-Update Launcher" setting. When OFF we still
+  // CHECK for updates (so the renderer can show "update available, click
+  // to download" if we want to surface that later), but we don't auto-pull
+  // the installer in the background.
+  autoUpdater.autoDownload = readAutoUpdateLauncher();
   autoUpdater.autoInstallOnAppQuit = false; // handled manually via install-update
   autoUpdater.logger = require('electron-log');
   autoUpdater.logger.transports.file.level = 'info';
@@ -476,6 +496,88 @@ ipcMain.on('install-update', () => {
   killJava();
   // Wait for Java process tree to fully die before handing off to NSIS
   setTimeout(() => autoUpdater.quitAndInstall(true, true), 1000);
+});
+
+// Renderer toggles the launcher auto-update preference. Persists to disk
+// AND updates the live electron-updater config in this session, so the
+// change takes effect immediately without a relaunch.
+ipcMain.handle('set-auto-update-launcher', (_e, enabled) => {
+  writeAutoUpdateLauncher(!!enabled);
+  try { autoUpdater.autoDownload = !!enabled; } catch {}
+  return true;
+});
+ipcMain.handle('get-auto-update-launcher', () => readAutoUpdateLauncher());
+
+// ── CHAT POPOUT WINDOWS ──────────────────────────────────────
+// One floating BrowserWindow per chat surface (Hub or DM with a specific
+// user). Always-on-top by default so they stay visible while the user has
+// a game client focused. Each popout uses fetch() against the local Java
+// backend on 127.0.0.1:7890 — Java auth is in-process state so no auth
+// plumbing is needed beyond running on the same machine.
+const chatPopouts = new Map(); // key (`hub` or `dm:<user>`) -> BrowserWindow
+
+ipcMain.handle('chat-popout-open', (_e, opts) => {
+  const { type = 'hub', user = '' } = opts || {};
+  const key = type === 'dm' ? `dm:${user}` : 'hub';
+  const existing = chatPopouts.get(key);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return true;
+  }
+  // Pre-bake the current user's username so own-message styling works
+  // without an extra round-trip on popout boot.
+  const me = activeUser || '';
+  const win = new BrowserWindow({
+    width: 380,
+    height: 520,
+    minWidth: 320,
+    minHeight: 360,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#12100a',
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    resizable: true,
+    show: false,
+    title: type === 'dm' ? `RSPS Hub — DM ${user}` : 'RSPS Hub — Hub Chat',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.setMenu(null);
+  const url = `chat-popout.html?type=${encodeURIComponent(type)}` +
+              (type === 'dm' ? `&user=${encodeURIComponent(user)}` : '') +
+              `&me=${encodeURIComponent(me)}`;
+  win.loadFile(path.join(__dirname, 'ui', 'chat-popout.html'), {
+    search: url.split('?')[1],
+  });
+  win.once('ready-to-show', () => win.show());
+  win.on('closed', () => chatPopouts.delete(key));
+  chatPopouts.set(key, win);
+  return true;
+});
+
+// Popout asks main to toggle its own always-on-top.
+ipcMain.on('chat-popout-aot', (e, enabled) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win && !win.isDestroyed()) win.setAlwaysOnTop(!!enabled);
+});
+// Popout asks main to close it.
+ipcMain.on('chat-popout-close', e => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win && !win.isDestroyed()) win.close();
+});
+// Renderer asks main to close every chat popout — used on logout so the
+// next user doesn't inherit the previous account's open conversations.
+ipcMain.handle('chat-popout-close-all', () => {
+  for (const w of chatPopouts.values()) {
+    if (w && !w.isDestroyed()) w.close();
+  }
+  chatPopouts.clear();
+  return true;
 });
 
 // ── MUSIC POPOUT WINDOW ──────────────────────────────────────

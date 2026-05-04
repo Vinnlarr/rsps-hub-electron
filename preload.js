@@ -44,4 +44,18 @@ contextBridge.exposeInMainWorld('hub', {
   installUpdate: () => ipcRenderer.send('install-update'),
   onUpdateAvailable:  (cb) => ipcRenderer.on('update-available',  () => cb()),
   onUpdateDownloaded: (cb) => ipcRenderer.on('update-downloaded', () => cb()),
+  setAutoUpdateLauncher: (enabled) => ipcRenderer.invoke('set-auto-update-launcher', enabled),
+  getAutoUpdateLauncher: ()        => ipcRenderer.invoke('get-auto-update-launcher'),
+
+  // Chat popouts — main launcher calls openChatPopout(type, user) to spawn
+  // a floating window. The popout itself uses chatPopout.* methods.
+  openChatPopout:        (type, user) => ipcRenderer.invoke('chat-popout-open', { type, user }),
+  closeAllChatPopouts:   ()           => ipcRenderer.invoke('chat-popout-close-all'),
+});
+
+// Exposed only inside the chat popout window (uses the same preload but
+// these hooks are no-ops elsewhere).
+contextBridge.exposeInMainWorld('chatPopout', {
+  setAlwaysOnTop: (enabled) => ipcRenderer.send('chat-popout-aot', !!enabled),
+  close:          ()        => ipcRenderer.send('chat-popout-close'),
 });

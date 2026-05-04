@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  font-src 'self' https://fonts.gstatic.com data:;
+  img-src 'self' data: blob:;
+  connect-src 'self' http://127.0.0.1:7890;
+  frame-src 'none'; object-src 'none'; base-uri 'self';
+">
+<title>RSPS Hub Chat</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Inter', sans-serif;
+    color: #e8d5a8;
+    background:
+      radial-gradient(ellipse 70% 80% at 30% 0%, rgba(200,168,64,0.18), transparent 70%),
+      linear-gradient(135deg, #3a3020 0%, #281e10 100%);
+    border: 2px solid #6b5228;
+    border-radius: 6px;
+    user-select: none;
+    box-shadow: inset 0 0 24px rgba(0,0,0,0.5);
+  }
+  .pop-root {
+    position: absolute; inset: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* ── Drag bar ───────────────────────────────────────── */
+  .pop-bar {
+    -webkit-app-region: drag;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 10px 8px 14px;
+    border-bottom: 1px solid #6b5228;
+    font-family: 'Cinzel', serif;
+    font-size: 0.78rem; letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #ffd070;
+    flex-shrink: 0;
+    background: linear-gradient(180deg, rgba(75,55,28,0.6), rgba(40,30,16,0.5));
+    text-shadow: 0 1px 0 #1a1408;
+  }
+  .pop-title { display: flex; align-items: center; gap: 6px; }
+  .pop-title-icon { font-size: 0.95rem; }
+  .pop-title-name { font-weight: 700; }
+  .pop-title-sub { font-weight: 400; opacity: 0.65; font-size: 0.62rem; margin-left: 8px; letter-spacing: 0.1em; }
+  .pop-actions { display: flex; gap: 4px; -webkit-app-region: no-drag; }
+  .pop-btn {
+    -webkit-app-region: no-drag;
+    width: 24px; height: 24px;
+    border-radius: 4px;
+    background: none;
+    border: 1px solid transparent;
+    color: #8a7a5a;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    font-size: 0.85rem;
+  }
+  .pop-btn:hover { color: #e8d8a8; border-color: rgba(200,168,64,0.4); background: rgba(200,168,64,0.06); }
+  .pop-btn.active { color: #ffd070; border-color: rgba(255,208,112,0.5); background: rgba(255,208,112,0.08); }
+  .pop-close:hover { color: #e07070 !important; border-color: rgba(224,112,112,0.4) !important; background: rgba(224,112,112,0.08) !important; }
+
+  /* ── Messages list ───────────────────────────────────── */
+  .pop-msgs {
+    flex: 1; min-height: 0;
+    overflow-y: auto;
+    padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(200,168,64,0.25) transparent;
+  }
+  .pop-msgs::-webkit-scrollbar { width: 6px; }
+  .pop-msgs::-webkit-scrollbar-thumb { background: rgba(200,168,64,0.25); border-radius: 3px; }
+  .pop-msgs::-webkit-scrollbar-track { background: transparent; }
+
+  /* Match the in-launcher friends chat exactly so popping out feels like
+     the same surface, just floating. Matches .dm-msg / .dm-bubble /
+     .dm-sender / .dm-ts in style.css. */
+  .pop-msg {
+    display: flex; flex-direction: column;
+    max-width: 85%;
+  }
+  .pop-msg.own { align-self: flex-end; align-items: flex-end; }
+  .pop-msg.other { align-self: flex-start; align-items: flex-start; }
+  .pop-sender {
+    font-family: 'Cinzel', serif;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #c8a840;
+    margin-bottom: 3px;
+    letter-spacing: 0.04em;
+  }
+  .pop-bubble {
+    padding: 7px 11px;
+    border-radius: 4px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    color: #d4c090;
+    word-break: break-word;
+  }
+  .pop-msg.own  .pop-bubble { background: linear-gradient(135deg, #3a2c10, #2a1e08); border: 1px solid #6b5228; }
+  .pop-msg.other .pop-bubble { background: linear-gradient(135deg, #1e1a10, #161208); border: 1px solid #2a2010; }
+  .pop-ts { font-size: 0.72rem; color: #8a7a4a; margin-top: 3px; }
+  .pop-empty { color: #8a7a5a; font-style: italic; text-align: center; padding: 30px 10px; font-size: 0.92rem; }
+
+  /* ── Input row ───────────────────────────────────────── */
+  .pop-input-row {
+    display: flex; gap: 6px;
+    padding: 10px 12px;
+    border-top: 1px solid #6b5228;
+    flex-shrink: 0;
+    background: linear-gradient(180deg, rgba(40,30,16,0.4), rgba(75,55,28,0.5));
+  }
+  .pop-input {
+    flex: 1;
+    background: #14100a;
+    border: 1px solid #4a3a1c;
+    border-radius: 4px;
+    padding: 8px 10px;
+    color: #f0e5c0;
+    font-family: inherit;
+    font-size: 0.88rem;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .pop-input:focus { border-color: #c8a840; }
+  /* SEND button — match the in-launcher .action-btn.play-btn so the
+     popout reads as the same surface (dark warm brown + gold border + glowing
+     gold label) instead of a green CTA that fights the rest of the UI. */
+  .pop-send {
+    -webkit-app-region: no-drag;
+    padding: 0 16px; height: 34px;
+    background: linear-gradient(180deg, #5a3e10 0%, #3a2808 50%, #281c04 100%);
+    border: 1px solid #c8a840;
+    border-radius: 4px;
+    color: #f0d870;
+    text-shadow: 0 0 8px rgba(200,168,64,0.6);
+    font-family: 'Cinzel', serif;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    text-transform: uppercase;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.5), 0 0 10px rgba(200,168,64,0.15);
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  }
+  .pop-send:hover:not(:disabled) {
+    background: linear-gradient(180deg, #7a5418 0%, #5a3a10 50%, #3a2608 100%);
+    border-color: #f0d060;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.5), 0 0 18px rgba(200,168,64,0.3);
+  }
+  .pop-send:disabled { opacity: 0.5; cursor: not-allowed; }
+  .pop-loading { color: #6a5a3a; padding: 30px; text-align: center; font-size: 0.78rem; }
+</style>
+</head>
+<body>
+<div class="pop-root">
+  <div class="pop-bar">
+    <div class="pop-title">
+      <span class="pop-title-icon" id="pop-icon">💬</span>
+      <span class="pop-title-name" id="pop-name">Chat</span>
+      <span class="pop-title-sub" id="pop-sub"></span>
+    </div>
+    <div class="pop-actions">
+      <button class="pop-btn" id="pop-pin" title="Toggle always on top">📌</button>
+      <button class="pop-btn pop-close" id="pop-close" title="Close">✕</button>
+    </div>
+  </div>
+  <div class="pop-msgs" id="pop-msgs"><p class="pop-loading">Loading…</p></div>
+  <div class="pop-input-row">
+    <input class="pop-input" id="pop-input" type="text" maxlength="300" placeholder="Type a message…" autocomplete="off">
+    <button class="pop-send" id="pop-send">SEND</button>
+  </div>
+</div>
+<script src="chat-popout.js"></script>
+</body>
+</html>

@@ -257,6 +257,7 @@ async function prefetchTabs() {
 async function logoutCleanup() {
   state.user = null;
   state.profile = null;
+  state.activeDM = null;
   // Clear DM cache (private messages must not leak to the next login)
   for (const k of Object.keys(DM_STORE)) delete DM_STORE[k];
   // Clear server favourites (will be re-fetched from server on next login)
@@ -267,6 +268,24 @@ async function logoutCleanup() {
   if (window.clearMusicPrefs) try { window.clearMusicPrefs(); } catch {}
   // Un-scope main.js file paths
   try { await window.hub.setActiveUser(null); } catch {}
+
+  // Close any open side panel + clear its body so the next user doesn't
+  // briefly see the previous user's DMs / friends / etc.
+  const panel = document.getElementById('slide-panel');
+  if (panel) {
+    panel.classList.remove('open');
+    const body = document.getElementById('slide-panel-body');
+    if (body) body.innerHTML = '';
+  }
+  // Deselect any active sidebar tab so the next login starts clean.
+  document.querySelectorAll('.rs-tab.active').forEach(t => t.classList.remove('active'));
+
+  // Close any chat popout windows the previous user had open.
+  try { window.hub?.closeAllChatPopouts && window.hub.closeAllChatPopouts(); } catch {}
+
+  // Reset all unread badges
+  for (const k of Object.keys(_unread)) { _unread[k] = 0; updateBadge(k); }
+
   renderUser();
 }
 
@@ -747,16 +766,135 @@ async function loadServers() {
   }
   showLoading(false);
   renderServers();
+
+  // Once per session, after the first successful load, scan every already
+  // installed server for a newer JAR on the dev's website and silently
+  // re-download if the remote has changed. Java's downloadClient is smart
+  // enough to no-op when the remote is unchanged, so this is cheap.
+  if (!_jarRefreshDone && state.servers.length) {
+    _jarRefreshDone = true;
+    setTimeout(refreshInstalledJars, 1500);   // give the UI a beat first
+  }
 }
+
+// One-shot per launcher session — see loadServers() above.
+let _jarRefreshDone = false;
+async function refreshInstalledJars() {
+  const installed = state.servers.filter(s => s.downloaded && s.jarUrl);
+  if (!installed.length) return;
+  console.log(`[jar-refresh] checking ${installed.length} installed server(s) for updates...`);
+  let updated = 0;
+  for (const s of installed) {
+    try {
+      // Java decides whether to actually re-download based on remote
+      // ETag / Last-Modified / size; if unchanged, this is a no-op HEAD.
+      const res = await api.install(s.name, s.jarUrl);
+      if (res?.success) updated += 1;
+    } catch (_) { /* best effort; never block the user */ }
+  }
+  console.log(`[jar-refresh] done. ${updated}/${installed.length} processed.`);
+}
+
+// ── REQUEST A SERVER ─────────────────────────────────────────────────────────
+// Players hit the "+ Request a Server" button next to Refresh on the Store
+// header. They submit the server name (required) plus optional links + reason.
+// Posts go into the `server_requests` table; staff review them via the Dev
+// Portal "Server Requests" section.
+function openRequestServerModal() {
+  if (!state.user) {
+    showToast('Sign in first to request a server.', 'error');
+    return;
+  }
+  if (document.getElementById('rsm-backdrop')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'rsm-backdrop';
+  overlay.className = 'rsm-backdrop';
+  overlay.innerHTML = `
+    <div class="rsm-modal" role="dialog" aria-modal="true">
+      <div class="rsm-hdr">
+        <h3>Request a Server</h3>
+        <button class="rsm-close" id="rsm-close" aria-label="Close">✕</button>
+      </div>
+      <div class="rsm-body">
+        <p class="rsm-intro">Know an RSPS that should be in the launcher? Tell us — we'll reach out to the owner. Server name is the only required field.</p>
+
+        <label class="rsm-label">Server name <span class="rsm-req">*</span></label>
+        <input class="rsm-input" id="rsm-name" type="text" maxlength="96" placeholder="e.g. AwesomeRSPS" autocomplete="off">
+
+        <label class="rsm-label">Website <span class="rsm-hint">(optional)</span></label>
+        <input class="rsm-input" id="rsm-web" type="text" maxlength="512" placeholder="https://...">
+
+        <label class="rsm-label">Discord <span class="rsm-hint">(optional)</span></label>
+        <input class="rsm-input" id="rsm-disc" type="text" maxlength="512" placeholder="https://discord.gg/...">
+
+        <label class="rsm-label">Why this server? <span class="rsm-hint">(optional)</span></label>
+        <textarea class="rsm-input rsm-textarea" id="rsm-reason" maxlength="1000" placeholder="What makes it good? Any context that'd help us reach out?"></textarea>
+
+        <div class="rsm-msg" id="rsm-msg"></div>
+      </div>
+      <div class="rsm-foot">
+        <button class="rsm-btn" id="rsm-cancel">Cancel</button>
+        <button class="rsm-btn rsm-btn-primary" id="rsm-submit">Submit Request</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e => e.stopPropagation());
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#rsm-close').addEventListener('click', close);
+  overlay.querySelector('#rsm-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function esc(e) {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
+  });
+
+  setTimeout(() => overlay.querySelector('#rsm-name').focus(), 30);
+
+  overlay.querySelector('#rsm-submit').addEventListener('click', async () => {
+    const name   = overlay.querySelector('#rsm-name').value.trim();
+    const web    = overlay.querySelector('#rsm-web').value.trim();
+    const disc   = overlay.querySelector('#rsm-disc').value.trim();
+    const reason = overlay.querySelector('#rsm-reason').value.trim();
+    const msgEl  = overlay.querySelector('#rsm-msg');
+    const btn    = overlay.querySelector('#rsm-submit');
+
+    if (!name) { msgEl.textContent = 'Server name is required.'; return; }
+    for (const [u, label] of [[web, 'Website'], [disc, 'Discord']]) {
+      if (u && !/^https?:\/\//i.test(u)) {
+        msgEl.textContent = `${label} must start with http:// or https://`;
+        return;
+      }
+    }
+
+    btn.disabled = true; btn.textContent = 'Sending…'; msgEl.textContent = '';
+    try {
+      const res = await window.hub.post('/api/server_requests/submit', {
+        server_name: name, website_url: web, discord_url: disc, reason,
+      });
+      if (res?.ok) {
+        close();
+        showToast('Request submitted. Thanks — staff will look into it.', 'success');
+      } else {
+        msgEl.textContent = res?.error || 'Failed to submit. Try again later.';
+      }
+    } catch (e) {
+      msgEl.textContent = e?.message || 'Network error.';
+    }
+    btn.disabled = false; btn.textContent = 'Submit Request';
+  });
+}
+window.openRequestServerModal = openRequestServerModal;
 
 function getFilteredServers() {
   let list = [...state.servers];
 
-  // Search
+  // Search — only matches the START of a server name. Typing "del" matches
+  // Delanor; typing "nor" does NOT match Galanor.
   if (state.search) {
     const q = state.search.toLowerCase();
-    list = list.filter(s => s.name.toLowerCase().includes(q) ||
-                            (s.description || '').toLowerCase().includes(q));
+    list = list.filter(s => s.name.toLowerCase().startsWith(q));
   }
 
   // Tag filter
@@ -1021,7 +1159,7 @@ function setActiveNavTab(tab) {
 
 // ── SIDEBAR SLIDE-OUT PANELS ──────────────────────────────────────────────────
 
-const PANEL_TITLES = { friends: 'Friends', chat: 'Friends Chat', groupchat: 'Group Chat', stats: 'Stats', leaderboard: 'Leaderboard', achievements: 'Achievements', music: 'Music', settings: 'Settings' };
+const PANEL_TITLES = { friends: 'Friends', chat: 'Friends Chat', groupchat: 'Hub Chat', stats: 'Stats', leaderboard: 'Leaderboard', achievements: 'Achievements', music: 'Music', settings: 'Settings' };
 
 function setupSidebarTabs() {
   const panel     = document.getElementById('slide-panel');
@@ -1204,6 +1342,9 @@ async function renderAltContent(tab, el) {
     el.innerHTML = '<p class="loading-msg">Loading settings…</p>';
     let s = {};
     try { s = await api.getSettings(); } catch (_) {}
+    // Launcher self-update toggle lives on the Electron side, not Java —
+    // merge it in so the toggle reflects the on-disk pref.
+    try { s.autoUpdateLauncher = await window.hub.getAutoUpdateLauncher(); } catch (_) { s.autoUpdateLauncher = true; }
     el.innerHTML = buildSettingsHTML(s);
     bindSettingsEvents(el, s);
     try {
@@ -2978,8 +3119,8 @@ function buildFriendsHTML({ friends = [], requests = [] }) {
           <span class="friend-status">Wants to be your friend</span>
         </div>
         <div class="friend-actions">
-          <button class="friend-btn friend-accept-btn" data-username="${r.username}" title="Accept">✓</button>
-          <button class="friend-btn friend-decline-btn" data-username="${r.username}" title="Decline">✕</button>
+          <button class="friend-btn friend-accept-btn" data-username="${r.username}">✓</button>
+          <button class="friend-btn friend-decline-btn" data-username="${r.username}">✕</button>
         </div>
       </div>
     `).join('')}
@@ -3010,8 +3151,8 @@ function friendRowHTML(f) {
         <span class="friend-status">${statusText}</span>
       </div>
       <div class="friend-actions">
-        <button class="friend-btn friend-msg-btn" data-username="${f.username}" title="Message">💬</button>
-        <button class="friend-btn friend-remove-btn" data-username="${f.username}" title="Remove friend">✕</button>
+        <button class="friend-btn friend-msg-btn" data-username="${f.username}">💬</button>
+        <button class="friend-btn friend-remove-btn" data-username="${f.username}">✕</button>
       </div>
     </div>
   `;
@@ -3118,19 +3259,36 @@ function renderConversationList(el, convos) {
     if (!storeUsernames.has(u)) storeUsernames.add(u);
   }
 
+  // Build a {username: unread-count} map from the server's conversations
+  // payload so we can flag rows whose newest message hasn't been read yet.
+  const unreadMap = {};
+  for (const c of convos) {
+    const u = c.username || c.with_user || c.other_user;
+    if (!u) continue;
+    const n = parseInt(c.unread || '0', 10) || 0;
+    if (n > 0) unreadMap[u] = n;
+  }
+
   const list = [...storeUsernames].map(username => {
     const msgs = dmStoreGet(username);
     const last = msgs.at(-1);
-    return { username, lastMsg: last?.content || '', lastTs: last?.timestamp || '' };
-  });
+    return {
+      username,
+      lastMsg: last?.content || '',
+      lastTs:  last?.timestamp || '',
+      unread:  unreadMap[username] || 0,
+    };
+  })
+  // Unread conversations float to the top; otherwise newest-message-first.
+  .sort((a, b) => (b.unread > 0) - (a.unread > 0) || (b.lastTs || '').localeCompare(a.lastTs || ''));
 
   el.innerHTML = `
     <div class="alt-header"><h2>FRIENDS CHAT</h2><p>Direct messages</p></div>
     ${list.length === 0 ? '<p class="empty-msg">No conversations yet.</p>' : list.map(c => `
-      <div class="convo-row" data-username="${escHtml(c.username)}">
+      <div class="convo-row ${c.unread > 0 ? 'has-unread' : ''}" data-username="${escHtml(c.username)}">
         <div class="friend-avatar">${c.username[0].toUpperCase()}</div>
         <div class="friend-info">
-          <span class="friend-name lb-clickable" data-open-profile="${escAttr(c.username)}">${escHtml(c.username)}</span>
+          <span class="friend-name">${escHtml(c.username)}${c.unread > 0 ? `<span class="convo-unread-badge">${c.unread}</span>` : ''}</span>
           <span class="friend-status convo-preview">${escHtml(c.lastMsg || 'No messages yet')}</span>
         </div>
         ${c.lastTs ? `<span class="convo-ts">${escHtml(c.lastTs)}</span>` : ''}
@@ -3184,6 +3342,7 @@ async function openDM(el, username) {
         <button class="dm-back-btn" id="dm-back">← Back</button>
         <div class="friend-avatar" style="width:28px;height:28px;font-size:0.7rem">${username[0].toUpperCase()}</div>
         <span class="dm-title">${username}</span>
+        <button class="chat-popout-btn" id="dm-popout">⧉</button>
       </div>
       <div class="dm-messages" id="dm-messages"><p class="loading-msg">Loading...</p></div>
       <div class="dm-input-row" style="padding:10px 14px">
@@ -3203,6 +3362,11 @@ async function openDM(el, username) {
   const input  = el.querySelector('#dm-input');
   const sendBtn = el.querySelector('#dm-send');
 
+  // Pop-out 📤 — opens this DM in its own floating window
+  el.querySelector('#dm-popout')?.addEventListener('click', () => {
+    if (window.hub?.openChatPopout) window.hub.openChatPopout('dm', username);
+  });
+
   function renderMessages() {
     const msgs = dmStoreGet(username);
     if (msgs.length === 0) {
@@ -3220,14 +3384,16 @@ async function openDM(el, username) {
   }
 
   // Render from local store immediately (no flicker), then replace with
-  // the server's authoritative message list. We keep optimistic pending
-  // sends (not yet confirmed by the server) so they don't disappear.
+  // the server's authoritative message list. We do NOT keep stale
+  // pending-flagged messages here — they're either already confirmed
+  // (and will arrive via the server fetch with correct timestamps) or
+  // they failed to send (and the user can retry). Keeping them stacked
+  // them at the bottom out-of-order. The fresh server list is the truth.
   renderMessages();
   api.getMessages(username)
     .then(data => {
       if (!data || !data.messages) return;
-      const pending = dmStoreGet(username).filter(m => m.pending);
-      DM_STORE[username] = [...data.messages, ...pending];
+      DM_STORE[username] = data.messages;
       dmStoreSave();
       renderMessages();
     })
@@ -3260,7 +3426,24 @@ async function openDM(el, username) {
     // send bug: the previous code re-enabled the button in the next tick
     // (before the network round-trip), letting a second Enter press queue
     // an identical send while the first was still in flight.
-    try { await api.sendMessage(username, content); } catch {}
+    try {
+      await api.sendMessage(username, content);
+      // Confirmed — drop the optimistic pending copy and let the next
+      // server refresh re-render the canonical message with proper ts.
+      const arr = dmStoreGet(username);
+      const idx = arr.indexOf(msg);
+      if (idx !== -1) { arr.splice(idx, 1); dmStoreSave(); }
+      // Pull the fresh authoritative list so this user's bubble shows
+      // its real server timestamp instead of an optimistic local one.
+      try {
+        const data = await api.getMessages(username);
+        if (data?.messages) {
+          DM_STORE[username] = data.messages;
+          dmStoreSave();
+          renderMessages();
+        }
+      } catch (_) {}
+    } catch {}
     _sending = false;
     sendBtn.disabled = false;
     input.disabled = false;
@@ -3286,95 +3469,13 @@ const GC = {
 };
 
 function renderGroupChat(el) {
-  el.style.overflow = '';
-  el.style.padding  = '';
-
-  el.innerHTML = `
-    <div class="alt-header"><h2>GROUP CHAT</h2><p>Channels &amp; group conversations</p></div>
-
-    <div class="gc-channel-list">
-      <!-- Hub Chat — always pinned -->
-      <div class="gc-channel-row pinned" id="gc-open-hub">
-        <span class="gc-channel-icon">🌐</span>
-        <div class="gc-channel-info">
-          <span class="gc-channel-name">Hub Chat</span>
-          <span class="gc-channel-sub">Global launcher chat</span>
-        </div>
-        <span class="gc-channel-arrow">›</span>
-      </div>
-
-      <!-- User-created groups -->
-      ${GC.groups.length === 0 ? '' : GC.groups.map(g => `
-        <div class="gc-channel-row" data-gcid="${g.id}">
-          <span class="gc-channel-icon" style="font-size:1rem;background:none;border:none">#</span>
-          <div class="gc-channel-info">
-            <span class="gc-channel-name">${g.name}</span>
-            <span class="gc-channel-sub">${g.members.length} member${g.members.length !== 1 ? 's' : ''}</span>
-          </div>
-          <button class="gc-delete-btn" data-gcid="${g.id}" title="Delete group">🗑</button>
-        </div>
-      `).join('')}
-    </div>
-
-    <div class="gc-create-section">
-      <div class="section-header" style="margin-top:12px">CREATE GROUP</div>
-      <div class="gc-create-row">
-        <input class="dm-input" id="gc-new-name" type="text" placeholder="Group name..." maxlength="30" style="flex:1">
-      </div>
-      <div id="gc-friend-picker" class="gc-friend-picker">
-        ${(state.friends || []).length === 0
-        ? '<p style="font-size:0.72rem;color:#4a3a20;padding:4px 2px;font-style:italic">No friends yet — add some first.</p>'
-        : (state.friends || []).map(f => `
-          <label class="gc-friend-check">
-            <input type="checkbox" value="${f.username}">
-            <span class="gc-cb">✓</span>
-            <span class="friend-avatar ${f.online ? 'online' : ''}" style="width:26px;height:26px;font-size:0.7rem;flex-shrink:0">${f.username[0].toUpperCase()}</span>
-            <span>${f.username}</span>
-          </label>
-        `).join('')
-      }
-      </div>
-      <button class="action-btn play-btn" id="gc-create-btn" style="width:100%;height:34px;font-size:0.72rem;margin-top:10px">CREATE GROUP</button>
-    </div>
-  `;
-
-  // Hub Chat click
-  el.querySelector('#gc-open-hub').addEventListener('click', () => openGCRoom(el, 'hub', 'Hub Chat'));
-
-  // Group channel clicks
-  el.querySelectorAll('.gc-channel-row[data-gcid]').forEach(row => {
-    row.addEventListener('click', e => {
-      if (e.target.closest('.gc-delete-btn')) return;
-      const id   = parseInt(row.dataset.gcid);
-      const grp  = GC.groups.find(g => g.id === id);
-      if (grp) openGCRoom(el, id, grp.name);
-    });
-  });
-
-  // Delete group buttons
-  el.querySelectorAll('.gc-delete-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const id = parseInt(btn.dataset.gcid);
-      GC.groups = GC.groups.filter(g => g.id !== id);
-      renderGroupChat(el);
-    });
-  });
-
-  // Create group
-  el.querySelector('#gc-create-btn').addEventListener('click', () => {
-    const name    = el.querySelector('#gc-new-name').value.trim();
-    const checked = [...el.querySelectorAll('#gc-friend-picker input:checked')].map(i => i.value);
-    if (!name) { showToast('Enter a group name.', 'error'); return; }
-    const grp = { id: GC.nextId++, name, members: checked, msgs: [
-      { sender: 'System', content: `Group "${name}" created.`, ts: 'just now', isSystem: true }
-    ]};
-    GC.groups.push(grp);
-    renderGroupChat(el);
-    // Auto-open the new group
-    openGCRoom(el, grp.id, grp.name);
-  });
+  // Group chat as a feature was stripped pre-launch — the only working room
+  // here is global Hub Chat, so we skip the channel-list step and open it
+  // directly. Tab still exists (renamed "HUB") so users have a single click
+  // path to the global feed.
+  return openGCRoom(el, 'hub', 'Hub Chat');
 }
+
 
 async function openGCRoom(el, roomId, roomName) {
   const myUsername = state.user?.username || '';
@@ -3386,8 +3487,9 @@ async function openGCRoom(el, roomId, roomName) {
   el.innerHTML = `
     <div class="dm-wrap">
       <div class="dm-header" style="padding:10px 14px">
-        <button class="dm-back-btn" id="gc-back">← Back</button>
         <span class="dm-title">${roomId === 'hub' ? '🌐' : '#'} ${roomName}</span>
+        <span class="dm-sub" style="margin-left:8px;color:#6a5a3a;font-size:0.74rem">Global launcher chat</span>
+        <button class="chat-popout-btn" id="gc-popout">⧉</button>
       </div>
       <div class="dm-messages" id="gc-room-msgs"><p class="loading-msg">Loading...</p></div>
       <div class="dm-input-row" style="padding:10px 14px">
@@ -3403,12 +3505,16 @@ async function openGCRoom(el, roomId, roomName) {
 
   function appendMsg(m) {
     const isOwn = m.username === myUsername;
-    const ts = m.created_at ? m.created_at.slice(11, 16) : '';
+    // Hub chat returns the body in `message`; DM endpoints return `content`.
+    // Accept either so this same renderer works for both.
+    const body = m.content || m.message || '';
+    const tsRaw = m.created_at || m.sent_at || '';
+    const ts = tsRaw ? String(tsRaw).slice(11, 16) : '';
     const div = document.createElement('div');
     div.className = `dm-msg ${isOwn ? 'own' : 'other'}`;
     div.innerHTML = !isOwn
-      ? `<span class="dm-sender">${escHtml(m.username)}</span><div class="dm-bubble">${escHtml(m.content)}</div><span class="dm-ts">${ts}</span>`
-      : `<div class="dm-bubble">${escHtml(m.content)}</div><span class="dm-ts">${ts}</span>`;
+      ? `<span class="dm-sender">${escHtml(m.username)}</span><div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`
+      : `<div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`;
     msgEl.appendChild(div);
   }
 
@@ -3429,21 +3535,33 @@ async function openGCRoom(el, roomId, roomName) {
   }
   poll();
 
-  el.querySelector('#gc-back').addEventListener('click', () => {
-    clearTimeout(pollTimer);
-    el.style.overflow = '';
-    el.style.padding  = '';
-    renderGroupChat(el);
-  });
-
   async function doSend() {
     const content = input.value.trim();
     if (!content) return;
     sendBtn.disabled = true;
     input.value = '';
+
+    // Optimistic render so it appears instantly. Uses the live username
+    // so my own bubble shows on the right immediately.
+    if (msgEl.querySelector('.empty-msg')) msgEl.innerHTML = '';
+    appendMsg({
+      username: myUsername,
+      message:  content,
+      created_at: new Date().toISOString(),
+      _optimistic: true,
+    });
+    msgEl.scrollTop = msgEl.scrollHeight;
+
     try {
       await window.hub.post('/api/chat/hub', { message: content });
-    } catch {}
+      // Force-poll right away so the canonical server message arrives
+      // before the next 3s tick. The optimistic bubble renders pending,
+      // the real one gets dropped into place when the poll returns.
+      clearTimeout(pollTimer);
+      poll();
+    } catch (e) {
+      console.error('hub send failed:', e);
+    }
     sendBtn.disabled = false;
     input.focus();
   }
@@ -3451,6 +3569,11 @@ async function openGCRoom(el, roomId, roomName) {
   sendBtn.addEventListener('click', doSend);
   input.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });
   input.focus();
+
+  // Pop-out button — spawns a floating always-on-top chat window
+  el.querySelector('#gc-popout')?.addEventListener('click', () => {
+    if (window.hub?.openChatPopout) window.hub.openChatPopout('hub');
+  });
 }
 
 function buildLeaderboardHTML(data) {
@@ -3507,14 +3630,20 @@ function showServerDetail(server) {
   overlay.innerHTML = `
     <div class="sd-modal" onclick="event.stopPropagation()">
 
-      <!-- BANNER -->
-      <div class="sd-banner" style="background:${bannerColor(server.name)}">
-        ${server.bannerUrl
-          ? `<img src="${server.bannerUrl}" alt="${server.name}" onerror="this.style.display='none'">`
-          : ''}
-        <div class="sd-banner-gradient"></div>
-        <button class="sd-close" id="sd-close-btn">✕</button>
-      </div>
+      <!-- BANNER — prefer the card banner (always present + curated), fall
+           back to the wider bannerUrl only if no card banner exists. -->
+      ${(() => {
+        const heroImg = server.cardBannerUrl || server.bannerUrl || '';
+        return `
+        <div class="sd-banner" style="background:${bannerColor(server.name)}">
+          ${heroImg
+            ? `<img class="sd-banner-blur" src="${escHtml(heroImg)}" alt="" aria-hidden="true" onerror="this.style.display='none'">
+               <img class="sd-banner-img"  src="${escHtml(heroImg)}" alt="${escHtml(server.name)}" onerror="this.style.display='none'">`
+            : ''}
+          <div class="sd-banner-gradient"></div>
+          <button class="sd-close" id="sd-close-btn">✕</button>
+        </div>`;
+      })()}
 
       <!-- HEADER ROW -->
       <div class="sd-header">
@@ -4628,31 +4757,74 @@ function checkServerUpdates(servers) {
 
 // Polls every 30s for new messages and badges the chat tab if any arrive.
 
+// Two-timer polling: the slow tick (8s) handles the global CHAT badge so we
+// notice unread DMs even when the panel is closed; the fast tick (1.5s) only
+// runs while the CHAT panel is open and refreshes the visible surface (list
+// or open DM) so new messages appear effectively instantly.
 function startMessagePolling() {
-  setInterval(async () => {
-    // Skip if not logged in
+  let lastBadgedTotal = 0;
+
+  async function tick() {
     if (!state.user?.username) return;
     try {
       const data = await api.getConversations().catch(() => null);
-      if (!data?.conversations?.length) return;
-      let newCount = 0;
-      for (const c of data.conversations) {
+      const convos = data?.conversations || [];
+      const activePanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
+      const onChat = activePanel === 'chat';
+
+      // Badge math (always)
+      let total = 0;
+      for (const c of convos) {
         const username = c.username || c.with_user || c.other_user;
         if (!username) continue;
-        // `last_message` from the conversations endpoint is whichever message
-        // is newest — could be ours or theirs. We CANNOT assume it's incoming,
-        // so never merge it into DM_STORE (that was the "hey copied from me to
-        // them" bug). Only badge based on the server's `unread` count, which
-        // is specifically messages where receiver=me AND is_read=0.
         const unread = parseInt(c.unread || '0', 10) || 0;
         if (unread <= 0) continue;
-        const activePanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
-        if (activePanel === 'chat' && state.activeDM === username) continue;
-        newCount += unread;
+        if (onChat && state.activeDM === username) continue;
+        total += unread;
       }
-      if (newCount > 0) addUnread('chat', newCount);
+      const delta = total - lastBadgedTotal;
+      if (delta > 0) addUnread('chat', delta);
+      lastBadgedTotal = total;
+
+      // Live refresh while the chat panel is open — fast tick only.
+      if (!onChat) return;
+      const body = document.getElementById('slide-panel-body');
+      if (!body) return;
+
+      if (state.activeDM) {
+        const fresh = await api.getMessages(state.activeDM).catch(() => null);
+        if (!fresh?.messages) return;
+        DM_STORE[state.activeDM] = fresh.messages;
+        dmStoreSave();
+        const msgEl = body.querySelector('#dm-messages');
+        if (!msgEl) return;
+        // Only re-render if message count or last id changed (avoids
+        // pointless DOM churn / scroll glitches).
+        if (msgEl.dataset.lastCount === String(fresh.messages.length)) return;
+        msgEl.dataset.lastCount = String(fresh.messages.length);
+        const wasBottom = msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 60;
+        msgEl.innerHTML = fresh.messages.map(m => `
+          <div class="dm-msg ${m.sender === state.user.username ? 'own' : 'other'}">
+            ${m.sender !== state.user.username ? `<span class="dm-sender">${escHtml(m.sender)}</span>` : ''}
+            <div class="dm-bubble">${escHtml(m.content || m.message || '')}</div>
+            <span class="dm-ts">${escHtml(String(m.sent_at || m.created_at || '').slice(11,16))}</span>
+          </div>
+        `).join('');
+        if (wasBottom) msgEl.scrollTop = msgEl.scrollHeight;
+      } else if (body.querySelector('.convo-row') || body.querySelector('.empty-msg')) {
+        renderConversationList(body, convos);
+      }
     } catch {}
-  }, 30_000);
+  }
+
+  // Slow tick — keeps the badge fresh when CHAT isn't open
+  setInterval(tick, 8_000);
+  // Fast tick — only does work when CHAT is open (the early return above
+  // makes this cheap when it's not)
+  setInterval(() => {
+    if (document.querySelector('.rs-tab.active')?.dataset?.panel !== 'chat') return;
+    tick();
+  }, 1_500);
 }
 
 let _heartbeatInterval = null;
@@ -4726,13 +4898,10 @@ let _devIsStaff   = false;
 
 async function openDevPortal(startSection = 'my-servers') {
   if (_devPortalEl) return;
-  // TODO: Before launch, remove the `|| true` so only real staff see staff sections
-  try {
-    const check = await window.hub.get('/api/dev/check');
-    _devIsStaff = !!(check?.isStaff ?? state.user?.isStaff);
-  } catch {
-    _devIsStaff = !!state.user?.isStaff;
-  }
+  // Trust the normalized state.user.isStaff that we set on auto-login. The
+  // old /api/dev/check round-trip was unreliable (no longer exists) and
+  // could mask staff users when it 404'd.
+  _devIsStaff = !!state.user?.isStaff;
 
   const overlay = document.createElement('div');
   overlay.id        = 'dev-portal-overlay';
@@ -4776,6 +4945,7 @@ function buildDevPortalShell(isStaff) {
       ${isStaff ? `
       <div class="dp-nav-label" style="margin-top:16px">STAFF</div>
       <div class="dp-nav-item" data-section="pending">Pending Submissions</div>
+      <div class="dp-nav-item" data-section="server-requests">Server Requests</div>
       <div class="dp-nav-item" data-section="all-servers">All Servers</div>
       <div class="dp-nav-item" data-section="announcements">Post Announcement</div>
       ` : ''}
@@ -4835,6 +5005,9 @@ async function devPortalLoadSection(section) {
       }
       case 'announcements':
         renderDevAnnouncements(el);
+        break;
+      case 'server-requests':
+        await renderDevServerRequests(el);
         break;
     }
   } catch (e) {
@@ -4947,6 +5120,115 @@ function renderDevPending(el, servers) {
     });
   });
   el.appendChild(list);
+}
+
+// Staff-only: list every player-submitted server request, with filter chips
+// (Open / Contacted / Done / Rejected / All) and quick-action buttons to
+// move a row through the pipeline. Each row shows the requester, the target
+// server, links, free-text reason, and an editable staff note.
+async function renderDevServerRequests(el) {
+  el.innerHTML = `
+    <div class="dp-section-hdr">Server Requests</div>
+    <div class="srq-tabs" id="srq-tabs">
+      <button class="srq-tab active" data-status="">All</button>
+      <button class="srq-tab" data-status="open">Open</button>
+      <button class="srq-tab" data-status="contacted">Contacted</button>
+      <button class="srq-tab" data-status="done">Done</button>
+      <button class="srq-tab" data-status="rejected">Rejected</button>
+    </div>
+    <div id="srq-list"><p class="loading-msg">Loading…</p></div>
+  `;
+
+  const listEl = el.querySelector('#srq-list');
+
+  async function load(status) {
+    listEl.innerHTML = '<p class="loading-msg">Loading…</p>';
+    try {
+      const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+      const d = await window.hub.get('/api/server_requests/list' + qs);
+      const rows = d.requests || [];
+      const counts = d.counts || {};
+
+      // Update tab counts
+      el.querySelectorAll('.srq-tab').forEach(t => {
+        const s = t.dataset.status;
+        const baseLabel = s === '' ? 'All'
+          : s.charAt(0).toUpperCase() + s.slice(1);
+        const n = s === '' ? Object.values(counts).reduce((a, b) => a + b, 0) : (counts[s] || 0);
+        t.textContent = `${baseLabel} (${n})`;
+      });
+
+      if (!rows.length) {
+        listEl.innerHTML = `<p class="empty-msg" style="padding:30px 0;text-align:center">No requests yet.</p>`;
+        return;
+      }
+
+      listEl.innerHTML = rows.map(r => {
+        const created = new Date(r.created_at.replace(' ', 'T') + 'Z').toLocaleString();
+        const statusClass = `srq-status srq-status-${r.status}`;
+        return `
+          <div class="srq-row" data-id="${r.id}">
+            <div class="srq-row-hdr">
+              <span class="srq-name">${escHtml(r.server_name)}</span>
+              <span class="${statusClass}">${escHtml(r.status)}</span>
+              <span class="srq-meta">requested by <b>${escHtml(r.requester)}</b> · ${escHtml(created)}</span>
+            </div>
+            ${(r.website_url || r.discord_url) ? `
+              <div class="srq-links">
+                ${r.website_url ? `<a href="${escHtml(r.website_url)}" target="_blank" rel="noopener noreferrer">🌐 ${escHtml(r.website_url)}</a>` : ''}
+                ${r.discord_url ? `<a href="${escHtml(r.discord_url)}" target="_blank" rel="noopener noreferrer">💬 ${escHtml(r.discord_url)}</a>` : ''}
+              </div>` : ''}
+            ${r.reason ? `<div class="srq-reason">${escHtml(r.reason)}</div>` : ''}
+            <div class="srq-note-row">
+              <textarea class="srq-note" data-note-id="${r.id}" placeholder="Staff note (optional, visible to staff only)" maxlength="1000">${escHtml(r.staff_note || '')}</textarea>
+            </div>
+            <div class="srq-actions">
+              <button class="srq-btn" data-action="open"      data-id="${r.id}">Open</button>
+              <button class="srq-btn" data-action="contacted" data-id="${r.id}">Contacted</button>
+              <button class="srq-btn srq-btn-ok"   data-action="done"     data-id="${r.id}">Done</button>
+              <button class="srq-btn srq-btn-warn" data-action="rejected" data-id="${r.id}">Reject</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      listEl.querySelectorAll('.srq-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const id     = +btn.dataset.id;
+          const status = btn.dataset.action;
+          const noteEl = listEl.querySelector(`.srq-note[data-note-id="${id}"]`);
+          btn.disabled = true;
+          try {
+            const res = await window.hub.post('/api/server_requests/update', {
+              id, status, staff_note: noteEl?.value ?? null,
+            });
+            if (res?.ok) {
+              showToast(`Marked ${status}.`, 'success');
+              load(status === 'open' ? '' : (el.querySelector('.srq-tab.active')?.dataset.status || ''));
+            } else {
+              showToast(res?.error || 'Failed.', 'error');
+              btn.disabled = false;
+            }
+          } catch (e) {
+            showToast(e?.message || 'Network error.', 'error');
+            btn.disabled = false;
+          }
+        });
+      });
+    } catch (e) {
+      listEl.innerHTML = `<p class="empty-msg" style="padding:30px 0;text-align:center;color:#ff7a7a">Failed to load: ${escHtml(e?.message || 'unknown')}</p>`;
+    }
+  }
+
+  el.querySelectorAll('.srq-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      el.querySelectorAll('.srq-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      load(tab.dataset.status);
+    });
+  });
+
+  load('');
 }
 
 async function renderDevAnnouncements(el) {
@@ -5471,7 +5753,7 @@ function buildDevCardPreview(s) {
 function buildDevDetailPreview(s) {
   const name   = s.name || 'Server Name';
   const accent = s.accentColor || s.accent_color || '#c8a840';
-  const banner = s.bannerUrl || s.banner_url || '';
+  const banner = s.cardBannerUrl || s.card_banner_url || s.bannerUrl || s.banner_url || '';
   const icon   = s.iconUrl || s.icon_url || '';
   const tags   = Array.isArray(s.tags) ? s.tags : (s.tags||'').split(',').map(t=>t.trim()).filter(Boolean);
   const desc   = s.description || '';
@@ -5491,7 +5773,9 @@ function buildDevDetailPreview(s) {
   <div style="position:absolute;top:0;left:0;transform-origin:top left;transform:scale(${SCALE});width:${NW}px;pointer-events:none">
     <div style="width:${NW}px;background:linear-gradient(180deg,#1e1a10,#141008);border:1px solid #5a4828;border-radius:6px;overflow:hidden;display:flex;flex-direction:column">
       <div class="sd-banner" style="background:${grad}">
-        ${banner ? `<img src="${escHtml(banner)}" alt="" onerror="this.style.display='none'">` : ''}
+        ${banner ? `
+          <img class="sd-banner-blur" src="${escHtml(banner)}" alt="" aria-hidden="true" onerror="this.style.display='none'">
+          <img class="sd-banner-img"  src="${escHtml(banner)}" alt="" onerror="this.style.display='none'">` : ''}
         <div class="sd-banner-gradient"></div>
       </div>
       <div class="sd-header">
@@ -5621,18 +5905,10 @@ function buildSettingsHTML(s) {
     </div>
     <div class="set-row set-between">
       <div>
-        <div class="set-label">Auto-Update Clients</div>
-        <div class="set-sub">Re-download game clients when a new version is detected</div>
+        <div class="set-label">Auto-Update Launcher</div>
+        <div class="set-sub">Automatically download and install RSPS Hub updates in the background</div>
       </div>
-      ${setToggleHtml('set-autoupdate', s.autoUpdateClients)}
-    </div>
-    <div class="set-row set-col">
-      <label class="set-label" for="set-dl-path">Download Path</label>
-      <div class="set-path-row">
-        <input class="set-input set-path-input" id="set-dl-path" type="text"
-               value="${escHtml(s.downloadPath)}" readonly>
-        <button class="set-browse-btn" id="set-browse">Browse</button>
-      </div>
+      ${setToggleHtml('set-autoupdate', s.autoUpdateLauncher !== false)}
     </div>
   </div>
 
@@ -5673,6 +5949,13 @@ function buildSettingsHTML(s) {
         <div class="set-sub">Approve or reject servers awaiting review</div>
       </div>
       <button class="set-browse-btn" id="set-open-pending">Open</button>
+    </div>
+    <div class="set-row set-between" style="margin-top:4px">
+      <div>
+        <div class="set-label">Server Requests</div>
+        <div class="set-sub">Player-submitted requests for new servers to add</div>
+      </div>
+      <button class="set-browse-btn" id="set-open-requests">Open</button>
     </div>
   </div>` : ''}
 
@@ -5742,22 +6025,20 @@ function bindSettingsEvents(el, initial) {
   el.querySelector('#set-open-devportal')?.addEventListener('click', () => openDevPortal('my-servers'));
 
   // Staff panel shortcuts
-  el.querySelector('#set-open-staff')?.addEventListener('click',   () => openDevPortal('all-servers'));
-  el.querySelector('#set-open-pending')?.addEventListener('click', () => openDevPortal('pending'));
+  el.querySelector('#set-open-staff')?.addEventListener('click',    () => openDevPortal('all-servers'));
+  el.querySelector('#set-open-pending')?.addEventListener('click',  () => openDevPortal('pending'));
+  el.querySelector('#set-open-requests')?.addEventListener('click', () => openDevPortal('server-requests'));
 
   // Launcher toggles
   el.querySelector('#set-minimize')?.addEventListener('change', e =>
     save('minimizeOnLaunch', e.target.checked));
-  el.querySelector('#set-autoupdate')?.addEventListener('change', e =>
-    save('autoUpdateClients', e.target.checked));
-
-  // Download path — folder picker
-  el.querySelector('#set-browse')?.addEventListener('click', async () => {
-    const folder = await window.hub.selectFolder(el.querySelector('#set-dl-path')?.value || undefined);
-    if (folder) {
-      el.querySelector('#set-dl-path').value = folder;
-      save('downloadPath', folder);
-    }
+  el.querySelector('#set-autoupdate')?.addEventListener('change', async e => {
+    const enabled = e.target.checked;
+    // Persist locally so the renderer can show the right toggle state next time
+    save('autoUpdateLauncher', enabled);
+    // Tell the Electron main process to update its electron-updater config
+    // immediately + write the on-disk pref so the next launch honours it.
+    try { await window.hub.setAutoUpdateLauncher(enabled); } catch {}
   });
 
   // Notification toggles
