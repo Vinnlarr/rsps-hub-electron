@@ -108,12 +108,27 @@ function startJavaBackend() {
   };
   if (hasBundledJre) childEnv.JAVA_HOME = bundledJreHome;
 
-  // Note: --api-key is kept as a fallback while in-flight Java versions roll out
-  javaProcess = spawn(scriptPath, ['--api-mode', '--port', String(JAVA_PORT)], {
-    env: childEnv,
-    windowsHide: true,
-    shell: process.platform === 'win32'
-  });
+  // Note: --api-key is kept as a fallback while in-flight Java versions roll out.
+  //
+  // IMPORTANT: on Windows we quote scriptPath manually and pass via `shell:
+  // true` as a single command string. Node's child_process doesn't reliably
+  // quote spaces when `shell: true` is set with separate args, which silently
+  // breaks for any user whose Windows username contains a space (e.g.
+  // "C:\Users\John Smith\AppData\..." → cmd parses as `C:\Users\John` →
+  // "is not recognized" error → Java never starts → ECONNREFUSED on /api/auth.
+  if (process.platform === 'win32') {
+    const cmdLine = `"${scriptPath}" --api-mode --port ${JAVA_PORT}`;
+    javaProcess = spawn(cmdLine, [], {
+      env: childEnv,
+      windowsHide: true,
+      shell: true,
+    });
+  } else {
+    javaProcess = spawn(scriptPath, ['--api-mode', '--port', String(JAVA_PORT)], {
+      env: childEnv,
+      windowsHide: true,
+    });
+  }
 
   javaProcess.stdout.on('data', d => console.log('[Java]', d.toString().trim()));
   javaProcess.stderr.on('data', d => console.error('[Java]', d.toString().trim()));
@@ -272,7 +287,17 @@ ipcMain.handle('api-call', async (_, { method, path: apiPath, body }) => {
         return;
       }
       console.error('[api-call] Backend connection error:', err.code, err.message);
-      resolve({ error: 'Connection failed (' + (err.code || err.message) + '). Please restart the launcher.' });
+      // Generic restart advice doesn't help if the cause is AV killing
+      // Java. Give actually-useful next steps.
+      const code = err.code || err.message || 'UNKNOWN';
+      const friendly =
+        'The launcher backend isn\'t responding (' + code + ').\n' +
+        'Try these in order:\n' +
+        '1. Fully close the launcher (both windows), then reopen it.\n' +
+        '2. Check your antivirus / Windows Defender \u2014 it may have blocked Java. ' +
+        'Add an exception for the RSPS Hub install folder.\n' +
+        '3. Reinstall from https://therspshub.com if the issue persists.';
+      resolve({ error: friendly });
     });
     if (body) req.write(JSON.stringify(body));
     req.end();
