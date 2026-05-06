@@ -669,3 +669,486 @@
   .sd-donut { width: 100px; height: 100px; }
   .sd-donut-hole { width: 62px; height: 62px; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   STATS MODAL — Discord-style player profile dashboard.
+   Replaces the slide-panel stats view. Centered, dimmed backdrop.
+   ════════════════════════════════════════════════════════════════════ */
+
+.stats-overlay {
+  position: fixed; inset: 0;
+  z-index: 9000;
+  background: rgba(8,6,4,0.72);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 32px 24px;
+  overflow-y: auto;
+  animation: smFadeIn 0.16s ease;
+}
+@keyframes smFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.stats-modal {
+  position: relative;
+  width: 100%;
+  max-width: 920px;
+  background: linear-gradient(180deg, #1e1a10 0%, #14100a 100%);
+  border: 1px solid #3a2e14;
+  border-radius: 14px;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.85), 0 0 0 1px rgba(200,168,64,0.15);
+  animation: smSlideUp 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+@keyframes smSlideUp {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.stats-close {
+  position: absolute; top: 14px; right: 14px;
+  width: 32px; height: 32px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid #3a2e14;
+  color: #b8a878;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.9rem;
+  transition: all 0.15s;
+  z-index: 5;
+}
+.stats-close:hover {
+  color: #ffd070;
+  border-color: #c8a840;
+  background: rgba(200,168,64,0.08);
+}
+
+.stats-body { padding: 24px 28px; }
+.stats-loading,
+.stats-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #8a7a5a;
+  font-size: 0.95rem;
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.06em;
+}
+.stats-empty { color: #d96b6b; }
+
+/* HERO */
+.sm-hero {
+  display: flex; align-items: center; gap: 22px;
+  /* Right gutter so the rightmost stat card (Achievements) doesn't sit
+     under the close button that lives at top: 14px; right: 14px. */
+  padding: 0 56px 22px 0;
+  border-bottom: 1px solid #3a2e14;
+  margin-bottom: 22px;
+}
+.sm-hero-avatar {
+  width: 88px; height: 88px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffd070, #8a6f20);
+  border: 3px solid #c8a840;
+  box-shadow: 0 4px 18px rgba(200,168,64,0.35);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Cinzel', serif;
+  font-size: 2.4rem; font-weight: 900; color: #1a1408;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.sm-hero-avatar img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.sm-hero-info { flex: 1; min-width: 0; }
+.sm-hero-name {
+  font-family: 'Cinzel', serif;
+  font-size: 1.7rem; font-weight: 800;
+  color: #ffd070;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  margin-bottom: 2px;
+}
+.sm-hero-title {
+  display: inline-block;
+  background: linear-gradient(135deg, rgba(200,168,64,0.18), rgba(200,168,64,0.04));
+  border: 1px solid rgba(200,168,64,0.4);
+  color: #c8a840;
+  font-family: 'Cinzel', serif;
+  font-size: 0.78rem; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 4px;
+  margin-top: 6px;
+}
+
+/* Profile action buttons (Send Message / Add Friend) — only render on
+   someone else's profile. Match the launcher's gold-on-brown palette. */
+.sm-hero-actions {
+  display: flex; gap: 8px;
+  margin-top: 10px;
+}
+.sm-action-btn {
+  padding: 7px 14px;
+  background: linear-gradient(180deg, #2a2418 0%, #1a1410 100%);
+  border: 1px solid #4a3a18;
+  color: #c8a840;
+  border-radius: 5px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: border-color 0.15s, background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.sm-action-btn:hover {
+  border-color: #c8a840;
+  color: #ffd070;
+  background: linear-gradient(180deg, #3a3020 0%, #2a2418 100%);
+}
+.sm-action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.sm-action-btn.primary {
+  background: linear-gradient(180deg, #5a3e10 0%, #3a2808 50%, #281c04 100%);
+  border-color: #c8a840;
+  color: #ffd070;
+  text-shadow: 0 0 8px rgba(200,168,64,0.5);
+  box-shadow: 0 2px 8px rgba(200,168,64,0.18), inset 0 1px 0 rgba(240,192,96,0.15);
+}
+.sm-action-btn.primary:hover {
+  background: linear-gradient(180deg, #7a5418 0%, #5a3a10 50%, #3a2608 100%);
+  border-color: #f0d060;
+  box-shadow: 0 2px 12px rgba(200,168,64,0.3), inset 0 1px 0 rgba(240,192,96,0.2);
+}
+.sm-hero-stats { display: flex; gap: 12px; flex-shrink: 0; }
+.sm-hero-stat {
+  background: #2a2418;
+  border: 1px solid #3a2e14;
+  border-radius: 10px;
+  padding: 14px 18px;
+  text-align: center;
+  min-width: 110px;
+}
+.sm-hero-stat-icon {
+  height: 32px; margin-bottom: 4px;
+  display: flex; align-items: center; justify-content: center;
+}
+.sm-hero-stat-num {
+  font-family: 'Cinzel', serif;
+  font-size: 1.6rem; font-weight: 800;
+  color: #ffd070;
+  line-height: 1; margin-bottom: 2px;
+}
+.sm-hero-stat-lbl {
+  font-size: 0.66rem;
+  color: #b8a878;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* HUB LEVEL ROW */
+.sm-lvl-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  background: #2a2418;
+  border: 1px solid #3a2e14;
+  border-radius: 10px;
+  margin-bottom: 22px;
+}
+.sm-lvl-tag {
+  font-family: 'Cinzel', serif;
+  font-size: 0.74rem; color: #b8a878;
+  letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600;
+}
+.sm-lvl-num {
+  font-family: 'Cinzel', serif;
+  font-size: 1.4rem; font-weight: 800; color: #ffd070;
+}
+.sm-lvl-meta {
+  margin-left: auto;
+  font-family: 'Cinzel', serif;
+  font-size: 0.74rem; color: #6a5a3a;
+  letter-spacing: 0.06em;
+}
+.sm-lvl-bar {
+  flex: 1;
+  height: 8px;
+  background: #14100a;
+  border: 1px solid #2a2014;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.sm-lvl-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #8a6f20, #c8a840 60%, #ffd070);
+  box-shadow: 0 0 10px rgba(200,168,64,0.35);
+  transition: width 0.4s ease;
+}
+
+/* CARD GRID — 3-column grid for the small cards (Top Servers / Achievements / Equipped) */
+.sm-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.sm-card {
+  background: #2a2418;
+  border: 1px solid #3a2e14;
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  transition: border-color 0.15s;
+}
+.sm-card:hover { border-color: #6b5228; }
+.sm-card-sub {
+  font-size: 0.74rem;
+  color: #6a5a3a;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  margin-left: auto;
+  font-family: 'Inter', sans-serif;
+}
+
+/* Year-in-Play heatmap */
+.sm-heatmap-wrap {
+  overflow-x: auto;
+  padding: 4px 0 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(200,168,64,0.25) transparent;
+}
+.sm-heatmap-wrap::-webkit-scrollbar { height: 6px; }
+.sm-heatmap-wrap::-webkit-scrollbar-thumb { background: rgba(200,168,64,0.25); border-radius: 3px; }
+
+.sm-heatmap {
+  display: grid;
+  grid-template-rows: repeat(7, 12px);
+  grid-auto-flow: column;
+  grid-auto-columns: 12px;
+  gap: 3px;
+  width: max-content;
+}
+.sm-hm-cell {
+  width: 12px; height: 12px;
+  border-radius: 2px;
+  background: #1a1408;
+  border: 1px solid #14100a;
+}
+.sm-hm-cell.l1 { background: rgba(200,168,64,0.22); }
+.sm-hm-cell.l2 { background: rgba(200,168,64,0.45); }
+.sm-hm-cell.l3 { background: rgba(200,168,64,0.72); }
+.sm-hm-cell.l4 { background: #ffd070; box-shadow: 0 0 4px rgba(255,208,112,0.5); }
+.sm-hm-legend {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 10px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  color: #6a5a3a;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.sm-hm-legend-cells { display: flex; gap: 3px; }
+
+/* Milestones tier ladder */
+.sm-ms-row {
+  padding: 12px 0;
+  border-bottom: 1px solid #2a2014;
+}
+.sm-ms-row:last-child { border-bottom: none; }
+.sm-ms-row-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+}
+.sm-ms-name { font-family: 'Cinzel', serif; font-weight: 700; font-size: 1rem; color: #f5ede0; }
+.sm-ms-current {
+  background: rgba(200,168,64,0.1);
+  border: 1px solid rgba(200,168,64,0.35);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #c8a840;
+  letter-spacing: 0.08em;
+}
+.sm-ms-next {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: #6a5a3a;
+}
+.sm-ms-ladder {
+  display: flex; gap: 6px;
+  align-items: stretch;
+}
+.sm-ms-tier {
+  flex: 1;
+  text-align: center;
+  padding: 6px 4px;
+  border-radius: 4px;
+  background: rgba(20,16,8,0.5);
+  border: 1px solid #2a2014;
+  font-family: 'Cinzel', serif;
+  font-size: 0.62rem;
+  color: #6a5a3a;
+  letter-spacing: 0.08em;
+  transition: all 0.15s;
+}
+.sm-ms-tier.reached {
+  background: rgba(200,168,64,0.08);
+  border-color: rgba(200,168,64,0.4);
+  color: #d4c090;
+}
+.sm-ms-tier.current {
+  background: linear-gradient(180deg, rgba(200,168,64,0.22), rgba(200,168,64,0.06));
+  border-color: #c8a840;
+  color: #ffd070;
+  box-shadow: 0 0 12px rgba(200,168,64,0.25);
+}
+.sm-ms-tier-name { display: block; font-weight: 800; }
+.sm-ms-tier-lvl { display: block; font-size: 0.58rem; color: inherit; opacity: 0.7; margin-top: 1px; }
+.sm-card-hdr {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.78rem; font-weight: 700;
+  color: #c8a840;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #3a2e14;
+}
+.sm-card-icon { color: #ffd070; font-size: 0.95rem; display: inline-flex; align-items: center; }
+
+/* Top servers list */
+.sm-ts-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #2a2014;
+}
+.sm-ts-row:last-child { border-bottom: none; }
+.sm-ts-rank {
+  width: 22px; text-align: center;
+  color: #6a5a3a;
+  font-family: 'Cinzel', serif;
+  font-size: 0.84rem; font-weight: 700;
+}
+.sm-ts-row.top1 .sm-ts-rank { color: #ffd700; }
+.sm-ts-row.top2 .sm-ts-rank { color: #c0c0c0; }
+.sm-ts-row.top3 .sm-ts-rank { color: #cd7f32; }
+.sm-ts-name {
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+  color: #f5ede0;
+  font-size: 0.92rem;
+  flex: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sm-ts-lvl {
+  background: rgba(200,168,64,0.1);
+  border: 1px solid rgba(200,168,64,0.35);
+  color: #c8a840;
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem; font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.06em;
+}
+
+/* Recent achievements */
+.sm-ach-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid #2a2014;
+}
+.sm-ach-row:last-child { border-bottom: none; }
+.sm-ach-icon {
+  width: 32px; height: 32px;
+  background: rgba(200,168,64,0.1);
+  border: 1px solid rgba(200,168,64,0.3);
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.sm-ach-info { flex: 1; min-width: 0; }
+.sm-ach-name {
+  font-family: 'Cinzel', serif;
+  font-size: 0.86rem; font-weight: 700;
+  color: #f5ede0;
+}
+.sm-ach-meta { font-size: 0.7rem; color: #6a5a3a; margin-top: 2px; }
+.sm-ach-coin {
+  color: #ffd070;
+  font-weight: 700;
+  font-family: 'Cinzel', serif;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+/* Equipped */
+.sm-eq-row {
+  padding: 8px 0;
+  border-bottom: 1px solid #2a2014;
+}
+.sm-eq-row:last-child { border-bottom: none; }
+.sm-eq-lbl {
+  font-size: 0.66rem; color: #6a5a3a;
+  letter-spacing: 0.14em; text-transform: uppercase; font-weight: 600;
+  margin-bottom: 3px;
+}
+.sm-eq-val {
+  font-family: 'Cinzel', serif;
+  font-weight: 700; color: #d4c090;
+  font-size: 0.88rem;
+}
+.sm-eq-btn {
+  margin-top: 12px;
+  width: 100%;
+  padding: 8px;
+  background: linear-gradient(180deg, #5a3e10, #2a1c08);
+  border: 1px solid #c8a840;
+  color: #ffd070;
+  border-radius: 6px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-shadow: 0 0 8px rgba(200,168,64,0.4);
+}
+.sm-eq-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Coin activity (wide card) */
+.sm-tx {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #2a2014;
+}
+.sm-tx:last-child { border-bottom: none; }
+.sm-tx-icon { width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.sm-tx-info { flex: 1; min-width: 0; }
+.sm-tx-source { color: #f5ede0; font-size: 0.92rem; font-weight: 600; }
+.sm-tx-when { font-size: 0.72rem; color: #6a5a3a; margin-top: 1px; }
+.sm-tx-amt {
+  font-family: 'Cinzel', serif;
+  font-weight: 800; font-size: 0.95rem;
+  flex-shrink: 0;
+}
+.sm-tx-amt.positive { color: #6ec76e; }
+.sm-tx-amt.negative { color: #d96b6b; }
+
+.sm-empty-mini {
+  text-align: center;
+  color: #8a7a5a;
+  padding: 20px 8px;
+  font-size: 0.86rem;
+  font-style: italic;
+}
+
+@media (max-width: 760px) {
+  .sm-grid { grid-template-columns: 1fr; }
+  .sm-card-wide { grid-column: span 1; }
+  .sm-hero { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .sm-hero-stats { width: 100%; }
+}

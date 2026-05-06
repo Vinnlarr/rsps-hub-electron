@@ -124,9 +124,15 @@
   }
 
   // ── Send ────────────────────────────────────────────────
+  // Guard against the "message sent twice" bug — fast Enter presses, or an
+  // Enter keydown bubbling through the same tick that fires the SEND click,
+  // could otherwise queue two POSTs before the first finished.
+  let sending = false;
   async function doSend() {
+    if (sending) return;
     const content = inputEl.value.trim();
     if (!content) return;
+    sending = true;
     sendBtn.disabled = true;
     inputEl.value = '';
     try {
@@ -141,12 +147,15 @@
       console.error('[chat-popout] send failed:', e);
       inputEl.value = content; // restore so user can retry
     }
+    sending = false;
     sendBtn.disabled = false;
     inputEl.focus();
   }
 
   sendBtn.addEventListener('click', doSend);
-  inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });
+  inputEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); doSend(); }
+  });
   inputEl.focus();
 
   // ── Pin (always-on-top toggle) ──────────────────────────

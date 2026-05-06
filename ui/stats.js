@@ -678,6 +678,495 @@
 
   window.renderStats = render;
 
+  // ──────────────────────────────────────────────────────────────
+  // Hub Coin sigil — reusable inline SVG. Pass `size` in pixels.
+  // Used in the stats modal hero + coin-activity rows + (eventually)
+  // the nav balance widget.
+  // ──────────────────────────────────────────────────────────────
+  function coinSvg(size = 28, idSuffix = '') {
+    const sfx = idSuffix || ('c' + Math.random().toString(36).slice(2, 7));
+    return `
+      <svg viewBox="0 0 64 64" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" aria-label="Hub Coin">
+        <defs>
+          <radialGradient id="cf-${sfx}" cx="35%" cy="30%" r="80%">
+            <stop offset="0%"  stop-color="#ffe296"/>
+            <stop offset="35%" stop-color="#f4d77c"/>
+            <stop offset="70%" stop-color="#c8a840"/>
+            <stop offset="100%" stop-color="#7a5818"/>
+          </radialGradient>
+          <linearGradient id="cr-${sfx}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"  stop-color="#fff0b0"/>
+            <stop offset="50%" stop-color="#c8a840"/>
+            <stop offset="100%" stop-color="#5a3e10"/>
+          </linearGradient>
+        </defs>
+        <circle cx="32" cy="32" r="30" fill="url(#cr-${sfx})"/>
+        <circle cx="32" cy="32" r="25" fill="url(#cf-${sfx})" stroke="#5a3e10" stroke-width="0.8"/>
+        ${size >= 24 ? `
+        <g stroke="#7a5818" stroke-width="0.8" opacity="0.5">
+          <line x1="32" y1="3"  x2="32" y2="6"/>
+          <line x1="32" y1="58" x2="32" y2="61"/>
+          <line x1="3"  y1="32" x2="6"  y2="32"/>
+          <line x1="58" y1="32" x2="61" y2="32"/>
+          <line x1="11.5" y1="11.5" x2="13.5" y2="13.5"/>
+          <line x1="50.5" y1="50.5" x2="52.5" y2="52.5"/>
+          <line x1="50.5" y1="11.5" x2="52.5" y2="13.5"/>
+          <line x1="11.5" y1="50.5" x2="13.5" y2="52.5"/>
+        </g>` : ''}
+        <text x="32" y="42" text-anchor="middle" font-family="Cinzel, serif" font-weight="900" font-size="26" fill="#3a2410">H</text>
+        ${size >= 24 ? `<path d="M14 18 Q22 12 30 14" stroke="#fff5d0" stroke-width="1.5" fill="none" opacity="0.55" stroke-linecap="round"/>` : ''}
+      </svg>`;
+  }
+  window.coinSvg = coinSvg;
+
+  // ──────────────────────────────────────────────────────────────
+  // Modal-specific helpers — wider 53-week heatmap + milestone tier
+  // ladder. The existing `buildHeatmap` is sized for the old 26-week
+  // side panel; these are bigger and use the sm- CSS namespace.
+  // ──────────────────────────────────────────────────────────────
+  function buildModalHeatmap(heatmap) {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const days = 365;
+    const start = new Date(today); start.setDate(start.getDate() - (days - 1));
+
+    // quartile buckets from non-zero days
+    const vals = Object.values(heatmap || {}).map(v => +v).filter(v => v > 0).sort((a,b) => a-b);
+    const q = (p) => vals.length ? vals[Math.min(vals.length-1, Math.floor(vals.length*p))] : 0;
+    const t = [q(0.25), q(0.5), q(0.75), q(0.92)];
+
+    const firstDow = start.getDay();
+    let html = '';
+    // Pad blank cells for days-of-week before the first real date
+    for (let i = 0; i < firstDow; i++) {
+      html += `<div class="sm-hm-cell" style="opacity:0"></div>`;
+    }
+    const cur = new Date(start);
+    for (let i = 0; i < days; i++) {
+      const iso = cur.toISOString().slice(0,10);
+      const mins = +(heatmap || {})[iso] || 0;
+      let lvl = 0;
+      if (mins > 0) {
+        if      (mins <= t[0]) lvl = 1;
+        else if (mins <= t[1]) lvl = 2;
+        else if (mins <= t[2]) lvl = 3;
+        else                   lvl = 4;
+      }
+      const tip = mins ? `${fmtHours(mins)} on ${fmtDate(iso)}` : `No playtime on ${fmtDate(iso)}`;
+      html += `<div class="sm-hm-cell${lvl ? ' l' + lvl : ''}" data-tip="${esc(tip)}"></div>`;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return html;
+  }
+
+  function buildModalMilestones(topServers) {
+    if (!topServers || !topServers.length) {
+      return `<div class="sm-empty-mini">No server playtime yet. Install one from the Store and start climbing.</div>`;
+    }
+    // Hard cap at the top 5 servers — this is a consistent rule across
+    // every section (Top Servers + Milestones). Never raise this number
+    // without a UX review; more rows turns this from a glance-able
+    // dashboard into a wall of bars.
+    return topServers.slice(0, 5 /* SERVERS_PER_SECTION */).map(s => {
+      const lvl = s.level || levelFor(s.minutes);
+      const cur = tierFor(lvl);
+      // Find the next tier (if any) for the "X levels to NEXT" hint
+      const idx = TIERS.findIndex(t => t.name === cur.name);
+      const next = idx < TIERS.length - 1 ? TIERS[idx + 1] : null;
+      const toNext = next ? Math.max(0, next.level - lvl) : 0;
+      const ladder = TIERS.map(t => {
+        const cls = lvl >= t.level
+          ? (t.name === cur.name ? 'current' : 'reached')
+          : '';
+        return `
+          <div class="sm-ms-tier ${cls}">
+            <span class="sm-ms-tier-name">${t.name}</span>
+            <span class="sm-ms-tier-lvl">Lv ${t.level}</span>
+          </div>`;
+      }).join('');
+      return `
+        <div class="sm-ms-row">
+          <div class="sm-ms-row-head">
+            <span class="sm-ms-name">${esc(s.server || s.name || '?')}</span>
+            <span class="sm-ms-current">${cur.name}</span>
+            ${next ? `<span class="sm-ms-next">${toNext} level${toNext === 1 ? '' : 's'} to ${next.name}</span>`
+                   : `<span class="sm-ms-next">Maxed out</span>`}
+          </div>
+          <div class="sm-ms-ladder">${ladder}</div>
+        </div>`;
+    }).join('');
+  }
+
+  // Single source of truth for "max servers shown per section" so we never
+  // accidentally render more than 5 servers in Top Servers / Milestones.
+  const SERVERS_PER_SECTION = 5;
+
+  // ──────────────────────────────────────────────────────────────
+  // STATS MODAL — replaces the old slide-panel stats tab AND the
+  // public-profile modal. Wide-format dashboard (Discord/Steam style).
+  // Pass `username` to render someone else's profile (no coin balance,
+  // no coin activity, action buttons in hero).
+  // ──────────────────────────────────────────────────────────────
+  window.openStatsModal = async function openStatsModal(username = null) {
+    // Reuse if already open
+    if (document.getElementById('stats-modal-overlay')) return;
+    const isSelf = !username;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'stats-modal-overlay';
+    overlay.className = 'stats-overlay';
+    overlay.innerHTML = `
+      <div class="stats-modal" role="dialog" aria-modal="true">
+        <button class="stats-close" id="stats-close-btn" aria-label="Close">✕</button>
+        <div class="stats-body" id="stats-modal-body">
+          <div class="stats-loading">Loading your stats…</div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    // 30s ticker that rewrites every Coin-Activity row's relative-time
+    // text. Without this, "just now" stays frozen for the lifetime of the
+    // modal. Cleared when the modal closes.
+    const tsTick = setInterval(() => {
+      overlay.querySelectorAll('[data-tx-ts]').forEach(el => {
+        const iso = el.getAttribute('data-tx-ts');
+        if (!iso) return;
+        try {
+          const d = new Date(String(iso).replace(' ', 'T') + (String(iso).endsWith('Z') ? '' : 'Z'));
+          const diffMs = Date.now() - d.getTime();
+          const m = 60_000, h = 60 * m, day = 24 * h;
+          let txt;
+          if (diffMs < m)            txt = 'just now';   // first 60s only
+          else if (diffMs < h)       txt = Math.floor(diffMs / m) + 'm ago';
+          else if (diffMs < 24 * h)  txt = Math.floor(diffMs / h) + 'h ago';
+          else if (diffMs < 7 * day) txt = Math.floor(diffMs / day) + 'd ago';
+          else txt = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          if (el.textContent !== txt) el.textContent = txt;
+        } catch {}
+      });
+    }, 30_000);
+
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onEsc);
+      clearInterval(tsTick);
+    };
+    const onEsc = e => { if (e.key === 'Escape') close(); };
+    overlay.querySelector('#stats-close-btn').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', onEsc);
+
+    // Fetch stats data. Self uses /api/stats/me; profile view uses
+    // /api/stats/user/<name> (same endpoint the old renderStats used).
+    let data = null;
+    const endpoint = isSelf ? '/api/stats/me' : '/api/stats/user/' + encodeURIComponent(username);
+    try {
+      data = await window.hub.get(endpoint);
+    } catch (e) { console.error('[stats-modal] fetch failed', e); }
+
+    // For own profile: sync achievements (server awards coins for any
+    // newly-unlocked) AND fetch coin balance + transactions in parallel.
+    let coinsPayload = null;
+    let syncResult   = null;
+    if (isSelf) {
+      try {
+        const [c, s] = await Promise.all([
+          window.hub.get('/api/coins/me').catch(() => null),
+          window.hub.post('/api/achievements/sync', {}).catch(() => null),
+        ]);
+        coinsPayload = c;
+        syncResult   = s;
+        // If new achievements unlocked, fetch coins again to get the
+        // post-award balance + transactions
+        if (syncResult?.newly_unlocked?.length) {
+          coinsPayload = await window.hub.get('/api/coins/me').catch(() => coinsPayload);
+        }
+      } catch (e) { console.error('[stats-modal] coins/sync failed', e); }
+    }
+
+    if (!data || data.error || !('totalMinutes' in data)) {
+      overlay.querySelector('#stats-modal-body').innerHTML = `
+        <div class="stats-empty">Could not load stats. Try restarting the launcher.</div>`;
+      return;
+    }
+
+    // Recompute skill levels with our OSRS curve (same logic as renderStats)
+    (data.topServers || []).forEach(s => { s.level = levelFor(s.minutes); });
+
+    // Build the achievements summary (uses computeHubBadges from earlier in this file)
+    const badges    = computeHubBadges(data);
+    const earnedAch = badges.filter(b => b.unlocked).length;
+    const totalAch  = badges.length;
+    const recentAch = badges.filter(b => b.unlocked).slice(-3).reverse();
+
+    // Hub Level — clamp at 99 per server, sum, hero displays current total
+    const hubLevel = (data.topServers || []).reduce((s, srv) => s + (srv.level || 0), 0);
+
+    // Coin balance — comes from /api/coins/me (Phase 1 backend).
+    // Falls back to 0 on profile view (we don't expose other users' coins).
+    const coins = isSelf
+      ? ((coinsPayload && typeof coinsPayload.balance === 'number') ? coinsPayload.balance : 0)
+      : 0;
+
+    // Hours played
+    const hoursPlayed = Math.floor((data.totalMinutes || 0) / 60);
+
+    const displayName = isSelf
+      ? (window.state?.user?.username || data.username || 'Player')
+      : (username || data.username || 'Player');
+    const initial = displayName[0].toUpperCase();
+    // Hero avatar: prefer the local file for self / server URL for others.
+    // Falls back to the letter glyph if neither is available.
+    const heroAvatarSrc = (typeof window.userAvatarSrc === 'function')
+      ? window.userAvatarSrc(displayName, { hasAvatar: !!data.hasAvatar, isMe: isSelf })
+      : null;
+    const heroAvatarHtml = heroAvatarSrc
+      ? `<img src="${esc(heroAvatarSrc)}" alt="${esc(displayName)}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${esc(initial)}'}))" />`
+      : esc(initial);
+    // Login streak. For self we have it cached in window.state (refreshed
+    // on every launcher boot via /api/streak/checkin). For other users
+    // it'd come from their stats payload.
+    const loginStreak = isSelf
+      ? (window.state?.streak?.current || data.loginStreak || 0)
+      : (data.loginStreak || data.streak || 0);
+
+    // Equipped cosmetics. Phase 2 backend wires the real values; for now
+    // show "None" so the layout's there without using em dashes.
+    const equippedTitle  = data.equippedTitle  || 'None';
+    const equippedColor  = data.equippedColor  || 'None';
+    const equippedBorder = data.equippedBorder || 'None';
+
+    // Top servers (capped at SERVERS_PER_SECTION = 5)
+    const topServers = (data.topServers || []).slice(0, SERVERS_PER_SECTION);
+
+    // Recent achievements (last 3 unlocked, mock until backend tracks unlock-time)
+    const achRows = recentAch.length ? recentAch.map(a => `
+      <div class="sm-ach-row">
+        <div class="sm-ach-icon">${esc(a.icon || '🏆')}</div>
+        <div class="sm-ach-info">
+          <div class="sm-ach-name">${esc(a.name)}</div>
+          <div class="sm-ach-meta">${esc(a.sub || '')}</div>
+        </div>
+        <div class="sm-ach-coin">+${a.coins || 100}</div>
+      </div>`).join('') : '<div class="sm-empty-mini">No achievements yet. Go play to unlock some.</div>';
+
+    // Coin activity from /api/coins/me. Pretty-print the source string so
+    // users see "Achievement: First Steps" instead of "achievement / first_steps".
+    function fmtTxLabel(t) {
+      const src = t.source || '';
+      const sid = t.source_id || '';
+      if (src === 'achievement') {
+        const a = (typeof ach_by_id === 'function') ? null : null;
+        // Look up the human name from the catalog the JS doesn't have;
+        // fall back to a tidied version of the id slug.
+        const pretty = sid.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        return 'Achievement: ' + pretty;
+      }
+      if (src === 'daily')      return 'Daily login bonus';
+      if (src === 'purchase')   return 'Bought: ' + (sid || 'cosmetic');
+      if (src === 'milestone')  return 'Hub Level milestone';
+      if (src === 'admin')      return 'Staff adjustment';
+      if (src === 'refund')     return 'Refund';
+      return src ? (src.charAt(0).toUpperCase() + src.slice(1)) : 'Transaction';
+    }
+    function fmtTxWhen(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(String(iso).replace(' ', 'T') + (String(iso).endsWith('Z') ? '' : 'Z'));
+        const diffMs = Date.now() - d.getTime();
+        const m = 60_000, h = 60 * m, day = 24 * h;
+        if (diffMs < m)       return 'just now';        // first 60s only
+        if (diffMs < h)       return Math.floor(diffMs / m) + 'm ago';
+        if (diffMs < 24 * h)  return Math.floor(diffMs / h) + 'h ago';
+        if (diffMs < 7 * day) return Math.floor(diffMs / day) + 'd ago';
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      } catch { return ''; }
+    }
+    const coinActivity = (coinsPayload?.transactions || []).slice(0, 5);
+    // Render relative-time text inside spans tagged with the raw ISO. A
+    // 30s timer (set up after innerHTML lands) walks these and rewrites
+    // them so "just now" eventually becomes "1m ago", "2m ago", etc.,
+    // without forcing the user to close and reopen the modal.
+    const coinRows = coinActivity.length ? coinActivity.map(t => `
+      <div class="sm-tx">
+        <div class="sm-tx-icon">${coinSvg(26)}</div>
+        <div class="sm-tx-info">
+          <div class="sm-tx-source">${esc(fmtTxLabel(t))}</div>
+          <div class="sm-tx-when" data-tx-ts="${esc(t.created_at || '')}">${esc(fmtTxWhen(t.created_at))}</div>
+        </div>
+        <div class="sm-tx-amt ${t.amount >= 0 ? 'positive' : 'negative'}">${t.amount >= 0 ? '+ ' : '\u2212 '}${Math.abs(t.amount)}</div>
+      </div>`).join('') : `
+      <div class="sm-empty-mini">You haven't earned or spent any Hub Coins yet. Unlock achievements, log in daily, and hit Hub Level milestones to start filling this list.</div>`;
+
+    // Hero stats row: self gets Coins + Streak + Played + Achievements.
+    // Other-player gets just Streak + Played + Achievements (no coins).
+    const heroStreakStat = `
+        <div class="sm-hero-stat">
+          <div class="sm-hero-stat-icon" style="font-size:1.7rem">🔥</div>
+          <div class="sm-hero-stat-num">${loginStreak}d</div>
+          <div class="sm-hero-stat-lbl">Login Streak</div>
+        </div>`;
+    const heroFirstStat = isSelf ? `
+        <div class="sm-hero-stat">
+          <div class="sm-hero-stat-icon">${coinSvg(28)}</div>
+          <div class="sm-hero-stat-num">${coins.toLocaleString()}</div>
+          <div class="sm-hero-stat-lbl">Hub Coins</div>
+        </div>${heroStreakStat}` : heroStreakStat;
+
+    // Action buttons only render on someone else's profile (DM / Add Friend).
+    const heroActions = isSelf ? '' : `
+      <div class="sm-hero-actions">
+        <button class="sm-action-btn primary" data-sm-dm="${esc(displayName)}">💬 Send Message</button>
+        <button class="sm-action-btn" data-sm-friend="${esc(displayName)}">+ Add Friend</button>
+      </div>`;
+
+    overlay.querySelector('#stats-modal-body').innerHTML = `
+      <!-- HERO -->
+      <div class="sm-hero">
+        <div class="sm-hero-avatar">${heroAvatarHtml}</div>
+        <div class="sm-hero-info">
+          <div class="sm-hero-name">${esc(displayName)}</div>
+          ${equippedTitle && equippedTitle !== 'None' ? `<div class="sm-hero-title">${esc(equippedTitle)}</div>` : ''}
+          ${heroActions}
+        </div>
+        <div class="sm-hero-stats">
+          ${heroFirstStat}
+          <div class="sm-hero-stat">
+            <div class="sm-hero-stat-icon" style="font-size:1.7rem">⏱</div>
+            <div class="sm-hero-stat-num">${hoursPlayed}h</div>
+            <div class="sm-hero-stat-lbl">Played</div>
+          </div>
+          <div class="sm-hero-stat">
+            <div class="sm-hero-stat-icon" style="font-size:1.7rem">🏆</div>
+            <div class="sm-hero-stat-num">${earnedAch} / ${totalAch}</div>
+            <div class="sm-hero-stat-lbl">Achievements</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HUB LEVEL ROW -->
+      <div class="sm-lvl-row">
+        <span class="sm-lvl-tag">Hub Level</span>
+        <span class="sm-lvl-num">${hubLevel}</span>
+        <div class="sm-lvl-bar"><div class="sm-lvl-bar-fill" style="width:${Math.min(100, (hubLevel % 100))}%"></div></div>
+        <span class="sm-lvl-meta">${(data.topServers || []).length} servers tracked</span>
+      </div>
+
+      <!-- YEAR IN PLAY HEATMAP -->
+      <div class="sm-card">
+        <div class="sm-card-hdr">
+          <span class="sm-card-icon">📅</span> Year in Play
+          <span class="sm-card-sub">Daily activity over the last 365 days</span>
+        </div>
+        <div class="sm-heatmap-wrap">
+          <div class="sm-heatmap">${buildModalHeatmap(data.heatmap || {})}</div>
+        </div>
+        <div class="sm-hm-legend">
+          <span>Less</span>
+          <div class="sm-hm-legend-cells">
+            <div class="sm-hm-cell"></div>
+            <div class="sm-hm-cell l1"></div>
+            <div class="sm-hm-cell l2"></div>
+            <div class="sm-hm-cell l3"></div>
+            <div class="sm-hm-cell l4"></div>
+          </div>
+          <span>More</span>
+        </div>
+      </div>
+
+      <!-- 3-COL CARD GRID -->
+      <div class="sm-grid-3">
+        <div class="sm-card" style="margin-bottom:0">
+          <div class="sm-card-hdr"><span class="sm-card-icon">⚔</span> Top Servers</div>
+          ${topServers.length ? topServers.map((s, i) => `
+            <div class="sm-ts-row ${i < 3 ? 'top' + (i + 1) : ''}">
+              <span class="sm-ts-rank">${i + 1}</span>
+              <span class="sm-ts-name">${esc(s.server || s.name || s.serverName || '?')}</span>
+              <span class="sm-ts-lvl">Lv. ${s.level || 1}</span>
+            </div>`).join('') : '<div class="sm-empty-mini">No servers played yet. Install one from the Store to start tracking.</div>'}
+        </div>
+
+        <div class="sm-card" style="margin-bottom:0">
+          <div class="sm-card-hdr"><span class="sm-card-icon">🏆</span> Recent Achievements</div>
+          ${achRows}
+        </div>
+
+        <div class="sm-card" style="margin-bottom:0">
+          <div class="sm-card-hdr"><span class="sm-card-icon">✨</span> Equipped</div>
+          <div class="sm-eq-row"><div class="sm-eq-lbl">Title</div><div class="sm-eq-val">${esc(equippedTitle)}</div></div>
+          <div class="sm-eq-row"><div class="sm-eq-lbl">Name Color</div><div class="sm-eq-val">${esc(equippedColor)}</div></div>
+          <div class="sm-eq-row"><div class="sm-eq-lbl">Avatar Border</div><div class="sm-eq-val">${esc(equippedBorder)}</div></div>
+          ${isSelf ? `<button class="sm-eq-btn" disabled>Hub Store coming soon</button>` : ''}
+        </div>
+      </div>
+
+      <!-- MILESTONES (full-width tier ladder) -->
+      <div class="sm-card">
+        <div class="sm-card-hdr">
+          <span class="sm-card-icon">📜</span> Milestones
+          <span class="sm-card-sub">Tier progression${isSelf ? ' on your servers, chase the next rank' : ''}</span>
+        </div>
+        ${buildModalMilestones(data.topServers || [])}
+      </div>
+
+      ${isSelf ? `
+      <!-- COIN ACTIVITY (own profile only) -->
+      <div class="sm-card">
+        <div class="sm-card-hdr"><span class="sm-card-icon">${coinSvg(20)}</span> Coin Activity</div>
+        ${coinRows}
+      </div>` : ''}
+    `;
+
+    // If the sync awarded new achievements this session, surface a toast
+    // for each (capped at 3 to avoid spam if a user is way behind).
+    if (isSelf && syncResult?.newly_unlocked?.length && window.showToast) {
+      const newAch = syncResult.newly_unlocked.slice(0, 3);
+      newAch.forEach((a, i) => {
+        setTimeout(() => {
+          window.showToast(`${a.icon} ${a.name} unlocked! +${a.coins} Hub Coins`, 'success');
+        }, i * 1100); // stagger so they don't pile up
+      });
+      if (syncResult.newly_unlocked.length > 3) {
+        setTimeout(() => {
+          window.showToast(`+ ${syncResult.newly_unlocked.length - 3} more achievements unlocked`, 'success');
+        }, newAch.length * 1100);
+      }
+    }
+
+    // Wire profile actions (only present in other-player view)
+    if (!isSelf) {
+      const dmBtn = overlay.querySelector('[data-sm-dm]');
+      if (dmBtn) dmBtn.addEventListener('click', () => {
+        close();
+        // Open the DM thread directly. Setting state.activeDM and clicking
+        // the chat tab works ONLY if the chat tab isn't already active —
+        // clicking an already-active tab toggles the panel CLOSED instead.
+        // So we manually deactivate first, then click.
+        if (window.state) window.state.activeDM = displayName;
+        const chatTab = document.querySelector('.rs-tab[data-panel="chat"]');
+        const panel = document.getElementById('slide-panel');
+        if (!chatTab) return;
+        // Deactivate any currently-active tab so the click below always
+        // opens the panel fresh on the chat surface.
+        document.querySelectorAll('.rs-tab.active').forEach(t => t.classList.remove('active'));
+        if (panel) panel.classList.remove('open');
+        // Defer the click to next tick so the modal close animation doesn't
+        // race with the slide-panel open animation.
+        setTimeout(() => chatTab.click(), 30);
+      });
+      const frBtn = overlay.querySelector('[data-sm-friend]');
+      if (frBtn) frBtn.addEventListener('click', async () => {
+        frBtn.disabled = true; frBtn.textContent = 'Sending…';
+        try {
+          await window.hub.post('/api/friends', { username: displayName });
+          frBtn.textContent = '✓ Request sent';
+        } catch (e) {
+          frBtn.disabled = false; frBtn.textContent = '+ Add Friend';
+          if (window.showToast) window.showToast('Friend request failed.', 'error');
+        }
+      });
+    }
+  };
+
   // Dedicated achievements-only render for the ACHIEVE sidebar tab. Fetches
   // the stats data and draws only the hero totals + achievements grid, no
   // heatmap / milestones / top servers (those live on the Stats tab).
@@ -778,25 +1267,12 @@
     drawBadges();
   };
 
-  // Open another user's public profile in a centered overlay modal.
+  // Open another user's public profile. Now routes through the same
+  // modal as your own stats — same layout, profile-mode rendering (no
+  // coins, login streak instead, DM + Add Friend buttons in the hero).
+  // The legacy upm-box overlay is gone; everything lives in #stats-modal-overlay.
   window.openUserProfile = function openUserProfile(username) {
     if (!username) return;
-    const prior = document.getElementById('user-profile-overlay');
-    if (prior) prior.remove();
-    const overlay = document.createElement('div');
-    overlay.id = 'user-profile-overlay';
-    overlay.innerHTML = `
-      <div class="upm-box" onclick="event.stopPropagation()">
-        <button class="upm-close" id="upm-close" title="Close">✕</button>
-        <div class="upm-body" id="upm-body"></div>
-      </div>
-    `;
-    overlay.addEventListener('click', e => {
-      if (e.target === overlay) overlay.remove();
-    });
-    document.body.appendChild(overlay);
-    overlay.querySelector('#upm-close').addEventListener('click', () => overlay.remove());
-    // Render into the body directly — no flex/alt-panel interference.
-    render(overlay.querySelector('#upm-body'), username);
+    if (window.openStatsModal) window.openStatsModal(username);
   };
 })();

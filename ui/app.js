@@ -286,12 +286,18 @@ async function logoutCleanup() {
   // Reset all unread badges
   for (const k of Object.keys(_unread)) { _unread[k] = 0; updateBadge(k); }
 
+  // Stop the achievement sync loop — next login restarts it fresh
+  if (_achSyncTimer) { clearInterval(_achSyncTimer); _achSyncTimer = null; }
+
   renderUser();
 }
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 
-let state = {
+// Exposed on `window` so other modules (stats.js public-profile actions,
+// future widgets, etc.) can read username / activeDM / settings without
+// duplicating the auth + cache logic that lives here.
+let state = window.state = {
   servers:    [],
   user:       null,
   activeTab:  'store',
@@ -304,6 +310,7 @@ let state = {
   friends:    [],   // cached from /api/friends, used by group chat picker
   activeDM:   null, // username of currently open DM (persists across panel close/reopen)
   settings:   {},   // cached launcher settings (minimizeOnLaunch etc.)
+  streak:     { current: 0, best: 0 }, // daily-login streak (set on checkin)
 };
 
 // ── BOOT ─────────────────────────────────────────────────────────────────────
@@ -335,12 +342,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   initBgParticles();
   initLevelTooltip();
 
-  // Load profile from disk (per-user, loaded after session restore)
-  try {
-    const username = state.user?.username;
-    state.profile = await window.hub.getProfile(username);
-    updateNavbarAvatar();
-  } catch {}
+  // Profile load is deferred until AFTER auto-login sets state.user — see
+  // the block below. Calling getProfile() here with no username returns
+  // the default record (no avatarPath), which is why the avatar appeared
+  // to "disappear on restart" — it was never loaded in the first place.
 
   // Load launcher settings (needed for minimizeOnLaunch etc. before settings tab opens)
   try { state.settings = await api.getSettings(); } catch {}
@@ -366,6 +371,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       // checks of state.user.isStaff (camelCase) work everywhere.
       state.user = { ...userData, isStaff: !!(userData.is_staff ?? userData.isStaff) };
       await window.hub.setActiveUser(userData.username);
+      // Load the per-user profile (avatarPath, displayName, bio, etc.) NOW
+      // that we know who's logged in. Was previously called outside this
+      // block with an undefined username, which silently returned the
+      // default profile and made avatars appear to "vanish" on restart.
+      try {
+        state.profile = await window.hub.getProfile(userData.username);
+        updateNavbarAvatar();
+      } catch {}
       // Now safe to load the caller's private DM history from disk.
       await dmStoreLoad();
       // Reload music prefs scoped to this user (favs, last track, etc.).
@@ -380,6 +393,49 @@ document.addEventListener('DOMContentLoaded', async () => {
       startPlaytimeRefresh();
       // Prefetch tab data so Stats/Friends/Chat open instantly from cache.
       prefetchTabs();
+      // Hub Coins — daily login bonus (server-side idempotent: 25 coins
+      // once per UTC day per user). Fire-and-forget; if it returns
+      // `awarded > 0` show a toast.
+      window.hub.post('/api/coins/daily', {}).then(res => {
+        if (res?.awarded > 0 && window.showToast) {
+          window.showToast(`Daily login bonus: +${res.awarded} Hub Coins`, 'success');
+        }
+      }).catch(() => {});
+      // Periodic achievement sync — every 60s the server re-evaluates
+      // every achievement against fresh stats and awards coins for any
+      // newly-unlocked. Toast each new one (capped) so users see progress
+      // in near-real-time as they play, not just when they open Stats.
+      startAchievementSyncLoop();
+
+      // Daily login streak — server is the source of truth (UTC day-stamped).
+      // Fires once per launcher session. Updates streak counter and toasts
+      // when it continues. If the streak is at risk (last login = yesterday,
+      // not yet checked in today), the streak-reminder banner pops if the
+      // user has the Settings toggle on.
+      window.hub.post('/api/streak/checkin', {}).then(res => {
+        if (!res || res.error) return;
+        state.streak = { current: res.current || 0, best: res.best || 0 };
+        if (res.continued && window.showToast) {
+          const c = res.current || 1;
+          window.showToast(`🔥 ${c}-day login streak! Keep it going.`, 'success');
+        }
+      }).catch(() => {});
+
+      // Streak-at-risk reminder. The Settings toggle "Streak Reminders"
+      // (state.settings.notifStreakReminder) finally has a job here.
+      // We fetch /api/streak/me — if at_risk is true (last login = yesterday
+      // and not yet checked in today), drop a friendly banner. Currently
+      // the checkin above ALREADY handles today's check-in, so at_risk
+      // shouldn't normally fire from here, but keep it as a safety for
+      // edge cases (e.g. clock skew between client + server) and for
+      // future streak-rules.
+      if (state.settings?.notifStreakReminder !== false) {
+        window.hub.get('/api/streak/me').then(s => {
+          if (s?.at_risk && !s?.already_today && s.current >= 2 && window.showToast) {
+            window.showToast(`🔥 Don't break your ${s.current}-day streak! Stay logged in today.`, 'info');
+          }
+        }).catch(() => {});
+      }
     }
   } catch {}
 
@@ -482,6 +538,51 @@ function closeAllDropdowns() {
     if (!b.classList.contains('rh-tip')) b.classList.add('rh-tip');
   }
 }
+
+// Returns the right <img src> for a given user's avatar.
+// - For the current user: uses their local `~/.rsps_hub/avatar.png` (instant,
+//   no network hop, reflects un-saved local changes immediately).
+// - For other users: uses the server URL (uploaded via /api/users/upload-avatar).
+//   Caller should fall back to a letter glyph if the user has no server avatar.
+function userAvatarSrc(username, opts = {}) {
+  const { hasAvatar = false, isMe = false } = opts;
+  // Self-detection has to be bulletproof — case-insensitive match on username,
+  // OR explicit isMe flag from the caller. If we get this wrong the leaderboard
+  // shows the user's stale server-uploaded avatar instead of their fresh local
+  // one, and they see two different images for "themselves" in the same UI.
+  const me = state.user?.username || '';
+  const isSelf = !!isMe || (username && me && String(username).toLowerCase() === me.toLowerCase());
+  if (isSelf) {
+    // Prefer the local file (instant, reflects un-uploaded edits).
+    if (state.profile?.avatarPath) {
+      return 'file:///' + state.profile.avatarPath.replace(/\\/g, '/') + '?t=' + Date.now();
+    }
+    // Fall through to the server copy — useful right after register/login,
+    // before the local file has been hydrated from the server.
+    if (state.profile?.hasAvatar || hasAvatar) {
+      const safe = String(me).replace(/[^a-zA-Z0-9_-]/g, '');
+      if (safe) return `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(safe)}.jpg?t=${Date.now()}`;
+    }
+    return null;
+  }
+  if (!hasAvatar) return null;
+  // Server stores at /uploads/avatars/<safeName>.jpg. Sanitize same way
+  // server does so the URL doesn't 404 on usernames with special chars.
+  const safe = String(username).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safe) return null;
+  return `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(safe)}.jpg`;
+}
+window.userAvatarSrc = userAvatarSrc;
+
+// Returns inner HTML for an avatar circle: <img> when we have a source,
+// else the user's first-letter glyph. Falls back to letter on img error.
+function avatarInnerHTML(username, opts = {}) {
+  const letter = (username || '?')[0].toUpperCase();
+  const src = userAvatarSrc(username, opts);
+  if (!src) return letter;
+  return `<img src="${src}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${letter}'}))" />`;
+}
+window.avatarInnerHTML = avatarInnerHTML;
 
 function updateNavbarAvatar() {
   const p         = state.profile || {};
@@ -712,6 +813,25 @@ async function confirmAvatar() {
       state.profile.username = state.user?.username;
       await window.hub.saveProfile(state.profile);
       updateNavbarAvatar();
+
+      // Upload to the server too so leaderboards / chat / public profiles
+      // (anywhere OTHER players see this user) can show the avatar.
+      // Server stores at /uploads/avatars/<username>.jpg.
+      try {
+        const base64 = await window.hub.readFileBase64(finalPath);
+        if (base64) {
+          await window.hub.post('/api/users/upload-avatar', { image: base64 });
+          // Reflect server-side flag in cached profile so the achievement
+          // engine + UI know we have a server avatar.
+          state.profile.hasAvatar = true;
+        }
+      } catch (uploadErr) {
+        console.error('[Avatar] server upload failed:', uploadErr);
+        // Local save still succeeded, so don't fail the whole flow — but
+        // tell the user other players might not see it yet.
+        showToast('Avatar saved locally, but failed to sync to server. Try again in a moment.', 'info');
+      }
+
       closeAvatarModal();
       showToast('Avatar updated!', 'success');
     } else {
@@ -1176,6 +1296,15 @@ function setupSidebarTabs() {
       document.querySelectorAll('.rs-tab').forEach(b => b.classList.remove('active'));
       if (already) {
         panel.classList.remove('open');
+        return;
+      }
+
+      // STATS opens a centered modal (player profile dashboard) instead of
+      // the slide panel — too much content for a 360-px sidebar.
+      if (panelId === 'stats') {
+        if (window.openStatsModal) window.openStatsModal();
+        // No persistent active state — modal close puts us back to the
+        // last real tab (Store / News / etc).
         return;
       }
 
@@ -3119,7 +3248,7 @@ function buildFriendsHTML({ friends = [], requests = [] }) {
     <div class="section-header friend-req-header">FRIEND REQUESTS — ${requests.length}</div>
     ${requests.map(r => `
       <div class="friend-row friend-req-row" data-username="${r.username}">
-        <div class="friend-avatar req">${r.username[0].toUpperCase()}</div>
+        <div class="friend-avatar req">${avatarInnerHTML(r.username, { hasAvatar: !!r.hasAvatar })}</div>
         <div class="friend-info">
           <span class="friend-name lb-clickable" data-open-profile="${escAttr(r.username)}">${escHtml(r.username)}</span>
           <span class="friend-status">Wants to be your friend</span>
@@ -3151,7 +3280,7 @@ function friendRowHTML(f) {
     : (f.statusMessage ? f.statusMessage : 'Offline');
   return `
     <div class="friend-row" data-username="${f.username}">
-      <div class="friend-avatar ${f.online ? 'online' : ''}">${f.username[0].toUpperCase()}</div>
+      <div class="friend-avatar ${f.online ? 'online' : ''}">${avatarInnerHTML(f.username, { hasAvatar: !!f.hasAvatar })}</div>
       <div class="friend-info">
         <span class="friend-name lb-clickable" data-open-profile="${escAttr(f.username)}">${escHtml(f.username)}</span>
         <span class="friend-status">${statusText}</span>
@@ -3281,23 +3410,43 @@ function renderConversationList(el, convos) {
     return {
       username,
       lastMsg: last?.content || '',
-      lastTs:  last?.timestamp || '',
+      lastTs:  last?.timestamp || last?.sent_at || last?.created_at || '',
       unread:  unreadMap[username] || 0,
     };
   })
   // Unread conversations float to the top; otherwise newest-message-first.
   .sort((a, b) => (b.unread > 0) - (a.unread > 0) || (b.lastTs || '').localeCompare(a.lastTs || ''));
 
+  // Compact relative-time formatter for convo rows. Full ISO timestamps
+  // (e.g. "2026-05-05 11:48:25") were eating ~150px and forcing the
+  // username to truncate to "VinnTe...". Show "11:48" if today, "Yesterday",
+  // "2d", "3w" or "MMM D" so the column stays under ~50px.
+  function fmtConvoTs(raw) {
+    if (!raw) return '';
+    let d;
+    try { d = new Date(String(raw).replace(' ', 'T') + (String(raw).endsWith('Z') ? '' : 'Z')); } catch { return ''; }
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const diffMs = now - d;
+    const day = 86_400_000;
+    if (diffMs < 2 * day) return 'Yesterday';
+    if (diffMs < 7  * day) return Math.floor(diffMs / day) + 'd';
+    if (diffMs < 30 * day) return Math.floor(diffMs / (7 * day)) + 'w';
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+
   el.innerHTML = `
     <div class="alt-header"><h2>FRIENDS CHAT</h2><p>Direct messages</p></div>
     ${list.length === 0 ? '<p class="empty-msg">No conversations yet.</p>' : list.map(c => `
       <div class="convo-row ${c.unread > 0 ? 'has-unread' : ''}" data-username="${escHtml(c.username)}">
-        <div class="friend-avatar">${c.username[0].toUpperCase()}</div>
+        <div class="friend-avatar">${avatarInnerHTML(c.username, { hasAvatar: !!c.hasAvatar })}</div>
         <div class="friend-info">
           <span class="friend-name">${escHtml(c.username)}${c.unread > 0 ? `<span class="convo-unread-badge">${c.unread}</span>` : ''}</span>
           <span class="friend-status convo-preview">${escHtml(c.lastMsg || 'No messages yet')}</span>
         </div>
-        ${c.lastTs ? `<span class="convo-ts">${escHtml(c.lastTs)}</span>` : ''}
+        ${c.lastTs ? `<span class="convo-ts">${escHtml(fmtConvoTs(c.lastTs))}</span>` : ''}
         <button class="convo-delete-btn" data-username="${escHtml(c.username)}" title="Delete conversation">×</button>
       </div>
     `).join('')}
@@ -3346,7 +3495,7 @@ async function openDM(el, username) {
     <div class="dm-wrap">
       <div class="dm-header" style="padding:10px 14px 10px">
         <button class="dm-back-btn" id="dm-back">← Back</button>
-        <div class="friend-avatar" style="width:28px;height:28px;font-size:0.7rem">${username[0].toUpperCase()}</div>
+        <div class="friend-avatar" style="width:28px;height:28px;font-size:0.7rem">${avatarInnerHTML(username, { hasAvatar: true })}</div>
         <span class="dm-title">${username}</span>
         <button class="chat-popout-btn" id="dm-popout">⧉</button>
       </div>
@@ -3377,15 +3526,22 @@ async function openDM(el, username) {
     const msgs = dmStoreGet(username);
     if (msgs.length === 0) {
       msgEl.innerHTML = '<p class="empty-msg" style="padding:16px">No messages yet. Say hi!</p>';
-    } else {
-      msgEl.innerHTML = msgs.map(m => `
-        <div class="dm-msg ${m.isOwn ? 'own' : 'other'}">
-          ${!m.isOwn ? `<span class="dm-sender">${escHtml(m.sender)}</span>` : ''}
-          <div class="dm-bubble">${escHtml(m.content)}</div>
-          ${m.timestamp ? `<span class="dm-ts">${escHtml(m.timestamp)}</span>` : ''}
-        </div>
-      `).join('');
+      return;
     }
+    // Handle BOTH formats — legacy optimistic msgs ({isOwn}) and server
+    // msgs ({sender}). Per-message timestamps were removed; they flickered
+    // every send because the optimistic vs server time formats differed
+    // and rendered as a buggy "pops up then vanishes" effect.
+    const me = state.user?.username;
+    msgEl.innerHTML = msgs.map(m => {
+      const isOwn = (typeof m.isOwn === 'boolean') ? m.isOwn : (m.sender === me);
+      const body  = m.content || m.message || '';
+      return `
+        <div class="dm-msg ${isOwn ? 'own' : 'other'}">
+          ${!isOwn ? `<span class="dm-sender">${escHtml(m.sender || '?')}</span>` : ''}
+          <div class="dm-bubble">${escHtml(body)}</div>
+        </div>`;
+    }).join('');
     msgEl.scrollTop = msgEl.scrollHeight;
   }
 
@@ -3424,7 +3580,7 @@ async function openDM(el, username) {
     if (msgEl.querySelector('.empty-msg')) msgEl.innerHTML = '';
     const div = document.createElement('div');
     div.className = 'dm-msg own';
-    div.innerHTML = `<div class="dm-bubble">${escHtml(content)}</div><span class="dm-ts">${escHtml(now)}</span>`;
+    div.innerHTML = `<div class="dm-bubble">${escHtml(content)}</div>`;
     msgEl.appendChild(div);
     msgEl.scrollTop = msgEl.scrollHeight;
     // Await the send so the re-enable happens only AFTER the message is
@@ -3509,19 +3665,49 @@ async function openGCRoom(el, roomId, roomName) {
   const input  = el.querySelector('#gc-room-input');
   const sendBtn = el.querySelector('#gc-room-send');
 
-  function appendMsg(m) {
+  // Format a server timestamp into the user's LOCAL HH:MM. Accepts both
+  // ISO 8601 ("2026-05-06T09:16:56Z" — current PHP) and the legacy MySQL
+  // datetime ("2026-05-06 09:16:56" — pre-fix; treat as UTC).
+  function fmtLocalHM(raw) {
+    if (!raw) return '';
+    let s = String(raw);
+    if (!s.includes('T')) s = s.replace(' ', 'T');
+    if (!/[zZ]|[+\-]\d\d:?\d\d$/.test(s)) s += 'Z';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function appendMsg(m, opts = {}) {
     const isOwn = m.username === myUsername;
     // Hub chat returns the body in `message`; DM endpoints return `content`.
     // Accept either so this same renderer works for both.
     const body = m.content || m.message || '';
     const tsRaw = m.created_at || m.sent_at || '';
-    const ts = tsRaw ? String(tsRaw).slice(11, 16) : '';
+    const ts = fmtLocalHM(tsRaw);
     const div = document.createElement('div');
     div.className = `dm-msg ${isOwn ? 'own' : 'other'}`;
+    if (opts.optimistic) {
+      // Tag optimistic bubbles so we can swap them for the real server
+      // copy when the next poll returns, instead of leaving both.
+      div.dataset.optimistic = '1';
+      div.dataset.body = body;
+      div.style.opacity = '0.6';
+    }
     div.innerHTML = !isOwn
       ? `<span class="dm-sender">${escHtml(m.username)}</span><div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`
       : `<div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`;
     msgEl.appendChild(div);
+  }
+
+  // Drop any optimistic bubbles whose body matches an incoming server msg —
+  // prevents the "message renders twice" effect (once from optimistic insert,
+  // once from the next /api/chat/hub poll).
+  function reconcileOptimistic(serverMsg) {
+    if (serverMsg.username !== myUsername) return;
+    const body = serverMsg.content || serverMsg.message || '';
+    const stale = msgEl.querySelector(`.dm-msg[data-optimistic="1"][data-body="${CSS.escape(body)}"]`);
+    if (stale) stale.remove();
   }
 
   async function poll() {
@@ -3531,7 +3717,11 @@ async function openGCRoom(el, roomId, roomName) {
       if (msgs.length) {
         if (lastId === 0) msgEl.innerHTML = '';
         const atBottom = msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 60;
-        msgs.forEach(m => { appendMsg(m); lastId = Math.max(lastId, m.id); });
+        msgs.forEach(m => {
+          reconcileOptimistic(m);
+          appendMsg(m);
+          lastId = Math.max(lastId, m.id);
+        });
         if (atBottom) msgEl.scrollTop = msgEl.scrollHeight;
       } else if (lastId === 0) {
         msgEl.innerHTML = '<p class="empty-msg" style="padding:16px">No messages yet. Say something!</p>';
@@ -3541,9 +3731,16 @@ async function openGCRoom(el, roomId, roomName) {
   }
   poll();
 
+  // Per-send guard. The "sends twice" report was traced to fast Enter
+  // double-presses (and the SEND button click bubbling on top of an Enter
+  // keydown). Lock on `sending` so a second invocation is a no-op until
+  // the first POST completes.
+  let sending = false;
   async function doSend() {
+    if (sending) return;
     const content = input.value.trim();
     if (!content) return;
+    sending = true;
     sendBtn.disabled = true;
     input.value = '';
 
@@ -3554,26 +3751,35 @@ async function openGCRoom(el, roomId, roomName) {
       username: myUsername,
       message:  content,
       created_at: new Date().toISOString(),
-      _optimistic: true,
-    });
+    }, { optimistic: true });
     msgEl.scrollTop = msgEl.scrollHeight;
 
     try {
       await window.hub.post('/api/chat/hub', { message: content });
       // Force-poll right away so the canonical server message arrives
-      // before the next 3s tick. The optimistic bubble renders pending,
-      // the real one gets dropped into place when the poll returns.
+      // before the next 3s tick. The optimistic bubble gets reconciled
+      // (removed) when the real one lands.
       clearTimeout(pollTimer);
       poll();
     } catch (e) {
       console.error('hub send failed:', e);
+      // On send failure, drop the optimistic bubble so the user isn't
+      // misled into thinking it went through.
+      const orphan = msgEl.querySelector(`.dm-msg[data-optimistic="1"][data-body="${CSS.escape(content)}"]`);
+      if (orphan) orphan.remove();
     }
+    sending = false;
     sendBtn.disabled = false;
     input.focus();
   }
 
   sendBtn.addEventListener('click', doSend);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });
+  input.addEventListener('keydown', e => {
+    // Enter triggers send. preventDefault so the default form submit /
+    // newline-into-input behavior can't queue a second send through some
+    // ancestor handler.
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); doSend(); }
+  });
   input.focus();
 
   // Pop-out button — spawns a floating always-on-top chat window
@@ -3602,7 +3808,13 @@ function buildLeaderboardHTML(data) {
             ${medal ? `<span class="lb-medal">${medal}</span>` : `#${rank}`}
           </span>
           <span class="lb-avatar ${isYou ? 'you' : ''}" style="${isYou ? 'border-color:#c8a840;color:#c8a840' : ''}">
-            ${(e.username || '?')[0].toUpperCase()}
+            ${(() => {
+              const src = userAvatarSrc(e.username, { hasAvatar: !!e.hasAvatar, isMe: !!isYou });
+              const letter = (e.username || '?')[0].toUpperCase();
+              return src
+                ? `<img src="${src}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${letter}'}))" />`
+                : letter;
+            })()}
           </span>
           <div class="lb-info">
             <span class="lb-name">${e.username || '—'}${isYou ? ' <span class="lb-you-tag">you</span>' : ''}</span>
@@ -4767,6 +4979,37 @@ function checkServerUpdates(servers) {
 // notice unread DMs even when the panel is closed; the fast tick (1.5s) only
 // runs while the CHAT panel is open and refreshes the visible surface (list
 // or open DM) so new messages appear effectively instantly.
+// Periodic achievement sync. Runs an immediate pass on login + then every
+// 60s. Fires toasts for newly-unlocked achievements so users see coin
+// awards happen in near-real-time as their playtime / server count climb.
+let _achSyncTimer = null;
+function startAchievementSyncLoop() {
+  if (_achSyncTimer) return;            // already running, idempotent
+  const tick = async () => {
+    if (!state.user?.username) return;
+    try {
+      const res = await window.hub.post('/api/achievements/sync', {});
+      if (res?.newly_unlocked?.length && window.showToast) {
+        const newAch = res.newly_unlocked.slice(0, 3);
+        newAch.forEach((a, i) => {
+          setTimeout(() => {
+            window.showToast(`${a.icon} ${a.name} unlocked! +${a.coins} Hub Coins`, 'success');
+          }, i * 1100);
+        });
+        if (res.newly_unlocked.length > 3) {
+          setTimeout(() => {
+            window.showToast(`+ ${res.newly_unlocked.length - 3} more achievements unlocked`, 'success');
+          }, newAch.length * 1100);
+        }
+      }
+    } catch (_) {}
+  };
+  // Fire once immediately on login so first-session catch-up coins land
+  // before the user even opens the Stats modal
+  setTimeout(tick, 1500);
+  _achSyncTimer = setInterval(tick, 60_000);
+}
+
 function startMessagePolling() {
   let lastBadgedTotal = 0;
 
@@ -4813,7 +5056,6 @@ function startMessagePolling() {
           <div class="dm-msg ${m.sender === state.user.username ? 'own' : 'other'}">
             ${m.sender !== state.user.username ? `<span class="dm-sender">${escHtml(m.sender)}</span>` : ''}
             <div class="dm-bubble">${escHtml(m.content || m.message || '')}</div>
-            <span class="dm-ts">${escHtml(String(m.sent_at || m.created_at || '').slice(11,16))}</span>
           </div>
         `).join('');
         if (wasBottom) msgEl.scrollTop = msgEl.scrollHeight;
