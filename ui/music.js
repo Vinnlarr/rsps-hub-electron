@@ -225,9 +225,31 @@
     refreshVolumeUI();
   }
   function toggleFav(id) {
-    if (M.favorites.has(id)) M.favorites.delete(id);
+    const wasFav = M.favorites.has(id);
+    if (wasFav) M.favorites.delete(id);
     else M.favorites.add(id);
     savePrefs();
+    // Mirror to server, then trigger achievement sync so Music Lover / DJ
+    // unlock immediately rather than waiting for the next stats-modal
+    // open. Show a coin toast for any newly-awarded achievement.
+    if (window.hub?.post) {
+      window.hub.post('/api/music/favorites', { track_id: id, action: wasFav ? 'remove' : 'add' })
+        .then(() => window.hub.post('/api/achievements/sync', {}))
+        .then(res => {
+          if (res?.newly_unlocked?.length && typeof window.showToast === 'function') {
+            res.newly_unlocked.forEach(a => {
+              window.showToast(`🏆 ${a.name} unlocked! +${a.coins} coins`, 'success');
+            });
+            // Invalidate the stats cache so the next open shows the
+            // newly-unlocked badge instead of stale data.
+            if (window.DATA_CACHE?.stats) {
+              window.DATA_CACHE.stats.data = null;
+              window.DATA_CACHE.stats.at   = 0;
+            }
+          }
+        })
+        .catch(e => console.warn('[music] favorite sync failed:', e));
+    }
     // If currently filtered to Favourites, re-render the list so unfavourited rows vanish
     if (M.category === 'Favourites') {
       applyFilter();

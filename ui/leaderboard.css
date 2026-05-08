@@ -71,9 +71,12 @@
 
 .lb-row {
   display: grid;
-  grid-template-columns: 42px 44px 1fr auto;
+  /* Squashed left-side columns so long usernames have room to breathe.
+     Old: 42px rank + 44px avatar + 10px gap = 96px gone before name.
+     New: 28px rank + 34px avatar + 6px gap   = 68px. Net +28px for name. */
+  grid-template-columns: 28px 34px 1fr auto;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   padding: 8px 10px;
   border-radius: 4px;
   border: 1px solid #2a2010;
@@ -171,7 +174,7 @@
 .lb-medal { font-size: 1.2rem; }
 
 .lb-avatar {
-  width: 40px; height: 40px;
+  width: 32px; height: 32px;
   border-radius: 50%;
   overflow: hidden;
   border: 1px solid #4a3820;
@@ -179,7 +182,7 @@
   display: flex; align-items: center; justify-content: center;
   font-family: 'Cinzel', serif;
   font-weight: 900;
-  font-size: 0.95rem;
+  font-size: 0.86rem;
   color: #c8a840;
   flex-shrink: 0;
 }
@@ -209,15 +212,15 @@
 
 .lb-you-tag {
   display: inline-block;
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   font-weight: 700;
-  letter-spacing: 1.5px;
+  letter-spacing: 0.5px;
   background: rgba(200,168,64,0.2);
   color: #f0c060;
-  padding: 1px 6px;
+  padding: 0 5px;
   border-radius: 2px;
   border: 1px solid rgba(240,192,96,0.35);
-  margin-left: 6px;
+  margin-left: 4px;
   vertical-align: 1px;
 }
 

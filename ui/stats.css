@@ -115,14 +115,40 @@
 }
 .sd-badge {
   display: grid;
-  grid-template-columns: 52px 1fr;
+  /* Three columns: icon | text body | coin reward pill. Tighter column +
+     gap than before to give the body extra room — saves ~16px which is
+     enough for long single-word names like "Globetrotter" / "Encyclopedia"
+     to fit on one line at 0.78rem instead of wrapping awkwardly. */
+  grid-template-columns: 40px 1fr auto;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid #2a2010;
   border-radius: 4px;
   background: rgba(14,10,6,0.55);
   transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+/* Coin-reward pill on each badge — shows how much the achievement is
+   worth in Hub Coins. Bright when earned, muted when still locked, so
+   players can see at a glance which targets pay out. */
+.sd-badge-coin {
+  font-family: 'Cinzel', serif;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, rgba(200,168,64,0.12), rgba(14,10,6,0.5));
+  border: 1px solid #4a3a18;
+  color: #8a7a4a;
+  white-space: nowrap;
+}
+.sd-badge-coin.earned {
+  background: linear-gradient(135deg, rgba(255,208,112,0.22), rgba(200,168,64,0.08));
+  border-color: #c8a840;
+  color: #ffd070;
+  text-shadow: 0 0 6px rgba(255,208,112,0.4);
+  box-shadow: inset 0 1px 0 rgba(255,224,160,0.2), 0 0 8px rgba(200,168,64,0.2);
 }
 .sd-badge.unlocked {
   border-color: #6b5228;
@@ -145,22 +171,33 @@
 .sd-badge-body { min-width: 0; }
 .sd-badge-name {
   font-family: 'Cinzel', serif;
-  font-size: 0.72rem;
+  /* Allow wrapping but ONLY at word boundaries — `anywhere` was breaking
+     mid-word, so "Globetrotter" turned into "Globetrotte\nr" with one
+     letter on its own line. `break-word` only splits when the single
+     word can't fit at all. */
+  font-size: 0.78rem;
+  line-height: 1.25;
   letter-spacing: 0.3px;
   color: #e0c87a;
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 .sd-badge.locked .sd-badge-name { color: #8a7a5a; }
 .sd-badge-sub {
+  /* Same: wrap on word boundaries so "Play 15 different servers" never
+     ends in "server\ns" with a single letter on the next line. */
   font-size: 0.74rem;
+  line-height: 1.3;
   color: #7a6a4a;
   font-style: normal;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  margin-top: 2px;
 }
 .sd-badge-count {
   margin-top: 8px;
@@ -742,6 +779,88 @@
   border-bottom: 1px solid #3a2e14;
   margin-bottom: 22px;
 }
+/* Profile effects (sparkles / petals / embers / snow / prism / hearts /
+   confetti / glow / shimmer) span the WHOLE stats modal, not just the hero.
+   Petals fall from the top of the modal all the way to the bottom; auras
+   bathe every section in colour. The layer sits behind .stats-body via
+   z-index, and the modal clips overflow so particles stop at the rounded
+   edges. */
+.sm-modal-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 14px;   /* match .stats-modal radius so particles clip cleanly */
+  overflow: hidden;
+}
+.stats-modal { overflow: hidden; }
+.stats-body { position: relative; z-index: 1; }
+.stats-close { z-index: 5; }
+
+/* Override the .hs-fx-* keyframes (designed for ~140px tiles) so particles
+   travel the full height of the modal (~700-1100px). Without these the
+   petals/snow/etc only fall a few hundred px and stop dead in the middle.
+   Each keyframe ends at translateY(110vh) which guarantees the particle
+   exits the modal regardless of how much the user has scrolled. */
+@keyframes smPetalFallFull   { 0% { transform: translateY(0) rotate(0deg); opacity: 0; } 8% { opacity: 1; } 100% { transform: translateY(110vh) rotate(720deg); opacity: 0; } }
+@keyframes smSnowFallFull    { 0% { transform: translateY(0) translateX(0); opacity: 0; } 8% { opacity: 1; } 100% { transform: translateY(110vh) translateX(15px); opacity: 0; } }
+@keyframes smHeartFallFull   { 0% { transform: translateY(0); opacity: 0; } 8% { opacity: 1; } 100% { transform: translateY(110vh); opacity: 0; } }
+@keyframes smConfettiFallFull{ 0% { transform: translateY(0) rotate(0deg); opacity: 0; } 8% { opacity: 1; } 100% { transform: translateY(110vh) rotate(720deg); opacity: 0; } }
+@keyframes smSparkleRiseFull { 0% { transform: translateY(0) scale(0); opacity: 0; } 10% { opacity: 1; transform: translateY(-15px) scale(1); } 95% { opacity: 1; } 100% { transform: translateY(-110vh) scale(0.4); opacity: 0; } }
+@keyframes smEmberRiseFull   { 0% { transform: translateY(0) translateX(0); opacity: 0; } 10% { opacity: 1; } 100% { transform: translateY(-110vh) translateX(20px); opacity: 0; } }
+
+/* Re-bind the animations on the modal-fx layer so the long-distance
+   keyframes win. .hs-fx-* span selectors are class-scoped, so qualifying
+   with .sm-modal-fx makes these specific enough to override. */
+.sm-modal-fx.hs-fx-matrix span {
+  top: auto;
+  animation-name: smMatrixDrift;
+}
+@keyframes smMatrixDrift {
+  0%   { transform: translateY(-15px); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translateY(60px);  opacity: 0; }
+}
+.sm-modal-fx.hs-fx-petals span    { animation-name: smPetalFallFull; }
+.sm-modal-fx.hs-fx-snow span      { animation-name: smSnowFallFull; }
+.sm-modal-fx.hs-fx-hearts span    { animation-name: smHeartFallFull; }
+.sm-modal-fx.hs-fx-confetti span  { animation-name: smConfettiFallFull; }
+.sm-modal-fx.hs-fx-sparkles span  { animation-name: smSparkleRiseFull; }
+.sm-modal-fx.hs-fx-embers span    { animation-name: smEmberRiseFull; }
+/* Auras (glow / prism / shimmer) span via background-fill so they cover
+   the whole modal automatically — no animation override needed. */
+
+/* Preview banner — appears above the hero in store preview mode. */
+.sm-preview-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  margin-bottom: 18px;
+  background: linear-gradient(90deg, rgba(60,42,16,0.85), rgba(28,18,8,0.7));
+  border: 1px solid #c8a840;
+  border-radius: 4px;
+  color: #e0c87a;
+  font-size: 0.92rem;
+}
+.sm-preview-banner b { color: #ffd070; }
+.sm-preview-close {
+  padding: 5px 14px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  font-weight: 800;
+  background: linear-gradient(180deg, #5a4218 0%, #3a2810 100%);
+  border: 2px solid #6b5228;
+  border-radius: 3px;
+  color: #ffd070;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sm-preview-close:hover {
+  border-color: #c8a840;
+  box-shadow: 0 0 10px rgba(200,168,64,0.5);
+}
 .sm-hero-avatar {
   width: 88px; height: 88px;
   border-radius: 50%;
@@ -753,6 +872,23 @@
   font-size: 2.4rem; font-weight: 900; color: #1a1408;
   flex-shrink: 0;
   overflow: hidden;
+}
+/* Mod Crown wrapper — only used when border has borderType:mod_spikes.
+   Keeps the avatar's overflow:hidden intact (so the img crops to a
+   circle) while letting the spike cage extend OUTSIDE that crop as a
+   sibling. Position:relative scopes the absolute cage to this frame. */
+.sm-hero-av-frame {
+  position: relative;
+  width: 88px; height: 88px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.sm-hero-av-frame .sm-hero-avatar { position: relative; z-index: 2; }
+.sm-hero-av-frame .sm-hero-spikes { z-index: 1; }
+/* Spike cage on hero is sized to the 88px avatar, but the beams inside
+   are 220px tall absolute spans so they reach well past it. */
+.sm-hero-av-frame .hs-mod-spikes-cage {
+  width: 88px; height: 88px;
 }
 .sm-hero-avatar img {
   width: 100%; height: 100%;
@@ -767,6 +903,14 @@
   letter-spacing: 0.04em;
   line-height: 1.1;
   margin-bottom: 2px;
+  /* Chromium clips the last character when `background-clip: text` is used
+     with `letter-spacing`. The gradient bounding box doesn't include the
+     trailing letter-spacing slot so the final glyph gets cut off (showed up
+     as "Vinnlari" instead of "Vinnlarr" with the Ember name color).
+     A small right padding gives the gradient enough room to render the
+     final letter fully. Doesn't affect solid-color names visually. */
+  padding-right: 0.2em;
+  display: inline-block;
 }
 .sm-hero-title {
   display: inline-block;
@@ -776,7 +920,7 @@
   font-family: 'Cinzel', serif;
   font-size: 0.78rem; font-weight: 700;
   letter-spacing: 0.16em; text-transform: uppercase;
-  padding: 4px 12px;
+  padding: 4px 14px;        /* extra right padding for gradient bg-clip-text */
   border-radius: 4px;
   margin-top: 6px;
 }
@@ -819,31 +963,51 @@
   border-color: #f0d060;
   box-shadow: 0 2px 12px rgba(200,168,64,0.3), inset 0 1px 0 rgba(240,192,96,0.2);
 }
-.sm-hero-stats { display: flex; gap: 12px; flex-shrink: 0; }
+/* Stat-card row sits at the far right of the hero. flex-shrink:0 keeps
+   the cards from squishing, margin-left:auto pushes them right so the
+   name+title section gets all the leftover space. Cards are intentionally
+   trimmed (min-width 92, smaller numerics) so a 6-digit Hub Coins value
+   like 992,000 doesn't crowd long usernames or trigger ellipsis on the
+   name itself. */
+.sm-hero-stats {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
 .sm-hero-stat {
   background: #2a2418;
   border: 1px solid #3a2e14;
   border-radius: 10px;
-  padding: 14px 18px;
+  padding: 12px 14px;
   text-align: center;
-  min-width: 110px;
+  min-width: 92px;
 }
 .sm-hero-stat-icon {
-  height: 32px; margin-bottom: 4px;
+  height: 28px; margin-bottom: 3px;
   display: flex; align-items: center; justify-content: center;
 }
 .sm-hero-stat-num {
   font-family: 'Cinzel', serif;
-  font-size: 1.6rem; font-weight: 800;
+  font-size: 1.4rem; font-weight: 800;
   color: #ffd070;
   line-height: 1; margin-bottom: 2px;
+  white-space: nowrap;
 }
 .sm-hero-stat-lbl {
-  font-size: 0.66rem;
+  font-size: 0.62rem;
   color: #b8a878;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   font-weight: 600;
+  white-space: nowrap;
+}
+/* Ensure the name+title block can grow into freed space and never clip
+   even when a 6-letter title sits beside it. */
+.sm-hero-info {
+  flex: 1;
+  min-width: 0;
+  overflow: visible;
 }
 
 /* HUB LEVEL ROW */
@@ -1151,4 +1315,38 @@
   .sm-card-wide { grid-column: span 1; }
   .sm-hero { flex-direction: column; align-items: flex-start; gap: 14px; }
   .sm-hero-stats { width: 100%; }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PROFILE-EFFECT TRANSPARENCY — applied via the .has-fx class set
+   on .stats-modal whenever an fx is equipped (set in stats.js
+   when the .sm-modal-fx layer is inserted). Every panel becomes
+   translucent so the v3 background washes through the whole modal.
+══════════════════════════════════════════════════════════════════ */
+.stats-modal.has-fx {
+  background: linear-gradient(180deg, rgba(30,26,16,0.50) 0%, rgba(20,16,10,0.50) 100%) !important;
+}
+.stats-modal.has-fx .sm-hero-stat {
+  background: rgba(42,36,24,0.45) !important;
+  backdrop-filter: blur(3px);
+}
+.stats-modal.has-fx .sd-section,
+.stats-modal.has-fx .sm-card,
+.stats-modal.has-fx .sm-card-wide {
+  background: rgba(20,16,10,0.38) !important;
+  backdrop-filter: blur(3px);
+}
+.stats-modal.has-fx .ach-progress {
+  background: linear-gradient(135deg, rgba(200,168,64,0.06), rgba(14,10,6,0.40) 60%) !important;
+  backdrop-filter: blur(3px);
+}
+.stats-modal.has-fx .sd-cell.sd-l0 {
+  background: rgba(26,20,8,0.45) !important;
+}
+.stats-modal.has-fx .sd-srv-row,
+.stats-modal.has-fx .sd-badge,
+.stats-modal.has-fx .sm-hero-title,
+.stats-modal.has-fx .sm-hero-name {
+  background-color: rgba(20,16,10,0.30) !important;
+  backdrop-filter: blur(3px);
 }

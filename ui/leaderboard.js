@@ -58,11 +58,29 @@
   }
 
   function avatarHtml(row) {
+    const fallback = `<span class="lb-avatar-fallback">${esc(row.username[0].toUpperCase())}</span>`;
+    // Use the shared `userAvatarSrc` helper:
+    //   - For self → local file path (instant, reflects un-uploaded edits)
+    //   - For others with hasAvatar → server URL
+    // The helper appends `?t=Date.now()` for self so a fresh upload shows
+    // up immediately on the next render instead of being served from the
+    // browser cache. Without this, changing your avatar didn't update the
+    // leaderboard until a full launcher restart.
+    if (typeof window.userAvatarSrc === 'function') {
+      const src = window.userAvatarSrc(row.username, {
+        isMe: !!row.isYou,
+        hasAvatar: !!row.hasAvatar,
+      });
+      if (src) {
+        return `<img class="lb-avatar-img" src="${src}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                <span class="lb-avatar-fallback" style="display:none">${esc(row.username[0].toUpperCase())}</span>`;
+      }
+    }
     if (row.hasAvatar) {
       return `<img class="lb-avatar-img" src="https://api.therspshub.com/uploads/avatars/${encodeURIComponent(row.username)}.jpg" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-              <span class="lb-avatar-fallback" style="display:none">${esc(row.username[0].toUpperCase())}</span>`;
+              ${fallback.replace('lb-avatar-fallback', 'lb-avatar-fallback" style="display:none')}`;
     }
-    return `<span class="lb-avatar-fallback">${esc(row.username[0].toUpperCase())}</span>`;
+    return fallback;
   }
 
   function rankBadge(rank) {
@@ -91,7 +109,7 @@
         <div class="lb-rank">${r.rank <= 3 ? rankBadge(r.rank) : `#${r.rank}`}</div>
         <div class="lb-avatar">${avatarHtml(r)}</div>
         <div class="lb-info">
-          <div class="lb-name">${esc(r.username)}${r.isYou ? ' <span class="lb-you-tag">YOU</span>' : ''}</div>
+          <div class="lb-name">${esc(r.username)}</div>
           <div class="lb-sub">${r.mostPlayed ? 'Most played: ' + esc(r.mostPlayed) : 'No main server yet'}</div>
         </div>
         <div class="lb-metric">

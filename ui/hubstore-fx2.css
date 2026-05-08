@@ -1,0 +1,300 @@
+/* ══════════════════════════════════════════════════════════
+   PROFILE EFFECTS — round 2 (15 new fx)
+   Each effect now bathes the whole modal in its themed colour wash
+   (like Prism Aura does) PLUS adds particles where applicable. The
+   background is a multi-stop radial gradient sized to the modal so
+   the whole stats page reads as the effect's mood.
+══════════════════════════════════════════════════════════ */
+
+/* ── Radiation Pulse — sickly green wash, pulsing intensity ── */
+.hs-fx-radiation {
+  background:
+    radial-gradient(ellipse at 30% 40%, rgba(80,255,80,0.22), transparent 55%),
+    radial-gradient(ellipse at 70% 60%, rgba(120,255,40,0.18), transparent 55%),
+    radial-gradient(ellipse at 50% 50%, rgba(40,200,40,0.10), transparent 80%);
+  animation: hsRadiationPulse 2.4s ease-in-out infinite;
+}
+@keyframes hsRadiationPulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
+/* ── Holy Light — soft circular halo, no hard edges ──
+   Old version used a conic-gradient stretched to rectangle corners which
+   read as a "box" with diagonal lines instead of a halo. New version is
+   pure radial gradients (always circular regardless of container shape)
+   plus a faint pulse — divine but unobtrusive. */
+.hs-fx-holy_light {
+  background:
+    radial-gradient(circle at center, rgba(255,220,140,0.30) 0%, rgba(255,180,40,0.18) 25%, rgba(255,140,40,0.08) 50%, transparent 70%),
+    radial-gradient(circle at 30% 30%, rgba(255,240,180,0.10), transparent 50%),
+    radial-gradient(circle at 70% 70%, rgba(255,200,80,0.10), transparent 50%);
+  animation: hsHolyPulse 4s ease-in-out infinite;
+}
+@keyframes hsHolyPulse {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1; }
+}
+/* Generic rotate helper kept for any other effect that wants a slow spin. */
+@keyframes hsHolyRotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* ── Cyber Glitch — RGB-split bands flicker over the whole modal ── */
+.hs-fx-cyber_glitch {
+  background:
+    linear-gradient(90deg, rgba(255,0,80,0.22), transparent 25%, transparent 75%, rgba(0,200,255,0.22)),
+    linear-gradient(180deg, rgba(255,0,80,0.06), transparent 30%, transparent 70%, rgba(0,200,255,0.06));
+  animation: hsCyberGlitch 0.5s steps(4) infinite;
+}
+@keyframes hsCyberGlitch {
+  0%, 100% { transform: translateX(0);  opacity: 1; }
+  25%      { transform: translateX(3px); opacity: 0.7; }
+  50%      { transform: translateX(-3px); opacity: 0.95; }
+  75%      { transform: translateX(2px); opacity: 0.6; }
+}
+
+/* ── Toxic Smoke — green/yellow billowing fog ── */
+.hs-fx-toxic_smoke {
+  background:
+    radial-gradient(ellipse at 30% 60%, rgba(80,200,40,0.30), transparent 55%),
+    radial-gradient(ellipse at 70% 30%, rgba(180,220,60,0.22), transparent 55%),
+    radial-gradient(ellipse at 50% 90%, rgba(40,160,30,0.18), transparent 70%);
+  animation: hsToxicBillow 6s ease-in-out infinite;
+}
+@keyframes hsToxicBillow {
+  0%, 100% { transform: translateX(0)   scale(1);    }
+  50%      { transform: translateX(20px) scale(1.06); }
+}
+
+/* ── Lightning Storm — stormy dark-blue wash + vertical bolts ── */
+.hs-fx-lightning {
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(80,120,200,0.30), transparent 60%),
+    radial-gradient(ellipse at 50% 100%, rgba(20,30,80,0.40), transparent 70%);
+  animation: hsLightningWash 3s ease-in-out infinite;
+}
+@keyframes hsLightningWash {
+  0%, 92%, 100% { filter: brightness(1); }
+  93%           { filter: brightness(1.7); }
+  94%           { filter: brightness(1); }
+  95%           { filter: brightness(1.5); }
+  96%           { filter: brightness(1); }
+}
+.hs-fx-lightning span {
+  position: absolute; width: 2px; top: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(160,200,255,0.4) 60%, transparent);
+  box-shadow: 0 0 14px #80c0ff, 0 0 28px #4080ff;
+  animation: hsLightningBolt linear infinite;
+  opacity: 0;
+}
+@keyframes hsLightningBolt {
+  0%, 92%, 100% { opacity: 0; }
+  93% { opacity: 1; }
+  94% { opacity: 0; }
+  95% { opacity: 0.8; }
+  96% { opacity: 0; }
+}
+
+/* ── Matrix Rain — Matrix-green wash + falling chars ── */
+.hs-fx-matrix {
+  background:
+    radial-gradient(ellipse at 50% 50%, rgba(0,80,20,0.45), transparent 80%),
+    linear-gradient(180deg, rgba(0,40,10,0.40), rgba(0,80,30,0.20) 50%, rgba(0,20,0,0.45));
+}
+.hs-fx-matrix span {
+  position: absolute;
+  font-family: monospace;
+  font-size: 14px;
+  color: #20ff60;
+  text-shadow: 0 0 4px #20ff60, 0 0 8px rgba(32,255,96,0.5);
+  top: -20px;
+  animation: hsMatrixFall linear infinite;
+}
+@keyframes hsMatrixFall {
+  0%   { transform: translateY(0); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(110vh); opacity: 0; }
+}
+
+/* ── Fireflies — warm summer-night yellow wash + drifting bugs ── */
+.hs-fx-fireflies {
+  background:
+    radial-gradient(ellipse at 30% 70%, rgba(40,30,10,0.40), transparent 60%),
+    radial-gradient(ellipse at 70% 30%, rgba(255,200,80,0.18), transparent 60%);
+}
+.hs-fx-fireflies span {
+  position: absolute;
+  width: 5px; height: 5px;
+  background: radial-gradient(circle, #ffe080, #ff8c00 60%, transparent);
+  border-radius: 50%;
+  bottom: -5px;
+  box-shadow: 0 0 8px #ffd070;
+  animation: hsFireflyDrift linear infinite;
+}
+@keyframes hsFireflyDrift {
+  0%   { transform: translateY(0)    translateX(0);   opacity: 0; }
+  10%  { opacity: 1; }
+  50%  { transform: translateY(-50vh) translateX(15px); opacity: 1; }
+  100% { transform: translateY(-110vh) translateX(-15px); opacity: 0; }
+}
+
+/* ── Underwater — deep blue wash + rising bubbles ── */
+.hs-fx-bubbles {
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(80,180,240,0.30), transparent 65%),
+    linear-gradient(180deg, rgba(40,80,160,0.35), rgba(20,40,80,0.40));
+}
+.hs-fx-bubbles span {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.85), rgba(160,220,255,0.4) 60%, transparent);
+  border: 1px solid rgba(200,230,255,0.5);
+  bottom: -20px;
+  animation: hsBubbleRise linear infinite;
+}
+@keyframes hsBubbleRise {
+  0%   { transform: translateY(0)    scale(0.4); opacity: 0; }
+  10%  { opacity: 1; transform: translateY(-30px) scale(1); }
+  100% { transform: translateY(-110vh) scale(1.2); opacity: 0; }
+}
+
+/* ── Twinkling Stars — deep night-sky cosmos + twinkling dots ── */
+.hs-fx-twinkling {
+  background:
+    radial-gradient(ellipse at 30% 40%, rgba(40,30,80,0.40), transparent 70%),
+    radial-gradient(ellipse at 70% 60%, rgba(20,20,60,0.50), transparent 70%),
+    radial-gradient(2px 2px at 12% 18%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 28% 42%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 45% 22%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 62% 60%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 80% 30%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 92% 70%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 18% 80%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 70% 88%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 38% 92%, #fff, transparent 50%),
+    radial-gradient(2px 2px at 55% 8%, #fff, transparent 50%);
+  animation: hsTwinkle 3s ease-in-out infinite;
+}
+@keyframes hsTwinkle {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+
+/* ── Autumn Leaves — warm amber wash + spiraling emoji leaves ── */
+.hs-fx-leaves {
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(255,140,40,0.18), transparent 65%),
+    linear-gradient(180deg, rgba(120,60,20,0.25), rgba(60,30,10,0.35));
+}
+.hs-fx-leaves span {
+  position: absolute;
+  font-size: 22px;
+  top: -20px;
+  filter: drop-shadow(0 0 4px rgba(255,140,40,0.5));
+  animation: hsLeafSpiral linear infinite;
+}
+@keyframes hsLeafSpiral {
+  0%   { transform: translateY(0)    rotate(0deg)   translateX(0);   opacity: 0; }
+  10%  { opacity: 1; }
+  100% { transform: translateY(110vh) rotate(720deg) translateX(40px); opacity: 0; }
+}
+
+/* ── Diamond Dust — icy frost wash + sharp sparkles ── */
+.hs-fx-diamond_dust {
+  background:
+    radial-gradient(ellipse at center, rgba(180,220,255,0.22), transparent 70%),
+    linear-gradient(180deg, rgba(140,180,220,0.18), transparent 50%, rgba(180,220,255,0.18));
+}
+.hs-fx-diamond_dust span {
+  position: absolute;
+  width: 2px; height: 2px;
+  background: #fff;
+  box-shadow: 0 0 4px #fff, 0 0 8px rgba(180,220,255,0.7);
+  animation: hsDiamondTwinkle ease-in-out infinite;
+}
+@keyframes hsDiamondTwinkle {
+  0%, 100% { opacity: 0; transform: scale(0.5); }
+  50%      { opacity: 1; transform: scale(1); }
+}
+
+/* ── Lava Bubbles — red molten wash + rising bubbles ── */
+.hs-fx-lava_bubbles {
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(255,80,0,0.40), transparent 60%),
+    radial-gradient(ellipse at 50% 50%, rgba(180,30,0,0.25), transparent 70%),
+    linear-gradient(180deg, rgba(60,10,0,0.30), rgba(120,20,0,0.40));
+}
+.hs-fx-lava_bubbles span {
+  position: absolute;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffa040, #ff3000 60%, #800000);
+  box-shadow: 0 0 8px #ff5000, 0 0 16px rgba(255,80,0,0.6);
+  bottom: -10px;
+  animation: hsLavaBubbleRise linear infinite;
+}
+@keyframes hsLavaBubbleRise {
+  0%   { transform: translateY(0)    scale(0.6); opacity: 0; }
+  10%  { opacity: 1; transform: translateY(-30px) scale(1); }
+  100% { transform: translateY(-110vh) scale(1.3); opacity: 0; }
+}
+
+/* ── Ghost Wisps — pale haunted wash + drifting wisps ── */
+.hs-fx-ghost_wisps {
+  background:
+    radial-gradient(ellipse at 30% 30%, rgba(180,220,220,0.22), transparent 60%),
+    radial-gradient(ellipse at 70% 70%, rgba(140,180,200,0.18), transparent 60%),
+    linear-gradient(180deg, rgba(40,60,80,0.30), rgba(20,30,40,0.40));
+}
+.hs-fx-ghost_wisps span {
+  position: absolute;
+  font-size: 28px;
+  filter: blur(0.5px) drop-shadow(0 0 8px rgba(220,220,255,0.7));
+  opacity: 0.7;
+  animation: hsGhostDrift linear infinite;
+}
+@keyframes hsGhostDrift {
+  0%   { transform: translateX(0)    translateY(0);    opacity: 0; }
+  15%  { opacity: 0.7; }
+  85%  { opacity: 0.7; }
+  100% { transform: translateX(120vw) translateY(-30px); opacity: 0; }
+}
+
+/* ── Bat Flock — gothic dark-purple wash + flying bats ── */
+.hs-fx-bat_flock {
+  background:
+    radial-gradient(ellipse at 30% 30%, rgba(60,20,80,0.35), transparent 60%),
+    radial-gradient(ellipse at 70% 70%, rgba(20,10,40,0.40), transparent 60%),
+    linear-gradient(180deg, rgba(20,10,30,0.35), rgba(60,30,80,0.30));
+}
+.hs-fx-bat_flock span {
+  position: absolute;
+  font-size: 20px;
+  filter: drop-shadow(0 0 4px rgba(0,0,0,0.8));
+  animation: hsBatFly linear infinite;
+}
+@keyframes hsBatFly {
+  0%   { transform: translateX(-30px) translateY(0)    rotate(0deg); }
+  25%  { transform: translateX(35vw)  translateY(-15px) rotate(-10deg); }
+  50%  { transform: translateX(70vw)  translateY(8px)   rotate(8deg); }
+  75%  { transform: translateX(95vw)  translateY(-12px) rotate(-6deg); }
+  100% { transform: translateX(120vw) translateY(0)    rotate(0deg); }
+}
+
+/* ── Radiant Halo — full divine golden bath, NO hard edges ──
+   Old version used a conic-gradient ::before that created rectangular
+   block lines at the modal corners. New version is layered radial
+   gradients only (always circular regardless of container shape) +
+   a soft pulse. */
+.hs-fx-radiant_halo {
+  background:
+    radial-gradient(circle at center, rgba(255,220,140,0.45) 0%, rgba(255,180,40,0.30) 25%, rgba(255,140,40,0.15) 45%, transparent 70%),
+    radial-gradient(circle at 25% 30%, rgba(255,240,180,0.18), transparent 50%),
+    radial-gradient(circle at 75% 70%, rgba(255,200,80,0.18), transparent 50%),
+    radial-gradient(circle at 50% 90%, rgba(255,160,40,0.14), transparent 60%);
+  animation: hsRadiantHalo 4s ease-in-out infinite;
+}
+@keyframes hsRadiantHalo {
+  0%, 100% { opacity: 0.75; transform: scale(1);    }
+  50%      { opacity: 1;    transform: scale(1.04); }
+}

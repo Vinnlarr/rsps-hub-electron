@@ -1,0 +1,162 @@
+/* ══════════════════════════════════════════════════════════
+   ANIMATED AVATAR BORDER CAGES (round 2)
+   Each cage is a sibling of the avatar inside a positioned wrapper
+   (.hs-av-frame on store tiles, .sm-hero-av-frame on stats hero).
+   The cage is centred over the avatar and contains animated spans
+   that emanate outward — beams, ripples, orbiting glyphs, etc.
+══════════════════════════════════════════════════════════ */
+
+.hs-cage {
+  position: absolute;
+  width: 76px; height: 76px;       /* tile-size, hero gets 88px override */
+  pointer-events: none;
+  z-index: 1;
+}
+.sm-hero-av-frame .hs-cage { width: 88px; height: 88px; }
+
+/* ── 1. LIGHTNING BOLTS — 5 short staccato bolts strobing ── */
+.hs-cage--lightning span {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 2px; height: 60px;
+  margin-left: -1px; margin-top: -30px;
+  background: linear-gradient(180deg, transparent, #fff 40%, #80c0ff 50%, #fff 60%, transparent);
+  transform-origin: center 45px;
+  box-shadow: 0 0 6px #80c0ff, 0 0 12px #4080ff;
+  animation: hsCageFlash 1.2s steps(6) infinite;
+}
+.hs-cage--lightning span:nth-child(1) { transform: rotate(0deg);   animation-delay: 0s; }
+.hs-cage--lightning span:nth-child(2) { transform: rotate(72deg);  animation-delay: 0.2s; }
+.hs-cage--lightning span:nth-child(3) { transform: rotate(144deg); animation-delay: 0.4s; }
+.hs-cage--lightning span:nth-child(4) { transform: rotate(216deg); animation-delay: 0.6s; }
+.hs-cage--lightning span:nth-child(5) { transform: rotate(288deg); animation-delay: 0.8s; }
+@keyframes hsCageFlash {
+  0%, 100% { opacity: 0; }
+  10%      { opacity: 1; }
+  20%      { opacity: 0; }
+  30%      { opacity: 0.9; }
+  40%      { opacity: 0; }
+}
+
+/* ── 2. WAVE RIPPLES — 3 expanding water rings ── */
+.hs-cage--ripple span {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 70px; height: 70px;
+  margin-left: -35px; margin-top: -35px;
+  border-radius: 50%;
+  border: 2px solid #5aa0d8;
+  box-shadow: 0 0 10px rgba(90,160,216,0.6);
+  opacity: 0;
+  animation: hsCageRipple 3s ease-out infinite;
+}
+.hs-cage--ripple span:nth-child(1) { animation-delay: 0s; }
+.hs-cage--ripple span:nth-child(2) { animation-delay: 1s; }
+.hs-cage--ripple span:nth-child(3) { animation-delay: 2s; }
+@keyframes hsCageRipple {
+  0%   { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.3); opacity: 0; }
+}
+
+/* ── 3. ORBIT STARS — 5 stars circling clockwise ── */
+.hs-cage--stars { animation: hsCageSpin 8s linear infinite; }
+.hs-cage--stars span {
+  position: absolute;
+  left: 50%; top: 50%;
+  font-size: 14px;
+  color: #ffd070;
+  text-shadow: 0 0 6px #ffd070, 0 0 12px rgba(255,208,112,0.5);
+  margin-left: -7px; margin-top: -7px;
+}
+.hs-cage--stars span:nth-child(1) { transform: translate(0, -55px); }
+.hs-cage--stars span:nth-child(2) { transform: rotate(72deg)  translate(0, -55px); }
+.hs-cage--stars span:nth-child(3) { transform: rotate(144deg) translate(0, -55px); }
+.hs-cage--stars span:nth-child(4) { transform: rotate(216deg) translate(0, -55px); }
+.hs-cage--stars span:nth-child(5) { transform: rotate(288deg) translate(0, -55px); }
+@keyframes hsCageSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* ── 4. ENERGY SPARKS — 8 purple dots pulsing in a halo ── */
+.hs-cage--sparks span {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: #d080ff;
+  box-shadow: 0 0 6px #c060ff, 0 0 12px #c060ff;
+  margin-left: -2px; margin-top: -2px;
+  animation: hsCageSparkPulse 1.6s ease-in-out infinite;
+}
+.hs-cage--sparks span:nth-child(1) { transform: translate(0, -50px);                animation-delay: 0s; }
+.hs-cage--sparks span:nth-child(2) { transform: rotate(45deg)  translate(0, -55px); animation-delay: 0.2s; }
+.hs-cage--sparks span:nth-child(3) { transform: rotate(90deg)  translate(0, -50px); animation-delay: 0.4s; }
+.hs-cage--sparks span:nth-child(4) { transform: rotate(135deg) translate(0, -55px); animation-delay: 0.6s; }
+.hs-cage--sparks span:nth-child(5) { transform: rotate(180deg) translate(0, -50px); animation-delay: 0.8s; }
+.hs-cage--sparks span:nth-child(6) { transform: rotate(225deg) translate(0, -55px); animation-delay: 1.0s; }
+.hs-cage--sparks span:nth-child(7) { transform: rotate(270deg) translate(0, -50px); animation-delay: 1.2s; }
+.hs-cage--sparks span:nth-child(8) { transform: rotate(315deg) translate(0, -55px); animation-delay: 1.4s; }
+@keyframes hsCageSparkPulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1; }
+}
+
+/* ── 7. PETAL CROWN — 8 cherry blossoms slow-orbiting ── */
+.hs-cage--petals { animation: hsCageSpin 18s linear infinite; }
+.hs-cage--petals span {
+  position: absolute;
+  left: 50%; top: 50%;
+  font-size: 16px;
+  margin-left: -8px; margin-top: -8px;
+  filter: drop-shadow(0 0 4px rgba(255,128,192,0.6));
+  animation: hsCagePetalBob 3s ease-in-out infinite;
+}
+.hs-cage--petals span:nth-child(1) { transform: translate(0, -55px); }
+.hs-cage--petals span:nth-child(2) { transform: rotate(45deg)  translate(0, -55px); }
+.hs-cage--petals span:nth-child(3) { transform: rotate(90deg)  translate(0, -55px); }
+.hs-cage--petals span:nth-child(4) { transform: rotate(135deg) translate(0, -55px); }
+.hs-cage--petals span:nth-child(5) { transform: rotate(180deg) translate(0, -55px); }
+.hs-cage--petals span:nth-child(6) { transform: rotate(225deg) translate(0, -55px); }
+.hs-cage--petals span:nth-child(7) { transform: rotate(270deg) translate(0, -55px); }
+.hs-cage--petals span:nth-child(8) { transform: rotate(315deg) translate(0, -55px); }
+@keyframes hsCagePetalBob {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(255,128,192,0.4)); }
+  50%      { filter: drop-shadow(0 0 8px rgba(255,128,192,0.9)); }
+}
+
+/* ── 8. RUNE CIRCLE — 6 Norse runes orbiting slowly ── */
+.hs-cage--runes { animation: hsCageSpin 14s linear infinite; }
+.hs-cage--runes span {
+  position: absolute;
+  left: 50%; top: 50%;
+  font-family: 'Cinzel', serif;
+  font-size: 14px; font-weight: 900;
+  color: #ffd070;
+  text-shadow: 0 0 6px rgba(255,208,112,0.7);
+  margin-left: -5px; margin-top: -8px;
+}
+.hs-cage--runes span:nth-child(1) { transform: translate(0, -52px); }
+.hs-cage--runes span:nth-child(2) { transform: rotate(60deg)  translate(0, -52px); }
+.hs-cage--runes span:nth-child(3) { transform: rotate(120deg) translate(0, -52px); }
+.hs-cage--runes span:nth-child(4) { transform: rotate(180deg) translate(0, -52px); }
+.hs-cage--runes span:nth-child(5) { transform: rotate(240deg) translate(0, -52px); }
+.hs-cage--runes span:nth-child(6) { transform: rotate(300deg) translate(0, -52px); }
+
+/* ── 10. PLASMA RING — rotating multi-color blur band ── */
+.hs-cage--plasma {
+  width: 110px; height: 110px;
+  margin: -55px 0 0 -55px;
+  left: 50%; top: 50%;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    #ff30c0, #ff60ff, #30c0ff, #30ffc0, #ff30c0);
+  filter: blur(6px);
+  animation: hsCageSpin 4s linear infinite;
+  /* Mask to a ring so the avatar isn't fully covered */
+  -webkit-mask: radial-gradient(circle at center, transparent 38px, #000 42px, #000 54px, transparent 58px);
+          mask: radial-gradient(circle at center, transparent 38px, #000 42px, #000 54px, transparent 58px);
+}
+.sm-hero-av-frame .hs-cage--plasma {
+  width: 130px; height: 130px;
+  margin: -65px 0 0 -65px;
+  -webkit-mask: radial-gradient(circle at center, transparent 44px, #000 48px, #000 64px, transparent 68px);
+          mask: radial-gradient(circle at center, transparent 44px, #000 48px, #000 64px, transparent 68px);
+}

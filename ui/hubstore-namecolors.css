@@ -1,0 +1,167 @@
+/* ══════════════════════════════════════════════════════════
+   WILD NAME COLOURS — keyframes for the 20 store items.
+   12 single-element animations referenced inline via the
+   item's `nameStyle`, plus 8 per-letter classes that drive
+   span-children when `splitLetters: true`.
+══════════════════════════════════════════════════════════ */
+
+/* ── Single-element keyframes (driven by inline animation: refs) ── */
+@keyframes hsNcGlitchShift {
+  0%, 100% { transform: translateX(0);  text-shadow: -2px 0 #ff00d0, 2px 0 #00d0ff; }
+  25%      { transform: translateX(2px); text-shadow: -3px 0 #ff00d0, 3px 0 #00d0ff; }
+  50%      { transform: translateX(-2px); text-shadow: 3px 0 #ff00d0, -3px 0 #00d0ff; }
+  75%      { transform: translateX(1px); text-shadow: -1px 0 #ff00d0, 1px 0 #00d0ff; }
+}
+@keyframes hsNcStaticFlicker {
+  0%, 100% { opacity: 0.85; }
+  33%      { opacity: 1; }
+  66%      { opacity: 0.6; }
+}
+@keyframes hsNcStaticScroll  { 0% { background-position: 0% 0; } 100% { background-position: 200% 0; } }
+@keyframes hsNcHeartbeat {
+  0%, 100% { transform: scale(1);    text-shadow: 0 0 8px #ff4060,  0 0 16px rgba(255,64,96,0.5); }
+  20%      { transform: scale(1.08); text-shadow: 0 0 14px #ff4060, 0 0 28px rgba(255,64,96,0.8); }
+  40%      { transform: scale(1); }
+  60%      { transform: scale(1.04); text-shadow: 0 0 10px #ff4060, 0 0 20px rgba(255,64,96,0.6); }
+}
+@keyframes hsNcInferno {
+  0%, 100% { filter: brightness(1)   saturate(1.2); }
+  50%      { filter: brightness(1.2) saturate(1.5); }
+}
+@keyframes hsNcAcid          { 0% { filter: hue-rotate(0deg);   } 100% { filter: hue-rotate(45deg); } }
+@keyframes hsNcSunsetScroll  { 0% { background-position: 0;     } 100% { background-position: 200%; } }
+@keyframes hsNcRainbowSpin   { 0% { filter: hue-rotate(0deg);   } 100% { filter: hue-rotate(360deg); } }
+@keyframes hsNcChromeFlow    { 0% { background-position: 0;     } 100% { background-position: 200%; } }
+@keyframes hsNcSlimeOoze {
+  0%, 100% { transform: translateY(0);  }
+  50%      { transform: translateY(2px); }
+}
+@keyframes hsNcNeonBuzz {
+  0%, 5%, 8%, 12%, 15%, 100% { opacity: 1; }
+  6%, 10%, 13%               { opacity: 0.4; }
+}
+@keyframes hsNcGlitterFlow   { 0% { background-position: 0; } 100% { background-position: 200%; } }
+@keyframes hsNcGlitterFlash {
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(255,255,255,0.8)); }
+  50%      { filter: drop-shadow(0 0 14px rgba(255,255,255,1)); }
+}
+@keyframes hsNcElectricCrackle {
+  0%, 100% { opacity: 1;   transform: translateX(0); }
+  17%      { opacity: 0.8; transform: translateX(0.5px); }
+  33%      { opacity: 1;   transform: translateX(-0.5px); }
+  50%      { opacity: 0.7; }
+  67%      { opacity: 1;   transform: translateX(0.3px); }
+  83%      { opacity: 0.9; transform: translateX(-0.3px); }
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   PER-LETTER NAME COLOURS — applied via class on the parent;
+   span children animate independently.
+═══════════════════════════════════════════════════════════ */
+
+/* Bounce — letters bob up/down */
+.nc-bounce > span {
+  display: inline-block;
+  color: #ffd070;
+  text-shadow: 0 0 8px rgba(255,208,112,0.5);
+  animation: hsNcLetterBounce 1.4s ease-in-out infinite;
+}
+@keyframes hsNcLetterBounce {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-12px); }
+}
+
+/* Wave — sinusoidal undulation w/ slight rotation */
+.nc-wave > span {
+  display: inline-block;
+  background: linear-gradient(90deg, #5a9ad6, #a060e0);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: hsNcLetterWave 2s ease-in-out infinite;
+}
+@keyframes hsNcLetterWave {
+  0%, 100% { transform: translateY(0)    rotate(0deg); }
+  25%      { transform: translateY(-6px) rotate(-4deg); }
+  50%      { transform: translateY(0)    rotate(0deg); }
+  75%      { transform: translateY(6px)  rotate(4deg); }
+}
+
+/* Typewriter — letters fade in then loop */
+.nc-typewriter > span {
+  display: inline-block;
+  color: #50e0a0;
+  opacity: 0;
+  animation: hsNcLetterFadeIn 4s linear infinite;
+}
+@keyframes hsNcLetterFadeIn {
+  0%, 100% { opacity: 0; transform: translateX(-4px); }
+  20%, 90% { opacity: 1; transform: translateX(0); }
+}
+
+/* Scrambled — each letter cycles colors */
+.nc-scrambled > span {
+  display: inline-block;
+  animation: hsNcScrambleColor 1.8s linear infinite;
+}
+@keyframes hsNcScrambleColor {
+  0%, 100% { color: #ff5050; }
+  20%      { color: #ffd050; }
+  40%      { color: #50ff50; }
+  60%      { color: #50d0ff; }
+  80%      { color: #d050ff; }
+}
+
+/* Falling — letters drop in, bounce, fall away */
+.nc-falling > span {
+  display: inline-block;
+  color: #ffd070;
+  animation: hsNcLetterFall 2.2s ease-in-out infinite;
+}
+@keyframes hsNcLetterFall {
+  0%   { transform: translateY(-30px) rotate(-15deg); opacity: 0; }
+  20%  { transform: translateY(0)     rotate(0deg);   opacity: 1; }
+  30%  { transform: translateY(-10px); }
+  40%  { transform: translateY(0); }
+  85%  { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(40px); opacity: 0; }
+}
+
+/* Domino — letters flip on Y-axis along a wave */
+.nc-domino { perspective: 400px; }
+.nc-domino > span {
+  display: inline-block;
+  color: #c060ff;
+  text-shadow: 0 0 8px rgba(192,96,255,0.6);
+  animation: hsNcLetterFlip 2.4s ease-in-out infinite;
+  transform-style: preserve-3d;
+}
+@keyframes hsNcLetterFlip {
+  0%, 100% { transform: rotateY(0deg);   }
+  50%      { transform: rotateY(180deg); }
+}
+
+/* Pulse Wave — brightness wave passes through letters */
+.nc-pulsewave > span {
+  display: inline-block;
+  color: #5a9ad6;
+  animation: hsNcLetterPulse 1.8s ease-in-out infinite;
+}
+@keyframes hsNcLetterPulse {
+  0%, 100% { color: #5a9ad6; text-shadow: 0 0 4px rgba(90,154,214,0.4); }
+  50%      { color: #ffffff; text-shadow: 0 0 16px #80c0ff, 0 0 24px #5a9ad6; }
+}
+
+/* Rainbow Letters — each letter a fixed colour, whole thing hue-spins */
+.nc-rainbow > span {
+  display: inline-block;
+  text-shadow: 0 0 6px currentColor;
+  animation: hsNcRainbowSpin 5s linear infinite;
+}
+.nc-rainbow > span:nth-child(8n+1) { color: #ff3050; }
+.nc-rainbow > span:nth-child(8n+2) { color: #ff8030; }
+.nc-rainbow > span:nth-child(8n+3) { color: #ffd030; }
+.nc-rainbow > span:nth-child(8n+4) { color: #50e030; }
+.nc-rainbow > span:nth-child(8n+5) { color: #30c0d0; }
+.nc-rainbow > span:nth-child(8n+6) { color: #5050ff; }
+.nc-rainbow > span:nth-child(8n+7) { color: #a050ff; }
+.nc-rainbow > span:nth-child(8n)   { color: #ff50d0; }

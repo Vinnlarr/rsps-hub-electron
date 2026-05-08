@@ -7,7 +7,220 @@
 (function () {
   'use strict';
 
+  // ── Achievement catalog (server-published coin rewards) ─────────────
+  // Loaded once per launcher session from /api/achievements/catalog. Maps
+  // achievement name → coin reward so drawBadges can render "+50" style
+  // pills next to each badge. Without this, players have no visibility
+  // into which achievements actually pay out.
+  let _achCatalogByName = {};
+  let _achCatalogTotal  = 0;
+  let _achCatalogPromise = null;
+  function loadAchCatalog() {
+    if (_achCatalogPromise) return _achCatalogPromise;
+    if (!window.hub?.get) return Promise.resolve();
+    _achCatalogPromise = window.hub.get('/api/achievements/catalog')
+      .then(d => {
+        const list = d?.achievements || [];
+        list.forEach(a => { _achCatalogByName[a.name] = a; });
+        _achCatalogTotal = d?.totalCoins || list.reduce((s, a) => s + (a.coins || 0), 0);
+      })
+      .catch(e => console.warn('[stats] achievement catalog load failed:', e));
+    return _achCatalogPromise;
+  }
+  // Pre-fetch on script init so the catalog is ready by the time the user
+  // opens the stats modal / achievements panel.
+  setTimeout(() => { loadAchCatalog(); }, 1500);
+
   // ── helpers ────────────────────────────────────────────
+  // Build the inner spans for a Hub Store effect overlay (sparkles, petals,
+  // embers, snow, prism, hearts, confetti, glow, shimmer). Mirrors the
+  // helper in hubstore.js so a previewed effect renders the same way it
+  // does in the store tile.
+  function effectFxSpansFor(fx) {
+    if (fx === 'sparkles') {
+      let h = '';
+      for (let i = 1; i <= 8; i++) h += `<span style="left:${i*12}%;animation-duration:${3+i*0.2}s;animation-delay:${i*0.3}s"></span>`;
+      return h;
+    }
+    if (fx === 'petals')   return [8,25,45,62,80,90].map((l,i) => `<span style="left:${l}%;animation-duration:${5+i*0.3}s;animation-delay:${i*0.5}s">🌸</span>`).join('');
+    if (fx === 'embers')   return [10,25,40,55,70,85,95].map((l,i) => `<span style="left:${l}%;animation-duration:${2.5+i*0.15}s;animation-delay:${i*0.3}s"></span>`).join('');
+    if (fx === 'snow')     return [5,18,35,48,62,78,90].map((l,i) => `<span style="left:${l}%;animation-duration:${5.5+i*0.25}s;animation-delay:${i*0.4}s"></span>`).join('');
+    if (fx === 'hearts')   return [10,30,50,70,88].map((l,i) => `<span style="left:${l}%;animation-duration:${5+i*0.3}s;animation-delay:${i*0.5}s">💗</span>`).join('');
+    if (fx === 'confetti') {
+      const colors = ['#ff5050','#50c8ff','#ffd050','#a855d6','#50d050','#ff80c0','#80d8ff'];
+      return colors.map((c,i) => `<span style="left:${i*14+5}%;background:${c};animation-duration:${4+i*0.15}s;animation-delay:${i*0.3}s"></span>`).join('');
+    }
+    // ── Round 2 effects ─────────────────────────────────────
+    if (fx === 'lightning') {
+      // 4 vertical bolts at varied positions, varied flash phase offsets
+      const positions = [22, 48, 70, 88];
+      return positions.map((l,i) => `<span style="left:${l}%;height:${50+i*15}vh;animation-duration:${3+i*0.6}s;animation-delay:${i*0.7}s"></span>`).join('');
+    }
+    if (fx === 'matrix') {
+      // 200 chars spread across the FULL modal — random top/left so the
+      // green rain fills the whole stats page, not one band at the top.
+      const chars = ['0','1','｜','ﾊ','ﾐ','ﾌ','ｦ','ｱ','ｴ','ｵ','ﾑ','ﾒ','*','#'];
+      let out = '';
+      for (let i = 0; i < 200; i++) {
+        const ch = chars[Math.floor(Math.random()*chars.length)];
+        const x = (Math.random()*100).toFixed(1);
+        const y = (Math.random()*100).toFixed(1);
+        const dur = (2.5+Math.random()*3).toFixed(2);
+        const delay = (-Math.random()*5).toFixed(2);
+        out += `<span style="left:${x}%;top:${y}%;animation-duration:${dur}s;animation-delay:${delay}s">${ch}</span>`;
+      }
+      return out;
+    }
+    if (fx === 'fireflies') {
+      let out = '';
+      for (let i = 0; i < 10; i++) out += `<span style="left:${i*10+5}%;animation-duration:${5+i*0.4}s;animation-delay:${i*0.6}s"></span>`;
+      return out;
+    }
+    if (fx === 'bubbles') {
+      let out = '';
+      const sizes = [10, 14, 8, 16, 12, 18, 10, 14];
+      for (let i = 0; i < 8; i++) {
+        const s = sizes[i];
+        out += `<span style="left:${i*12+4}%;width:${s}px;height:${s}px;animation-duration:${6+i*0.5}s;animation-delay:${i*0.7}s"></span>`;
+      }
+      return out;
+    }
+    if (fx === 'twinkling' || fx === 'radiation' || fx === 'holy_light' ||
+        fx === 'cyber_glitch' || fx === 'toxic_smoke' || fx === 'radiant_halo') {
+      // Pure background-aura effects — no particle spans needed
+      return '';
+    }
+    if (fx === 'leaves') {
+      const emojis = ['🍂','🍁','🍂','🍁','🍂'];
+      return emojis.map((e,i) => `<span style="left:${i*22+5}%;animation-duration:${6+i*0.5}s;animation-delay:${i*0.8}s">${e}</span>`).join('');
+    }
+    if (fx === 'diamond_dust') {
+      let out = '';
+      for (let i = 0; i < 30; i++) {
+        const x = (Math.random()*100).toFixed(1);
+        const y = (Math.random()*100).toFixed(1);
+        out += `<span style="left:${x}%;top:${y}%;animation-duration:${1.5+Math.random()*2}s;animation-delay:${Math.random()*3}s"></span>`;
+      }
+      return out;
+    }
+    if (fx === 'lava_bubbles') {
+      let out = '';
+      for (let i = 0; i < 8; i++) {
+        out += `<span style="left:${i*12+4}%;animation-duration:${5+i*0.4}s;animation-delay:${i*0.6}s"></span>`;
+      }
+      return out;
+    }
+    if (fx === 'ghost_wisps') {
+      const wisps = ['👻','👻','👻'];
+      return wisps.map((w,i) => `<span style="top:${20+i*25}%;animation-duration:${10+i*2}s;animation-delay:${i*3}s">${w}</span>`).join('');
+    }
+    if (fx === 'bat_flock') {
+      const bats = ['🦇','🦇','🦇','🦇'];
+      return bats.map((b,i) => `<span style="top:${15+i*22}%;animation-duration:${6+i*0.8}s;animation-delay:${i*1.2}s">${b}</span>`).join('');
+    }
+    // ── v3 particle effects — denser, instant-visibility (negative delay)
+    if (fx === 'confetti_v3') {
+      const colors = ['#ff3080','#30c0ff','#ffd030','#50ff80','#c050ff','#ff8040','#80c0ff','#ff60c0'];
+      let out = '';
+      // 140 particles spread across the FULL modal height (random top%)
+      // so confetti is visible everywhere, not just one falling band.
+      for (let i = 0; i < 140; i++) {
+        const x = (Math.random()*100).toFixed(1);
+        const y = (Math.random()*100).toFixed(1);
+        const c = colors[i % colors.length];
+        const dur = (3+Math.random()*3).toFixed(2);
+        const delay = (-Math.random()*6).toFixed(2);
+        const rot = Math.floor(Math.random()*360);
+        out += `<span style="left:${x}%;top:${y}%;background:${c};animation-duration:${dur}s;animation-delay:${delay}s;--r:${rot}deg"></span>`;
+      }
+      return out;
+    }
+    if (fx === 'cherry_storm_v3') {
+      let out = '';
+      // 100 petals spread across the FULL modal height
+      for (let i = 0; i < 100; i++) {
+        const x = (Math.random()*100).toFixed(1);
+        const y = (Math.random()*100).toFixed(1);
+        const dur = (4+Math.random()*4).toFixed(2);
+        const delay = (-Math.random()*8).toFixed(2);
+        out += `<span style="left:${x}%;top:${y}%;animation-duration:${dur}s;animation-delay:${delay}s">🌸</span>`;
+      }
+      return out;
+    }
+    if (fx === 'deepsea_bubbles_v3') {
+      let out = '';
+      // 120 bubbles spread across the FULL modal height with random top%.
+      for (let i = 0; i < 120; i++) {
+        const x = (Math.random()*100).toFixed(1);
+        const y = (Math.random()*100).toFixed(1);
+        const sz = 4+Math.floor(Math.random()*14);
+        const dur = (4+Math.random()*4).toFixed(2);
+        const delay = (-Math.random()*8).toFixed(2);
+        out += `<span style="left:${x}%;top:${y}%;width:${sz}px;height:${sz}px;animation-duration:${dur}s;animation-delay:${delay}s"></span>`;
+      }
+      return out;
+    }
+    if (fx === 'snowglobe_v3') {
+      let out = '';
+      // 130 snowflakes spread across the FULL modal height
+      for (let i = 0; i < 130; i++) {
+        const x = (Math.random()*100).toFixed(1);
+        const y = (Math.random()*100).toFixed(1);
+        const dur = (4+Math.random()*4).toFixed(2);
+        const delay = (-Math.random()*8).toFixed(2);
+        const sz = 2+Math.floor(Math.random()*4);
+        out += `<span style="left:${x}%;top:${y}%;width:${sz}px;height:${sz}px;animation-duration:${dur}s;animation-delay:${delay}s"></span>`;
+      }
+      return out;
+    }
+    if (fx === 'galaxy_drift_v3') {
+      const cols = ['#fff','#fff','#c0a0ff','#80c0ff','#ffe0b0','#fff'];
+      let out = '';
+      for (let i = 0; i < 80; i++) {
+        const x = (Math.random()*100).toFixed(1);
+        const y = (Math.random()*100).toFixed(1);
+        const sz = 1+Math.floor(Math.random()*3);
+        const dur = (1.5+Math.random()*2.5).toFixed(2);
+        const delay = (-Math.random()*4).toFixed(2);
+        out += `<span style="left:${x}%;top:${y}%;width:${sz}px;height:${sz}px;background:${cols[i%cols.length]};animation-duration:${dur}s;animation-delay:${delay}s"></span>`;
+      }
+      return out;
+    }
+    if (fx === 'constellation_v3') {
+      const stars = [
+        [20,15,-0.2],[35,30,-0.8],[25,50,-1.2],[50,65,-0.6],
+        [40,80,-1.5],[65,20,-1.0],[75,42,-0.4],[80,60,-1.8],
+        [60,85,-0.9],[15,75,-1.3],[55,10,-0.5],[90,30,-1.6],
+        [10,40,-0.3],[42,8,-1.4],[88,50,-2.1],[5,90,-0.7],
+        [30,95,-1.9],[70,5,-0.6],[95,15,-2.4],[12,55,-1.1],
+      ];
+      const lines = [
+        [21,15,18,40,-0.5],[35,30,22,-22,-1.2],[25,50,18,60,-2.0],
+        [50,65,18,-25,-0.8],[65,20,25,15,-1.5],[75,42,22,8,-2.2],
+        [55,10,18,50,-1.0],[60,85,14,-110,-1.7],
+        [10,40,15,30,-1.4],[88,50,8,-160,-0.9],[42,8,12,80,-2.3],
+      ];
+      let out = '';
+      for (const [t,l,d] of stars)
+        out += `<span class="star" style="top:${t}%;left:${l}%;animation-delay:${d}s"></span>`;
+      for (const [t,l,w,r,d] of lines)
+        out += `<span class="line" style="top:${t}%;left:${l}%;width:${w}%;transform:rotate(${r}deg);animation-delay:${d}s"></span>`;
+      return out;
+    }
+    if (fx === 'zarosian_void_v3') {
+      const runes = [
+        [18,18,-0.5,'Z',32],[30,78,-1.5,'⏣',26],
+        [62,12,-2.5,'Z',30],[75,70,-1.0,'⏣',24],
+        [48,50,-3.0,'Ƶ',40],[12,60,-2.0,'Z',26],
+        [85,30,-0.8,'Ƶ',28],[55,90,-1.8,'⏣',22],
+      ];
+      return runes.map(([t,l,d,ch,sz]) =>
+        `<span class="rune" style="top:${t}%;left:${l}%;animation-delay:${d}s;font-size:${sz}px">${ch}</span>`
+      ).join('');
+    }
+    return ''; // glow / prism / shimmer don't need particle spans
+  }
+
   function esc(s) {
     return String(s ?? '')
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -284,7 +497,7 @@
     // Top-server minutes helpers
     const topMinsOn = (n) => top[n - 1]?.minutes || 0;
 
-    return [
+    const badges = [
       // ── PLAYTIME ────────────────────────────────
       { icon:'⚔️',  name:'First Steps',     sub:'Play your first session',    unlocked: totalMin > 0 },
       { icon:'🔥',  name:'Warming Up',      sub:'1 hour played',              unlocked: totalHours >= 1 },
@@ -427,6 +640,20 @@
       { icon:'🎵',  name:'Music Lover',        sub:'Favorite a music track',      unlocked: false },
       { icon:'🎶',  name:'DJ',                 sub:'Favorite 25 music tracks',    unlocked: false },
     ];
+    // Server is authoritative for unlocks. Walk the badge list, look up
+    // each by name in the loaded catalog (gives us the server id), and if
+    // that id is in data.unlockedAchievements, override the client
+    // predicate. Catches every badge whose client predicate is wrong /
+    // hardcoded false (Music Lover, DJ, friends, etc.) AND any future
+    // server/client drift.
+    const unlockedSet = new Set(data?.unlockedAchievements || []);
+    if (unlockedSet.size && _achCatalogByName) {
+      for (const b of badges) {
+        const cat = _achCatalogByName[b.name];
+        if (cat && unlockedSet.has(cat.id)) b.unlocked = true;
+      }
+    }
+    return badges;
   }
 
   function buildHubBadges(data) {
@@ -806,10 +1033,15 @@
   // Pass `username` to render someone else's profile (no coin balance,
   // no coin activity, action buttons in hero).
   // ──────────────────────────────────────────────────────────────
-  window.openStatsModal = async function openStatsModal(username = null) {
+  window.openStatsModal = async function openStatsModal(username = null, opts = {}) {
     // Reuse if already open
     if (document.getElementById('stats-modal-overlay')) return;
     const isSelf = !username;
+    // Optional preview overrides from the Hub Store. When set, the hero
+    // renders as if this item were equipped (without persisting it to the
+    // user's account). Lets players try-before-buy.
+    const previewItem = opts.previewItem || null;
+    const previewSlot = opts.previewSlot || null; // title / color / border / effect
 
     const overlay = document.createElement('div');
     overlay.id = 'stats-modal-overlay';
@@ -929,11 +1161,42 @@
       ? (window.state?.streak?.current || data.loginStreak || 0)
       : (data.loginStreak || data.streak || 0);
 
-    // Equipped cosmetics. Phase 2 backend wires the real values; for now
-    // show "None" so the layout's there without using em dashes.
-    const equippedTitle  = data.equippedTitle  || 'None';
-    const equippedColor  = data.equippedColor  || 'None';
-    const equippedBorder = data.equippedBorder || 'None';
+    // Equipped cosmetics. Comes from /api/stats/me (Phase 2 backend) under
+    // `data.equipped.{title|color|border|effect}` with style hints inside
+    // each slot's `.style` object.
+    //
+    // Preview mode (from the Hub Store): the previewed item *replaces*
+    // whatever the user currently has equipped in that one slot. The user's
+    // other slots stay unchanged so they can see how a new cosmetic fits
+    // alongside their existing loadout.
+    const eq = data.equipped || {};
+    let equippedTitle  = eq.title?.name  || 'None';
+    let equippedColor  = eq.color?.name  || 'None';
+    let equippedBorder = eq.border?.name || 'None';
+    let equippedEffect = eq.effect?.name || null;
+    let nameStyleCss   = eq.color?.style?.nameStyle || '';
+    let avBorderColor  = eq.border?.style?.avBorder || '#c8a840';
+    let avBorderGlow   = eq.border?.style?.avGlow   || '0 4px 18px rgba(200,168,64,0.35)';
+    let avBorderType   = eq.border?.style?.borderType || '';
+    let effectFx       = eq.effect?.style?.fx || null;
+
+    if (previewItem && previewSlot) {
+      // Override only the previewed slot. Existing items in other slots
+      // remain visible so the user sees how the new cosmetic looks
+      // alongside their current loadout.
+      if (previewSlot === 'title')  equippedTitle  = previewItem.name;
+      if (previewSlot === 'color')  { equippedColor  = previewItem.name; nameStyleCss = previewItem.nameStyle || ''; }
+      if (previewSlot === 'border') {
+        equippedBorder    = previewItem.name;
+        avBorderColor     = previewItem.avBorder || '#c8a840';
+        avBorderGlow      = previewItem.avGlow   || '0 4px 18px rgba(200,168,64,0.35)';
+        // previewItem comes from hubstore.js's normalised catalog where
+        // borderType is a flat field. Lift it so the spike cage renders
+        // in preview mode too.
+        avBorderType      = previewItem.borderType || '';
+      }
+      if (previewSlot === 'effect') { equippedEffect = previewItem.name; effectFx = previewItem.fx || null; }
+    }
 
     // Top servers (capped at SERVERS_PER_SECTION = 5)
     const topServers = (data.topServers || []).slice(0, SERVERS_PER_SECTION);
@@ -962,7 +1225,22 @@
         return 'Achievement: ' + pretty;
       }
       if (src === 'daily')      return 'Daily login bonus';
-      if (src === 'purchase')   return 'Bought: ' + (sid || 'cosmetic');
+      if (src === 'purchase') {
+        // Prefer the real catalog name + category label so users see
+        // "Bought: Frost (Name Color)" instead of "Bought: c_frost".
+        // Catalog is published on window by hubstore.js; falls back to a
+        // prettified slug if the store hasn't been opened yet this session.
+        const item = window.HUB_STORE_BY_ID?.[sid];
+        if (item) {
+          const cat = window.HUB_STORE_CAT_LABEL?.[item.cat] || '';
+          return cat ? `Bought: ${item.name} (${cat})` : `Bought: ${item.name}`;
+        }
+        if (!sid) return 'Bought: cosmetic';
+        // Fallback: c_frost → Frost / b_stone → Stone / t_just_vibes → Just Vibes
+        const slug = sid.replace(/^[a-z]_/, '').replace(/_/g, ' ');
+        const pretty = slug.replace(/\b\w/g, c => c.toUpperCase());
+        return 'Bought: ' + pretty;
+      }
       if (src === 'milestone')  return 'Hub Level milestone';
       if (src === 'admin')      return 'Staff adjustment';
       if (src === 'refund')     return 'Refund';
@@ -1019,13 +1297,81 @@
         <button class="sm-action-btn" data-sm-friend="${esc(displayName)}">+ Add Friend</button>
       </div>`;
 
+    // Banner that floats over the modal explaining preview mode. Lets the
+    // user know their real loadout hasn't changed and gives them a way to
+    // jump back to the store and actually buy/equip the previewed item.
+    const previewBanner = previewItem ? `
+      <div class="sm-preview-banner">
+        <span>👁️  Previewing: <b>${esc(previewItem.name)}</b> · This is what your profile would look like with this ${previewSlot} equipped.</span>
+        <button class="sm-preview-close" id="sm-preview-close-btn">CLOSE PREVIEW</button>
+      </div>` : '';
+
+    // Profile effect now spans the WHOLE stats modal (petals fall through
+    // every section, not just the hero). Injected at the modal level so it
+    // covers the full scrollable body.
+    if (effectFx) {
+      const modal = overlay.querySelector('.stats-modal');
+      // Strip any existing fx layer from a prior open (defensive)
+      modal.querySelector('.sm-modal-fx')?.remove();
+      const fxNode = document.createElement('div');
+      fxNode.className = `sm-modal-fx hs-fx-layer hs-fx-${effectFx}`;
+      fxNode.innerHTML = effectFxSpansFor(effectFx);
+      // Insert as the first child so the modal background sits behind it
+      // but `.stats-body` (z-index:1) sits in front.
+      modal.insertBefore(fxNode, modal.firstChild);
+      // Flag the modal so the .has-fx CSS overrides kick in and dim
+      // every card panel so the fx bleeds through.
+      modal.classList.add('has-fx');
+    } else {
+      const modal = overlay.querySelector('.stats-modal');
+      modal?.classList.remove('has-fx');
+    }
+
+    // Avatar style override (when previewing a border)
+    const avatarStyle = `style="border-color:${avBorderColor}; box-shadow:${avBorderGlow}"`;
+    // Animated border cage — Mod Crown laser spikes, Lightning bolts,
+    // Wave ripples, etc. Uses the shared `borderCageHTML` builder from
+    // hubstore.js so the same cage HTML renders everywhere. Wrapped in
+    // .sm-hero-av-frame so the cage sits as a sibling of the avatar
+    // (avatar's overflow:hidden doesn't clip the cage) and the avatar
+    // renders ON TOP via z-index.
+    const heroSpikes = (typeof window.borderCageHTML === 'function')
+      ? window.borderCageHTML(avBorderType)
+      : '';
+    const usingSpikes = !!heroSpikes;
+    // Name color style override (when previewing a name color)
+    const nameStyle = nameStyleCss ? `style="${nameStyleCss}"` : '';
+    // Title pill picks up the title's own nameStyle so a gradient title
+    // (e.g. Voidwalker's purple gradient, Firstborn's gold inferno) renders
+    // here exactly the way it does on the Hub Store tile, instead of
+    // falling back to the default flat gold pill styling.
+    const titleStyleCss = (previewItem && previewSlot === 'title')
+      ? (previewItem.nameStyle || '')
+      : (eq.title?.style?.nameStyle || '');
+    const titleStyle = titleStyleCss ? `style="${titleStyleCss}"` : '';
+
     overlay.querySelector('#stats-modal-body').innerHTML = `
+      ${previewBanner}
       <!-- HERO -->
       <div class="sm-hero">
-        <div class="sm-hero-avatar">${heroAvatarHtml}</div>
+        ${usingSpikes
+          ? `<div class="sm-hero-av-frame">${heroSpikes}<div class="sm-hero-avatar" ${avatarStyle}>${heroAvatarHtml}</div></div>`
+          : `<div class="sm-hero-avatar" ${avatarStyle}>${heroAvatarHtml}</div>`}
         <div class="sm-hero-info">
-          <div class="sm-hero-name">${esc(displayName)}</div>
-          ${equippedTitle && equippedTitle !== 'None' ? `<div class="sm-hero-title">${esc(equippedTitle)}</div>` : ''}
+          <div class="sm-hero-name">${
+            // Use shared renderName so per-letter name colours
+            // (Bouncing Letters, Domino Flip, etc) wrap each glyph in a
+            // span. Falls back to single-element inline-style for
+            // ordinary gradient/glow colours. previewItem in colour-
+            // preview mode wins; otherwise read from equipped.
+            (typeof window.renderName === 'function')
+              ? window.renderName(displayName,
+                  (previewItem && previewSlot === 'color')
+                    ? { color: { style: previewItem } }
+                    : { color: eq.color })
+              : `<span style="${nameStyleCss}">${esc(displayName)}</span>`
+          }</div>
+          ${equippedTitle && equippedTitle !== 'None' ? `<div class="sm-hero-title" ${titleStyle}>${esc(equippedTitle)}</div>` : ''}
           ${heroActions}
         </div>
         <div class="sm-hero-stats">
@@ -1095,7 +1441,8 @@
           <div class="sm-eq-row"><div class="sm-eq-lbl">Title</div><div class="sm-eq-val">${esc(equippedTitle)}</div></div>
           <div class="sm-eq-row"><div class="sm-eq-lbl">Name Color</div><div class="sm-eq-val">${esc(equippedColor)}</div></div>
           <div class="sm-eq-row"><div class="sm-eq-lbl">Avatar Border</div><div class="sm-eq-val">${esc(equippedBorder)}</div></div>
-          ${isSelf ? `<button class="sm-eq-btn" disabled>Hub Store coming soon</button>` : ''}
+          ${equippedEffect ? `<div class="sm-eq-row"><div class="sm-eq-lbl">Profile Effect</div><div class="sm-eq-val">${esc(equippedEffect)}</div></div>` : ''}
+          ${isSelf ? `<button class="sm-eq-btn" id="sm-open-store-btn">Open Hub Store →</button>` : ''}
         </div>
       </div>
 
@@ -1130,6 +1477,26 @@
           window.showToast(`+ ${syncResult.newly_unlocked.length - 3} more achievements unlocked`, 'success');
         }, newAch.length * 1100);
       }
+    }
+
+    // Wire "Open Hub Store" button — closes the modal and switches tabs
+    const openStoreBtn = overlay.querySelector('#sm-open-store-btn');
+    if (openStoreBtn) {
+      openStoreBtn.addEventListener('click', () => {
+        close();
+        document.querySelector('.nav-tab[data-tab="hubstore"]')?.click();
+      });
+    }
+
+    // Wire CLOSE PREVIEW button when in store-preview mode
+    const previewCloseBtn = overlay.querySelector('#sm-preview-close-btn');
+    if (previewCloseBtn) {
+      previewCloseBtn.addEventListener('click', () => {
+        close();
+        // Re-focus the Hub Store tab so users land back where they came from
+        const storeTab = document.querySelector('.nav-tab[data-tab="hubstore"]');
+        if (storeTab && !storeTab.classList.contains('active')) storeTab.click();
+      });
     }
 
     // Wire profile actions (only present in other-player view)
@@ -1207,6 +1574,10 @@
       } catch (e) {}
       if (!shouldStillRender()) return;
     }
+    // Make sure the achievement catalog (server-side coin rewards) is
+    // loaded before we paint the grid; otherwise the first render shows
+    // badges with no coin pills until the user filter-clicks.
+    await loadAchCatalog();
     const isEmpty = !data || data.error || (typeof data === 'object' && 'raw' in data) || !('totalMinutes' in data);
     if (isEmpty) {
       el.innerHTML = `
@@ -1227,14 +1598,28 @@
       const grid = el.querySelector('.sd-badge-grid');
       if (!grid) return;
       grid.innerHTML = list.length
-        ? list.map(b => `
-            <div class="sd-badge ${b.unlocked ? 'unlocked' : 'locked'}" data-tip="${esc(b.name)} — ${esc(b.sub)}">
+        ? list.map(b => {
+            // Look up coin reward from server catalog. Match by name; fall
+            // back to 0 if the client has a badge the server doesn't pay
+            // out for (we have ~112 client badges, ~83 server-paying).
+            const cat = _achCatalogByName[b.name];
+            const coins = cat ? cat.coins : 0;
+            const coinPill = coins > 0
+              ? `<span class="sd-badge-coin ${b.unlocked ? 'earned' : ''}">+${coins.toLocaleString()}</span>`
+              : '';
+            // No `data-tip` or `title=` — the badge body already shows
+            // name + sub + coin pill. A hover tooltip just duplicated the
+            // same text, often visible alongside it.
+            return `
+            <div class="sd-badge ${b.unlocked ? 'unlocked' : 'locked'}">
               <span class="sd-badge-icon">${b.icon}</span>
               <div class="sd-badge-body">
                 <div class="sd-badge-name">${esc(b.name)}</div>
                 <div class="sd-badge-sub">${esc(b.sub)}</div>
               </div>
-            </div>`).join('')
+              ${coinPill}
+            </div>`;
+          }).join('')
         : `<div class="sd-empty small">
             ${_achFilter === 'unlocked' ? "You haven't unlocked any yet — start playing to earn your first badge!"
               : "You've unlocked all of them — nothing left to chase here. Legend."}

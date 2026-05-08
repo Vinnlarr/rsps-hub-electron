@@ -570,9 +570,90 @@ function userAvatarSrc(username, opts = {}) {
   // server does so the URL doesn't 404 on usernames with special chars.
   const safe = String(username).replace(/[^a-zA-Z0-9_-]/g, '');
   if (!safe) return null;
-  return `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(safe)}.jpg`;
+  // Cache-bust per launcher session so when someone uploads a new avatar,
+  // it appears across DM headers / leaderboard / chat without browser cache
+  // serving the previous version. Uses a session-scoped stamp (first call
+  // wins) so we don't refetch the same image hundreds of times during one
+  // session.
+  if (!window._avatarSessionStamp) window._avatarSessionStamp = Date.now();
+  return `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(safe)}.jpg?v=${window._avatarSessionStamp}`;
 }
 window.userAvatarSrc = userAvatarSrc;
+
+// Hub-wide cache invalidation helper. Used after friend / store / coin
+// mutations so the next panel render fetches fresh data from the server
+// instead of serving the 30-second TTL cache and "popping back up" stale
+// rows the user just removed.
+function invalidateCaches(...keys) {
+  if (!window.DATA_CACHE) return;
+  for (const k of keys) {
+    if (window.DATA_CACHE[k]) {
+      window.DATA_CACHE[k].data = null;
+      window.DATA_CACHE[k].at   = 0;
+    }
+  }
+}
+window.invalidateCaches = invalidateCaches;
+
+// ── Equipped-cosmetic helpers (Hub Store Phase 2 social) ─────────────────────
+// Most social endpoints (hub chat, DMs, conversations, friends list, friend
+// requests) now embed each user's `equipped.{title,color}` in their rows.
+// These helpers render the title pill + name-color style consistently
+// wherever a username appears.
+//
+// `equipped` shape: { title: { name, style: { nameStyle? } } | null,
+//                     color: { name, style: { nameStyle? } } | null }
+
+// Inline style attr to apply to the username text element. Returns "" if
+// no name color equipped (fall through to default styling). Includes the
+// inline-block + padding-right hack so gradient bg-clip-text doesn't clip
+// the last letter — same Chromium bug we hit on the stats hero.
+function nameStyleAttr(equipped) {
+  const css = equipped?.color?.style?.nameStyle;
+  if (!css) return '';
+  return `style="${css}; display:inline-block; padding-right:0.15em"`;
+}
+
+// Renders a username as a string of `<span>` elements, one per letter, when
+// the equipped name colour is a "split letters" effect (Bouncing Letters,
+// Domino Flip, etc). The wrapping element gets the per-letter CSS class
+// (`nc-bounce`, `nc-domino`...) so the keyframes can animate each glyph
+// independently. For ordinary colours, returns the username with the
+// regular nameStyleAttr applied.
+//
+// Use as: `${renderName(username, equipped)}`  (returns full <span>...).
+function renderName(username, equipped) {
+  const safe = escHtml(username || '');
+  const colorStyle = equipped?.color?.style || {};
+  if (colorStyle.splitLetters && colorStyle.ncClass) {
+    const letters = String(username || '').split('').map(ch =>
+      `<span>${escHtml(ch)}</span>`
+    ).join('');
+    return `<span class="${escAttr(colorStyle.ncClass)}" style="display:inline-block">${letters}</span>`;
+  }
+  // Ordinary single-element gradient/effect — apply inline style.
+  const styleAttr = nameStyleAttr(equipped);
+  return styleAttr
+    ? `<span ${styleAttr}>${safe}</span>`
+    : safe;
+}
+window.renderName = renderName;
+
+// Tiny gold/gradient title pill that sits under or beside a username in
+// chat / DMs / friends / etc. Returns "" if no title equipped.
+function equippedTitleHTML(equipped, opts = {}) {
+  const t = equipped?.title;
+  if (!t || !t.name) return '';
+  const css = t.style?.nameStyle || '';
+  const styleAttr = css
+    ? `style="${css}; display:inline-block; padding:0 6px"`
+    : '';
+  const klass = opts.size === 'tiny' ? 'eq-title eq-title-tiny' : 'eq-title';
+  return `<span class="${klass}" ${styleAttr}>${escHtml(t.name)}</span>`;
+}
+
+window.nameStyleAttr     = nameStyleAttr;
+window.equippedTitleHTML = equippedTitleHTML;
 
 // Returns inner HTML for an avatar circle: <img> when we have a source,
 // else the user's first-letter glyph. Falls back to letter on img error.
@@ -1026,15 +1107,31 @@ function getFilteredServers() {
 
   // Sort
   if (state.sortOrder === 'players')   list.sort((a, b) => (b.hubPlayers || 0) - (a.hubPlayers || 0));
-  if (state.sortOrder === 'rating')    list.sort((a, b) => (+b.avg_rating || 0) - (+a.avg_rating || 0) || (b.review_count || 0) - (a.review_count || 0));
-  if (state.sortOrder === 'reviews')   list.sort((a, b) => (b.review_count || 0) - (a.review_count || 0) || (+b.avg_rating || 0) - (+a.avg_rating || 0));
+  // The Java backend serialises these as camelCase (`reviewCount`,
+  // `avgRating`). The PHP endpoint uses snake_case but Java's
+  // ServerProfile maps with @SerializedName and re-emits camelCase. Reading
+  // the snake_case names here was returning undefined on every server, so
+  // every comparator returned 0 and `list.sort` was a no-op (Whiprealgood's
+  // bug — Most Reviewed showed servers in API order, not by reviews).
+  if (state.sortOrder === 'rating')    list.sort((a, b) => (+b.avgRating || 0) - (+a.avgRating || 0) || (b.reviewCount || 0) - (a.reviewCount || 0));
+  if (state.sortOrder === 'reviews')   list.sort((a, b) => (b.reviewCount || 0) - (a.reviewCount || 0) || (+b.avgRating || 0) - (+a.avgRating || 0));
   if (state.sortOrder === 'name-asc')  list.sort((a, b) => a.name.localeCompare(b.name));
   if (state.sortOrder === 'name-desc') list.sort((a, b) => b.name.localeCompare(a.name));
+  if (state.sortOrder === 'recent') {
+    // Newest server first by created_at (camelCase or snake_case from API).
+    list.sort((a, b) => {
+      const ta = a.createdAt || a.created_at || '';
+      const tb = b.createdAt || b.created_at || '';
+      return tb.localeCompare(ta);
+    });
+  }
 
-  // Favourites to top
-  const pinned   = list.filter(s =>  state.favourites.has(s.name));
-  const unpinned = list.filter(s => !state.favourites.has(s.name));
-  return [...pinned, ...unpinned];
+  // Favourites no longer pin to the main server list. They live only in the
+  // left-hand favourites sidebar so the user's explicit sort always wins.
+  // Pinning unrated favourites above 5-star non-favourites was the bug
+  // Whiprealgood reported ("top results have no reviews while others
+  // underneath do"). The favourites sidebar still gives one-click access.
+  return list;
 }
 
 function renderServers() {
@@ -1102,7 +1199,7 @@ function buildServerCard(server) {
     <div class="card-info">
       <div class="card-header">
         <span class="card-title">${escHtml(server.name)}</span>
-        <span class="status-dot ${isOnline ? 'online' : 'offline'}" title="${isOnline ? 'Online' : 'Offline'}"></span>
+        <span class="status-dot ${isOnline ? 'online' : 'offline'}"></span>
         <span class="level-badge-wrap"
           data-lv="${level}"
           data-rank="${escHtml(rankName)}"
@@ -1112,17 +1209,17 @@ function buildServerCard(server) {
           data-time="${escHtml(calcTooltip(server.name, level, minutes).split('·')[1]?.trim() || 'Max level')}">
           <span class="level-badge" style="border-color:${accent};color:${accent}">Lv. ${level}</span>
         </span>
-        ${server.review_count > 0 ? `
-          <span class="card-stars-row" title="${server.review_count} review${server.review_count === 1 ? '' : 's'}">
-            <span class="card-stars">${starsFromRating(server.avg_rating)}</span>
-            <span class="card-stars-num">${(+server.avg_rating).toFixed(1)}</span>
-            <span class="card-stars-count">· ${server.review_count}</span>
-          </span>
-        ` : ''}
       </div>
       <p class="card-desc">${escHtml(truncate(server.description || '', 200))}</p>
       <div class="card-tags">
         ${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}
+        ${server.reviewCount > 0 ? `
+          <span class="card-stars-row">
+            <span class="card-stars">${starsFromRating(server.avgRating)}</span>
+            <span class="card-stars-num">${(+server.avgRating).toFixed(1)}</span>
+            <span class="card-stars-count">· ${server.reviewCount}</span>
+          </span>
+        ` : ''}
       </div>
     </div>
     <div class="card-actions">
@@ -1341,6 +1438,20 @@ async function renderAltContent(tab, el) {
   // scroll — leaving it on a non-DM tab kills scrolling everywhere
   // (achievements / stats / friends list etc.) until reload.
   el.classList.remove('dm-host');
+  // Hub Chat (openGCRoom) sets inline `overflow:hidden; padding:0` on the
+  // panel so the chat surface can fill the whole viewport. Inline styles
+  // beat CSS classes, so leaving them in place after the user switches to
+  // Achievements / Friends / Leaderboard freezes those tabs at viewport
+  // height — content overflows but never scrolls. Reset them every time.
+  el.style.overflow = '';
+  el.style.padding  = '';
+
+  // Stop the Hub Store featured-banner auto-rotate when switching away.
+  // The store re-arms its own timer when the user comes back.
+  if (tab !== 'hubstore' && window._hsFeatTimer) {
+    clearInterval(window._hsFeatTimer);
+    window._hsFeatTimer = null;
+  }
 
   if (tab === 'stats') {
     if (window.renderStats) {
@@ -1491,6 +1602,14 @@ async function renderAltContent(tab, el) {
 
   else if (tab === 'news') {
     await renderNewsTab(el);
+  }
+
+  else if (tab === 'hubstore') {
+    if (window.renderHubStore) {
+      window.renderHubStore(el);
+    } else {
+      el.innerHTML = '<p class="loading-msg">Loading Hub Store...</p>';
+    }
   }
 }
 
@@ -3250,7 +3369,7 @@ function buildFriendsHTML({ friends = [], requests = [] }) {
       <div class="friend-row friend-req-row" data-username="${r.username}">
         <div class="friend-avatar req">${avatarInnerHTML(r.username, { hasAvatar: !!r.hasAvatar })}</div>
         <div class="friend-info">
-          <span class="friend-name lb-clickable" data-open-profile="${escAttr(r.username)}">${escHtml(r.username)}</span>
+          <span class="friend-name lb-clickable" data-open-profile="${escAttr(r.username)}">${renderName(r.username, r.equipped)}</span>
           <span class="friend-status">Wants to be your friend</span>
         </div>
         <div class="friend-actions">
@@ -3282,7 +3401,7 @@ function friendRowHTML(f) {
     <div class="friend-row" data-username="${f.username}">
       <div class="friend-avatar ${f.online ? 'online' : ''}">${avatarInnerHTML(f.username, { hasAvatar: !!f.hasAvatar })}</div>
       <div class="friend-info">
-        <span class="friend-name lb-clickable" data-open-profile="${escAttr(f.username)}">${escHtml(f.username)}</span>
+        <span class="friend-name lb-clickable" data-open-profile="${escAttr(f.username)}">${renderName(f.username, f.equipped)}</span>
         <span class="friend-status">${statusText}</span>
       </div>
       <div class="friend-actions">
@@ -3305,6 +3424,7 @@ function bindFriendsEvents(el) {
       const res = await api.addFriend(username);
       input.value = '';
       showToast(res.result === 'ok' ? `Request sent to ${username}!` : (res.result || 'Request sent!'), 'success');
+      invalidateCaches('friends', 'friendReqs');
     } catch { showToast('Failed to send request.', 'error'); }
     btn.disabled = false; btn.textContent = 'SEND REQUEST';
   });
@@ -3316,20 +3436,51 @@ function bindFriendsEvents(el) {
   // Accept/decline friend requests
   el.querySelectorAll('.friend-accept-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (btn.disabled) return;             // de-bounce double-clicks
+      btn.disabled = true;
       const username = btn.dataset.username;
       try {
-        await api.acceptFriend(username);
+        // acceptFriend returns Boolean from Java (false on error). Without
+        // checking the return, the toast spammed "added as a friend!" even
+        // when the server replied 404 (already accepted, race condition).
+        const ok = await api.acceptFriend(username);
+        if (!ok) {
+          showToast(`Could not accept request from ${username} (may already be accepted).`, 'error');
+          invalidateCaches('friends', 'friendReqs');
+          renderAltContent('friends', el);
+          return;
+        }
         showToast(`${username} added as a friend!`, 'success');
+        invalidateCaches('friends', 'friendReqs');
         renderAltContent('friends', el);
-      } catch { showToast('Failed to accept request.', 'error'); }
+        // Trigger achievement sync — accepting a friend may unlock
+        // First Friend / Social Butterfly / Community Pillar / Hub
+        // Ambassador. Show a coin toast for each newly-awarded one.
+        try {
+          const res = await window.hub.post('/api/achievements/sync', {});
+          (res?.newly_unlocked || []).forEach(a => {
+            showToast(`🏆 ${a.name} unlocked! +${a.coins} coins`, 'success');
+          });
+          if (res?.newly_unlocked?.length && window.DATA_CACHE?.stats) {
+            window.DATA_CACHE.stats.data = null;
+            window.DATA_CACHE.stats.at   = 0;
+          }
+        } catch {}
+      } catch {
+        showToast('Failed to accept request.', 'error');
+      }
+      // Don't re-enable — the row is gone after re-render anyway.
     });
   });
 
   el.querySelectorAll('.friend-decline-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
       const username = btn.dataset.username;
       try {
         await api.declineFriend(username);
+        invalidateCaches('friends', 'friendReqs');
         btn.closest('.friend-row')?.remove();
       } catch { showToast('Failed to decline request.', 'error'); }
     });
@@ -3355,6 +3506,8 @@ function bindFriendsEvents(el) {
   // Remove friend
   el.querySelectorAll('.friend-remove-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
       const username = btn.dataset.username;
       const ok = await rhConfirm(`Remove ${username} from your friends?`, {
         title: 'Remove friend',
@@ -3362,12 +3515,26 @@ function bindFriendsEvents(el) {
         cancelText: 'Cancel',
         danger: true,
       });
-      if (!ok) return;
+      if (!ok) { btn.disabled = false; return; }
       try {
-        await api.removeFriend(username);
-        btn.closest('.friend-row')?.remove();
+        // Java's removeFriend returns boolean (false if PHP responded with
+        // an error). Without checking, the row got DOM-removed even when
+        // the server-side delete failed → next panel refresh re-fetched
+        // and the friend "popped back up". Force a fresh refresh from the
+        // server so the visible state matches the DB.
+        const success = await api.removeFriend(username);
+        if (!success) {
+          showToast(`Could not remove ${username}. Please try again.`, 'error');
+          btn.disabled = false;
+          return;
+        }
         showToast(`${username} removed.`, 'success');
-      } catch { showToast('Failed to remove friend.', 'error'); }
+        invalidateCaches('friends', 'friendReqs');
+        renderAltContent('friends', el);
+      } catch {
+        showToast('Failed to remove friend.', 'error');
+        btn.disabled = false;
+      }
     });
   });
 }
@@ -3397,11 +3564,20 @@ function renderConversationList(el, convos) {
   // Build a {username: unread-count} map from the server's conversations
   // payload so we can flag rows whose newest message hasn't been read yet.
   const unreadMap = {};
+  // And lift the server-provided `equipped` (Hub Store Phase 2) so each
+  // convo row can render the other party's title pill + name color.
+  const equippedMap = {};
+  // Same for hasAvatar so rows show real profile pictures instead of
+  // falling back to the letter glyph (the convo `list` is built from a
+  // local Set of usernames, so anything not lifted here is lost).
+  const hasAvatarMap = {};
   for (const c of convos) {
     const u = c.username || c.with_user || c.other_user;
     if (!u) continue;
     const n = parseInt(c.unread || '0', 10) || 0;
     if (n > 0) unreadMap[u] = n;
+    if (c.equipped) equippedMap[u] = c.equipped;
+    if (c.hasAvatar || c.has_avatar) hasAvatarMap[u] = true;
   }
 
   const list = [...storeUsernames].map(username => {
@@ -3412,6 +3588,8 @@ function renderConversationList(el, convos) {
       lastMsg: last?.content || '',
       lastTs:  last?.timestamp || last?.sent_at || last?.created_at || '',
       unread:  unreadMap[username] || 0,
+      equipped: equippedMap[username] || null,
+      hasAvatar: !!hasAvatarMap[username],
     };
   })
   // Unread conversations float to the top; otherwise newest-message-first.
@@ -3443,7 +3621,7 @@ function renderConversationList(el, convos) {
       <div class="convo-row ${c.unread > 0 ? 'has-unread' : ''}" data-username="${escHtml(c.username)}">
         <div class="friend-avatar">${avatarInnerHTML(c.username, { hasAvatar: !!c.hasAvatar })}</div>
         <div class="friend-info">
-          <span class="friend-name">${escHtml(c.username)}${c.unread > 0 ? `<span class="convo-unread-badge">${c.unread}</span>` : ''}</span>
+          <span class="friend-name">${renderName(c.username, c.equipped)}${c.unread > 0 ? `<span class="convo-unread-badge">${c.unread}</span>` : ''}</span>
           <span class="friend-status convo-preview">${escHtml(c.lastMsg || 'No messages yet')}</span>
         </div>
         ${c.lastTs ? `<span class="convo-ts">${escHtml(fmtConvoTs(c.lastTs))}</span>` : ''}
@@ -3538,7 +3716,9 @@ async function openDM(el, username) {
       const body  = m.content || m.message || '';
       return `
         <div class="dm-msg ${isOwn ? 'own' : 'other'}">
-          ${!isOwn ? `<span class="dm-sender">${escHtml(m.sender || '?')}</span>` : ''}
+          ${!isOwn
+            ? `<span class="dm-sender">${renderName(m.sender || '?', m.equipped)}</span>`
+            : ''}
           <div class="dm-bubble">${escHtml(body)}</div>
         </div>`;
     }).join('');
@@ -3694,9 +3874,28 @@ async function openGCRoom(el, roomId, roomName) {
       div.dataset.body = body;
       div.style.opacity = '0.6';
     }
-    div.innerHTML = !isOwn
-      ? `<span class="dm-sender">${escHtml(m.username)}</span><div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`
-      : `<div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`;
+    // Equipped name color is applied to the sender span via inline style;
+    // equipped title renders as a small pill next to the name on the SAME
+    // line. Both wrapped in `.dm-sender-row` because `.dm-msg` is a flex
+    // column — without the wrapper each direct child stacks vertically and
+    // the title pill ends up on its own row below the name.
+    // Chat uses the standard pill (not the tiny one) since it now sits
+    // inline with the name on the sender row — needs to read at a glance.
+    const titlePill   = equippedTitleHTML(m.equipped);
+    // Username in Hub Chat is clickable: opens the sender's profile modal
+    // (same handler as leaderboard / news / friends list — see the
+    // [data-open-profile] global delegation in app.js). Skipped for the
+    // 'Hub' system messages so the welcome banner doesn't try to open a
+    // non-existent profile.
+    // renderName handles per-letter colours (Bouncing Letters, Domino
+    // Flip, etc) by wrapping each glyph in a span. Single-element
+    // gradient/glow colours fall through to inline-style.
+    const isSystem = m.username === 'Hub';
+    const senderInner = renderName(m.username, m.equipped);
+    const senderHtml = (!isOwn && !isSystem)
+      ? `<span class="dm-sender lb-clickable" data-open-profile="${escAttr(m.username)}">${senderInner}</span>`
+      : `<span class="dm-sender">${senderInner}</span>`;
+    div.innerHTML = `<div class="dm-sender-row">${senderHtml}${titlePill}</div><div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`;
     msgEl.appendChild(div);
   }
 
@@ -4143,8 +4342,11 @@ async function loadServerReviews(server, overlay) {
     </div>
   `;
 
-  // Star picker
+  // Star picker — only present when the user is eligible to review
+  // (otherwise the .sd-rev-locked block renders instead). Skip wiring
+  // the star/submit handlers when the picker isn't in the DOM.
   const starsEl = host.querySelector('#sd-rev-stars');
+  if (!starsEl) return;
   starsEl.querySelectorAll('.sd-star').forEach(s => {
     s.addEventListener('click', () => {
       const n = +s.dataset.n;
@@ -5054,7 +5256,9 @@ function startMessagePolling() {
         const wasBottom = msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 60;
         msgEl.innerHTML = fresh.messages.map(m => `
           <div class="dm-msg ${m.sender === state.user.username ? 'own' : 'other'}">
-            ${m.sender !== state.user.username ? `<span class="dm-sender">${escHtml(m.sender)}</span>` : ''}
+            ${m.sender !== state.user.username
+              ? `<span class="dm-sender">${renderName(m.sender, m.equipped)}</span>`
+              : ''}
             <div class="dm-bubble">${escHtml(m.content || m.message || '')}</div>
           </div>
         `).join('');

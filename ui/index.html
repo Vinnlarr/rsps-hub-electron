@@ -28,6 +28,11 @@
 <link rel="stylesheet" href="music.css">
 <link rel="stylesheet" href="leaderboard.css">
 <link rel="stylesheet" href="stats.css">
+<link rel="stylesheet" href="hubstore.css">
+<link rel="stylesheet" href="hubstore-fx2.css">
+<link rel="stylesheet" href="hubstore-borders.css">
+<link rel="stylesheet" href="hubstore-namecolors.css">
+<link rel="stylesheet" href="hubstore-fx3.css">
 </head>
 <body>
 
@@ -48,8 +53,22 @@
   <div class="logo">RSPS HUB</div>
   <nav class="nav-tabs">
     <div class="nav-tab" data-tab="news">NEWS</div>
-    <div class="nav-tab active" data-tab="store">STORE</div>
+    <div class="nav-tab active" data-tab="store">SERVERS</div>
     <div class="nav-tab" data-tab="library">LIBRARY</div>
+    <div class="nav-tab nav-tab-hubstore" data-tab="hubstore">
+      <svg class="nav-coin" viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+          <radialGradient id="navcoinG" cx="50%" cy="40%" r="50%">
+            <stop offset="0%" stop-color="#ffe48a"/>
+            <stop offset="60%" stop-color="#d8a830"/>
+            <stop offset="100%" stop-color="#7a5a18"/>
+          </radialGradient>
+        </defs>
+        <circle cx="32" cy="32" r="28" fill="url(#navcoinG)" stroke="#5a4218" stroke-width="2"/>
+        <text x="32" y="42" font-family="Cinzel" font-weight="900" font-size="26" text-anchor="middle" fill="#3a2810">H</text>
+      </svg>
+      HUB STORE
+    </div>
   </nav>
   <div class="nav-right">
     <div id="active-session-chip" style="display:none" class="active-session-chip">
@@ -216,6 +235,7 @@
             <div class="custom-select-option selected" data-value="rating">Highest Rated</div>
             <div class="custom-select-option" data-value="reviews">Most Reviewed</div>
             <div class="custom-select-option" data-value="players">Players (High → Low)</div>
+            <div class="custom-select-option" data-value="recent">Recently Added</div>
             <div class="custom-select-option" data-value="name-asc">Alphabetical A–Z</div>
             <div class="custom-select-option" data-value="name-desc">Alphabetical Z–A</div>
           </div>
@@ -358,5 +378,6 @@
 <script src="music.js"></script>
 <script src="leaderboard.js"></script>
 <script src="stats.js"></script>
+<script src="hubstore.js"></script>
 </body>
 </html>
