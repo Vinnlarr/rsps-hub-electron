@@ -1111,6 +1111,17 @@
         // post-award balance + transactions
         if (syncResult?.newly_unlocked?.length) {
           coinsPayload = await window.hub.get('/api/coins/me').catch(() => coinsPayload);
+          // Merge the newly-awarded IDs into the stats payload so the
+          // achievements panel renders them as unlocked immediately,
+          // instead of waiting for the next /api/stats/me refresh / a
+          // full launcher restart.
+          if (data && Array.isArray(data.unlockedAchievements)) {
+            const newIds = syncResult.newly_unlocked.map(a => a.id);
+            const merged = new Set([...data.unlockedAchievements, ...newIds]);
+            data.unlockedAchievements = Array.from(merged);
+          } else if (data) {
+            data.unlockedAchievements = syncResult.newly_unlocked.map(a => a.id);
+          }
         }
       } catch (e) { console.error('[stats-modal] coins/sync failed', e); }
     }

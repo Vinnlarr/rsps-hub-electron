@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Pre-commit secret scanner — blocks the commit if any staged file looks
+# like it contains a credential. Zero external deps; works in Git Bash on
+# Windows out of the box.
+#
+# To enable for this repo:    git config core.hooksPath .githooks
+# To bypass (use sparingly):   git commit --no-verify
+set -e
+
+RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; NC='\033[0m'
+
+# High-confidence patterns (won't false-positive on UI strings like
+# "password" or "api_key" used as a variable name).
+PATTERNS=(
+  'AKIA[0-9A-Z]{16}'                                                     # AWS access key
+  'sk_live_[0-9a-zA-Z]{24,}'                                             # Stripe live secret
+  'pk_live_[0-9a-zA-Z]{24,}'                                             # Stripe live publishable
+  'rk_live_[0-9a-zA-Z]{24,}'                                             # Stripe restricted
+  'ghp_[0-9a-zA-Z]{36,}'                                                 # GitHub personal access token
+  'github_pat_[0-9a-zA-Z_]{60,}'                                         # GitHub fine-grained PAT
+  'xox[abprs]-[0-9]+-[0-9]+'                                             # Slack token
+  'sk-[a-zA-Z0-9]{40,}'                                                  # OpenAI API key
+  'AIza[0-9A-Za-z_-]{35}'                                                # Google API key
+  '-----BEGIN [A-Z ]*PRIVATE KEY-----'                                   # Any private key block
+  'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}'         # JWT
+  '(api[_-]?key|secret|token|password)\s*[:=]\s*["'\'']\s*[A-Za-z0-9/+=_-]{32,}["'\'']'  # generic high-entropy assignment
+)
+
+# Get list of files staged for commit, ignoring deletions.
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+FOUND_HITS=0
+for FILE in $STAGED; do
+  # Skip binaries and lockfiles.
+  case "$FILE" in
+    *.png|*.jpg|*.jpeg|*.gif|*.webp|*.ico|*.exe|*.jar|*.zip|*.gz|*.lock|*.lockb|package-lock.json|yarn.lock)
+      continue ;;
+  esac
+  # Skip files that don't exist on disk anymore (rare race).
+  [ -f "$FILE" ] || continue
+
+  for PATTERN in "${PATTERNS[@]}"; do
+    if MATCHES=$(grep -nE "$PATTERN" "$FILE" 2>/dev/null); then
+      if [ -n "$MATCHES" ]; then
+        if [ $FOUND_HITS -eq 0 ]; then
+          echo ""
+          echo -e "${RED}✗ Pre-commit secret scan found suspicious content:${NC}"
+          echo ""
+        fi
+        echo -e "${YELLOW}  $FILE${NC}"
+        echo "$MATCHES" | sed 's/^/    /'
+        FOUND_HITS=1
+      fi
+    fi
+  done
+done
+
+if [ $FOUND_HITS -ne 0 ]; then
+  echo ""
+  echo -e "${RED}Commit blocked.${NC} Remove the secret(s) above, or run with --no-verify if you're"
+  echo "100% sure it's a false positive (e.g. a regex pattern in a scanner)."
+  echo ""
+  exit 1
+fi
+
+echo -e "${GREEN}✓ No secrets detected in staged changes.${NC}"
+exit 0

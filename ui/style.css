@@ -1205,6 +1205,69 @@ body > * { position: relative; z-index: 1; }
 .rsm-btn-primary:hover { border-color: #fff; background: linear-gradient(180deg, #ffac3a, #d27a14); }
 
 /* ── DEV PORTAL: SERVER REQUESTS ── */
+/* Abuse report cards in the staff dev portal — one card per pending report,
+   with target/category/details and resolve/dismiss buttons. */
+.dp-section-count {
+  margin-left: 12px;
+  font-size: 0.75rem;
+  color: #8a7a5a;
+  font-weight: 400;
+}
+.abuse-list { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
+.abuse-card {
+  background: #1a1410;
+  border: 1px solid #3a2e14;
+  border-left: 3px solid #c84040;
+  border-radius: 4px;
+  padding: 14px 16px;
+}
+.abuse-hdr {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.abuse-id {
+  color: #6a5a3a; font-family: 'Cinzel', serif;
+  font-size: 0.78rem;
+}
+.abuse-type {
+  padding: 2px 8px; border-radius: 3px;
+  font-size: 0.62rem; font-weight: 700;
+  letter-spacing: 1px;
+}
+.abuse-type-server { background: rgba(80,160,220,0.15); color: #80c0e0; }
+.abuse-type-user   { background: rgba(220,80,160,0.15); color: #e080c0; }
+.abuse-type-chat   { background: rgba(220,160,80,0.15); color: #e0c080; }
+.abuse-target { color: #ffd070; font-weight: 700; font-size: 0.92rem; }
+.abuse-cat    { color: #c8a840; font-size: 0.78rem; }
+.abuse-when   { margin-left: auto; color: #6a5a3a; font-size: 0.72rem; }
+.abuse-meta   { color: #8a7a5a; font-size: 0.78rem; margin-bottom: 8px; }
+.abuse-details {
+  background: rgba(0,0,0,0.25);
+  border: 1px solid #2a2010;
+  border-radius: 3px;
+  padding: 10px 12px;
+  color: #c0b090;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+.abuse-actions { display: flex; align-items: center; gap: 8px; }
+.abuse-btn {
+  padding: 6px 14px;
+  border-radius: 3px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  border: 1px solid;
+}
+.abuse-resolve { background: rgba(40,140,60,0.15); border-color: #4a8a4a; color: #80d090; }
+.abuse-resolve:hover { background: rgba(40,140,60,0.30); }
+.abuse-dismiss { background: rgba(140,40,40,0.15); border-color: #8a4a4a; color: #d09090; }
+.abuse-dismiss:hover { background: rgba(140,40,40,0.30); }
+.abuse-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.abuse-msg { font-size: 0.78rem; color: #8a7a5a; }
+
 .srq-tabs {
   display: flex; gap: 6px; flex-wrap: wrap;
   margin: 14px 0 18px;
@@ -1732,7 +1795,7 @@ body > * { position: relative; z-index: 1; }
 
 .set-section-hdr {
   font-family: 'Cinzel', serif;
-  font-size: 0.72rem;
+  font-size: 0.92rem;
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
@@ -1762,23 +1825,23 @@ body > * { position: relative; z-index: 1; }
 
 .set-label {
   font-family: 'Cinzel', serif;
-  font-size: 0.72rem;
+  font-size: 0.92rem;
   font-weight: 600;
   color: #d4b86a;
   letter-spacing: 0.5px;
   display: block;
 }
 .set-sub {
-  font-size: 0.67rem;
-  color: #6a5a38;
+  font-size: 0.82rem;
+  color: #8a7a4a;
   font-style: normal;
   margin-top: 2px;
   display: block;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 .set-value {
   font-family: 'Cinzel', serif;
-  font-size: 0.7rem;
+  font-size: 0.88rem;
   color: #a09060;
   letter-spacing: 0.5px;
   white-space: nowrap;
@@ -1790,10 +1853,10 @@ body > * { position: relative; z-index: 1; }
   background: #1a1408;
   border: 1px solid #3a2e14;
   border-radius: 3px;
-  padding: 7px 10px;
+  padding: 9px 12px;
   color: #d4b86a;
   font-family: 'Inter', sans-serif;
-  font-size: 0.8rem;
+  font-size: 0.92rem;
   outline: none;
   box-sizing: border-box;
   margin-top: 6px;
@@ -1806,10 +1869,10 @@ body > * { position: relative; z-index: 1; }
   background: #1a1408;
   border: 1px solid #3a2e14;
   border-radius: 3px;
-  padding: 7px 28px 7px 10px;
+  padding: 9px 32px 9px 12px;
   color: #d4b86a;
   font-family: 'Cinzel', serif;
-  font-size: 0.78rem;
+  font-size: 0.9rem;
   outline: none;
   appearance: none;
   cursor: pointer;
@@ -1872,10 +1935,10 @@ body > * { position: relative; z-index: 1; }
   border-radius: 3px;
   color: #c8a840;
   font-family: 'Cinzel', serif;
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   font-weight: 700;
   letter-spacing: 1px;
-  padding: 0 12px;
+  padding: 7px 16px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s, border-color 0.15s;
@@ -2841,6 +2904,27 @@ body > * { position: relative; z-index: 1; }
 .sd-new-badge {
   font-family: 'Cinzel', serif; font-size: 0.72rem; font-weight: 700; letter-spacing: 1px;
   background: #c8a840; color: #0f0d08; padding: 2px 6px; border-radius: 3px;
+}
+/* Report button on server detail panel — sits next to NEW badge.
+   Uses the launcher's gold-on-dark palette to match the rest of the UI
+   (was red-tinted, looked alien). */
+.sd-report-btn {
+  margin-left: auto;
+  padding: 4px 10px;
+  background: rgba(14,10,6,0.6);
+  border: 1px solid #3a2e14;
+  border-radius: 4px;
+  color: #8a7a5a;
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sd-report-btn:hover {
+  border-color: #c8a840;
+  color: #ffd070;
+  background: rgba(40,30,15,0.8);
 }
 .sd-tagline { font-family: 'Inter', sans-serif; font-size: 0.85rem; color: #9a8a6a; font-style: normal; margin: 0 0 8px; }
 .sd-tags { display: flex; flex-wrap: wrap; gap: 4px; }

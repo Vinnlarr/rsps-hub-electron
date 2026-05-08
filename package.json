@@ -8,7 +8,8 @@
     "start": "electron .",
     "prebuild": "node scripts/prebuild-jar.js",
     "build": "electron-builder",
-    "build:skip-jar": "electron-builder"
+    "build:skip-jar": "electron-builder",
+    "release": "node tools/release.js"
   },
   "devDependencies": {
     "electron": "^31.0.0",

@@ -461,6 +461,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (window.splashDone) window.splashDone();
   // Show auth screen if not logged in after splash
   if (!state.user) showAuthScreen();
+
+  // Background quiet refresh — every 60s pull a fresh server list so
+  // server_online / hub_players / NEW badges update without the user
+  // having to hit the Refresh button. No spinner, no card flash.
+  setInterval(() => {
+    if (!state.user) return;                                // not logged in yet
+    if (document.hidden) return;                            // tab/window minimised
+    if (document.querySelector('.modal.open, .stats-overlay, .sd-overlay')) return; // user mid-action
+    loadServers({ quiet: true }).catch(() => {});
+  }, 60_000);
 });
 
 // ── WINDOW CONTROLS ───────────────────────────────────────────────────────────
@@ -517,6 +527,19 @@ function setupWindowControls() {
       e.stopPropagation();
       window.openUserProfile(username);
     }
+  });
+
+  // Right-click on any [data-open-profile] = report that user. Skipped for
+  // the current user (can't report yourself). Works in chat, friends list,
+  // DMs, news comments, leaderboard, reviews — anywhere usernames render.
+  document.addEventListener('contextmenu', (e) => {
+    const el = e.target.closest('[data-open-profile]');
+    if (!el) return;
+    const username = el.dataset.openProfile;
+    if (!username || username === state.user?.username) return;
+    e.preventDefault();
+    e.stopPropagation();
+    window.openReportModal?.('user', username, username);
   });
 
   // Logout
@@ -949,8 +972,12 @@ async function setVisibility(vis) {
 
 // ── SERVERS ───────────────────────────────────────────────────────────────────
 
-async function loadServers() {
-  showLoading(true);
+async function loadServers(opts = {}) {
+  // `quiet` skips the loading overlay so background refreshes don't flash
+  // a spinner across the screen. The cron updates server_online every
+  // 5 min; a 60s quiet poll picks that up without annoying the user.
+  const quiet = !!opts.quiet;
+  if (!quiet) showLoading(true);
   try {
     const data = await api.getServers();
     const serversData = data.servers || data;
@@ -961,11 +988,11 @@ async function loadServers() {
     if (countEl) countEl.innerHTML = '<span class="status-online">● Hub Online</span>';
   } catch (e) {
     console.error('Failed to load servers:', e);
-    state.servers = [];
+    if (!quiet) state.servers = [];
     const countEl = document.getElementById('status-server-count');
     if (countEl) countEl.textContent = '● Offline';
   }
-  showLoading(false);
+  if (!quiet) showLoading(false);
   renderServers();
 
   // Once per session, after the first successful load, scan every already
@@ -1155,7 +1182,12 @@ function renderServers() {
 function buildServerCard(server) {
   const isFav        = state.favourites.has(server.name);
   const isDownloaded = server.downloaded || false;
-  const isOnline     = server.serverOnline === 1;
+  // Tri-state status: 1 online, 0 offline, -1 unknown (no game_port and
+  // no website to ping). Hide the dot entirely on unknown rather than
+  // lying — see ping_servers.php.
+  const statusCode   = (typeof server.serverOnline === 'number') ? server.serverOnline : -1;
+  const isOnline     = statusCode === 1;
+  const isUnknown    = statusCode === -1;
   const players      = server.hubPlayers || 0;
   const minutes      = state.playtime[server.name] || 0;
   const level        = calcLevel(minutes);
@@ -1199,7 +1231,7 @@ function buildServerCard(server) {
     <div class="card-info">
       <div class="card-header">
         <span class="card-title">${escHtml(server.name)}</span>
-        <span class="status-dot ${isOnline ? 'online' : 'offline'}"></span>
+        ${isUnknown ? '' : `<span class="status-dot ${isOnline ? 'online' : 'offline'}"></span>`}
         <span class="level-badge-wrap"
           data-lv="${level}"
           data-rank="${escHtml(rankName)}"
@@ -4026,6 +4058,86 @@ function buildLeaderboardHTML(data) {
   `;
 }
 
+// ── ABUSE REPORT MODAL ─────────────────────────────────────────────────────────
+// Generic report dialog used by "🚩 Report" buttons across the launcher.
+// Submits to /api/reports/submit which lands in the staff portal pending list.
+
+function openReportModal(targetType, targetRef, targetName) {
+  document.getElementById('report-overlay')?.remove();
+
+  const categories = targetType === 'server'
+    ? [
+        ['malicious_jar', 'Malicious / suspicious JAR'],
+        ['scam',          'Scam / pay-to-win violation'],
+        ['impersonation', 'Impersonating another server'],
+        ['spam',          'Spam / fake content'],
+        ['other',         'Other'],
+      ]
+    : [
+        ['harassment',    'Harassment / threats'],
+        ['spam',          'Spam'],
+        ['impersonation', 'Impersonating another user'],
+        ['other',         'Other'],
+      ];
+
+  const overlay = document.createElement('div');
+  overlay.id = 'report-overlay';
+  // Reuse the request-server modal's CSS classes so styling matches
+  // the rest of the launcher (gold-on-dark palette).
+  overlay.className = 'rsm-backdrop';
+  overlay.innerHTML = `
+    <div class="rsm-modal">
+      <div class="rsm-hdr">
+        <h3>🚩 Report ${escHtml(targetType)} · ${escHtml(targetName || targetRef)}</h3>
+        <button class="rsm-close" id="rep-close">✕</button>
+      </div>
+      <div class="rsm-body">
+        <label class="rsm-label">Reason <span class="rsm-req">*</span></label>
+        <select class="rsm-input" id="rep-cat">
+          ${categories.map(([v, l]) => `<option value="${v}">${escHtml(l)}</option>`).join('')}
+        </select>
+        <label class="rsm-label">Details <span class="rsm-hint">(optional, max 2000 chars)</span></label>
+        <textarea class="rsm-input rsm-textarea" id="rep-det" maxlength="2000" rows="5"
+          placeholder="What happened? Anything that helps staff investigate."></textarea>
+        <div class="rsm-msg" id="rep-msg"></div>
+      </div>
+      <div class="rsm-foot">
+        <button class="rsm-btn" id="rep-cancel">Cancel</button>
+        <button class="rsm-btn" id="rep-submit" style="background:linear-gradient(180deg,#c8a840,#8a6f20);color:#1a1408;border-color:#c8a840">Submit report</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#rep-close').addEventListener('click', close);
+  overlay.querySelector('#rep-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('#rep-submit').addEventListener('click', async () => {
+    const cat   = overlay.querySelector('#rep-cat').value;
+    const det   = overlay.querySelector('#rep-det').value.trim();
+    const msgEl = overlay.querySelector('#rep-msg');
+    msgEl.textContent = 'Submitting…'; msgEl.style.color = '#888';
+    try {
+      const res = await window.hub.post('/api/reports/submit', {
+        target_type: targetType, target_ref: String(targetRef),
+        category: cat, details: det,
+      });
+      if (res?.ok) {
+        msgEl.textContent = '✓ Report submitted. Thank you.';
+        msgEl.style.color = '#7ad88a';
+        setTimeout(close, 1500);
+      } else {
+        msgEl.textContent = res?.error || 'Submit failed.';
+        msgEl.style.color = '#c84040';
+      }
+    } catch (e) {
+      msgEl.textContent = 'Network error.'; msgEl.style.color = '#c84040';
+    }
+  });
+}
+window.openReportModal = openReportModal;
+
 // ── SERVER DETAIL MODAL ────────────────────────────────────────────────────────
 
 function showServerDetail(server) {
@@ -4034,7 +4146,9 @@ function showServerDetail(server) {
 
   const isFav       = state.favourites.has(server.name);
   const isInstalled = server.downloaded || false;
-  const isOnline    = server.serverOnline === 1;
+  const statusCode  = (typeof server.serverOnline === 'number') ? server.serverOnline : -1;
+  const isOnline    = statusCode === 1;
+  const isUnknown   = statusCode === -1;
   const players     = server.hubPlayers || 0;
   const accent      = server.accentColor || '#c8a840';
   const tags        = (server.tags || []);
@@ -4073,8 +4187,9 @@ function showServerDetail(server) {
         <div class="sd-title-block">
           <div class="sd-name-row">
             <h2 class="sd-name">${escHtml(server.name)}</h2>
-            <span class="sd-status-dot ${isOnline ? 'online' : 'offline'}" title="${isOnline ? 'Online' : 'Offline'}"></span>
+            ${isUnknown ? '' : `<span class="sd-status-dot ${isOnline ? 'online' : 'offline'}" title="${isOnline ? 'Online' : 'Offline'}"></span>`}
             ${server.isNew ? '<span class="sd-new-badge">NEW</span>' : ''}
+            <button class="sd-report-btn" data-report-server="${escAttr(String(server.id))}" data-report-name="${escAttr(server.name)}">🚩 Report</button>
           </div>
           <p class="sd-tagline">${escHtml(server.tagline || '')}</p>
           <div class="sd-tags">${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}</div>
@@ -4211,6 +4326,13 @@ function showServerDetail(server) {
   overlay.querySelector('#sd-close-btn').addEventListener('click', e => {
     e.stopPropagation();
     closeServerDetail();
+  });
+
+  // Report this server — opens a modal with category + details
+  overlay.querySelector('.sd-report-btn[data-report-server]')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    openReportModal('server', btn.dataset.reportServer, btn.dataset.reportName);
   });
 
   // External links
@@ -5203,6 +5325,14 @@ function startAchievementSyncLoop() {
             window.showToast(`+ ${res.newly_unlocked.length - 3} more achievements unlocked`, 'success');
           }, newAch.length * 1100);
         }
+        // Bust the stats cache so the next time the user opens their
+        // profile the panel renders the new badge as unlocked instantly,
+        // instead of using a stale unlockedAchievements list from before
+        // the sync awarded them.
+        if (window.DATA_CACHE?.stats) {
+          window.DATA_CACHE.stats.data = null;
+          window.DATA_CACHE.stats.at   = 0;
+        }
       }
     } catch (_) {}
   };
@@ -5397,6 +5527,7 @@ function buildDevPortalShell(isStaff) {
       ${isStaff ? `
       <div class="dp-nav-label" style="margin-top:16px">STAFF</div>
       <div class="dp-nav-item" data-section="pending">Pending Submissions</div>
+      <div class="dp-nav-item" data-section="reports">Abuse Reports <span class="dp-nav-badge" id="dp-reports-badge" style="display:none"></span></div>
       <div class="dp-nav-item" data-section="server-requests">Server Requests</div>
       <div class="dp-nav-item" data-section="all-servers">All Servers</div>
       <div class="dp-nav-item" data-section="announcements">Post Announcement</div>
@@ -5460,6 +5591,9 @@ async function devPortalLoadSection(section) {
         break;
       case 'server-requests':
         await renderDevServerRequests(el);
+        break;
+      case 'reports':
+        await renderDevAbuseReports(el);
         break;
     }
   } catch (e) {
@@ -5572,6 +5706,93 @@ function renderDevPending(el, servers) {
     });
   });
   el.appendChild(list);
+}
+
+// Staff-only: list pending abuse reports (server + user reports filed
+// from anywhere in the launcher). Same pattern as server requests —
+// each row has Resolve / Dismiss buttons that close out the report.
+async function renderDevAbuseReports(el) {
+  el.innerHTML = `<div class="dp-section-hdr">Abuse Reports</div><p class="loading-msg">Loading…</p>`;
+  let res;
+  try {
+    res = await window.hub.get('/api/reports/pending');
+  } catch (e) {
+    el.innerHTML = `<div class="dp-section-hdr">Abuse Reports</div>
+      <p class="empty-msg" style="padding:30px">Failed to load: ${escHtml(e.message)}</p>`;
+    return;
+  }
+  const reports = res?.reports || [];
+
+  const categoryLabel = (c) => ({
+    malicious_jar: 'Malicious JAR',
+    scam:          'Scam / P2W',
+    impersonation: 'Impersonation',
+    harassment:    'Harassment',
+    spam:          'Spam',
+    other:         'Other',
+  }[c] || c);
+
+  el.innerHTML = `
+    <div class="dp-section-hdr">
+      Abuse Reports
+      <span class="dp-section-count">${reports.length} pending</span>
+    </div>
+    ${reports.length === 0
+      ? `<div class="coming-soon-wrap" style="padding:40px 20px">
+           <span class="coming-soon-icon">✓</span>
+           <span class="coming-soon-title">No pending reports.</span>
+           <span class="coming-soon-sub">All clear. New reports will land here when players submit them.</span>
+         </div>`
+      : `<div class="abuse-list">${reports.map(r => `
+          <div class="abuse-card" data-rep-id="${r.id}">
+            <div class="abuse-hdr">
+              <span class="abuse-id">#${r.id}</span>
+              <span class="abuse-type abuse-type-${escAttr(r.target_type)}">${escHtml(r.target_type.toUpperCase())}</span>
+              <span class="abuse-target">${escHtml(r.target_ref)}</span>
+              <span class="abuse-cat">${escHtml(categoryLabel(r.category))}</span>
+              <span class="abuse-when">${escHtml(r.created_at || '')}</span>
+            </div>
+            <div class="abuse-meta">Reported by <b>${escHtml(r.reporter)}</b> · status: ${escHtml(r.status)}</div>
+            <div class="abuse-details">${r.details ? escHtml(r.details).replace(/\n/g, '<br>') : '<i style="color:#6a7080">(no details provided)</i>'}</div>
+            <div class="abuse-actions">
+              <button class="abuse-btn abuse-resolve" data-action="resolved" data-id="${r.id}">✓ Mark Resolved</button>
+              <button class="abuse-btn abuse-dismiss" data-action="dismissed" data-id="${r.id}">✗ Dismiss</button>
+              <span class="abuse-msg" data-msg="${r.id}"></span>
+            </div>
+          </div>`).join('')}
+        </div>`}
+  `;
+
+  el.querySelectorAll('.abuse-btn[data-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id     = btn.dataset.id;
+      const action = btn.dataset.action;  // 'resolved' or 'dismissed'
+      const msg    = el.querySelector(`[data-msg="${id}"]`);
+      const card   = el.querySelector(`[data-rep-id="${id}"]`);
+      card?.querySelectorAll('.abuse-btn').forEach(b => b.disabled = true);
+      msg.textContent = '…';
+      try {
+        const r = await window.hub.post('/api/reports/resolve', {
+          id: parseInt(id, 10), status: action,
+        });
+        if (r?.ok) {
+          if (card) {
+            card.style.opacity = '0.4';
+            card.style.transition = 'opacity 0.3s';
+            setTimeout(() => renderDevAbuseReports(el), 400);
+          }
+        } else {
+          msg.textContent = r?.error || 'Failed.';
+          msg.style.color = '#c84040';
+          card?.querySelectorAll('.abuse-btn').forEach(b => b.disabled = false);
+        }
+      } catch (e) {
+        msg.textContent = 'Network error.';
+        msg.style.color = '#c84040';
+        card?.querySelectorAll('.abuse-btn').forEach(b => b.disabled = false);
+      }
+    });
+  });
 }
 
 // Staff-only: list every player-submitted server request, with filter chips
@@ -6457,6 +6678,15 @@ function buildSettingsHTML(s) {
 
   <!-- ── ABOUT ── -->
   <div class="set-section">
+    <div class="set-section-hdr">☕&nbsp; Support the Hub</div>
+    <div class="set-row set-col">
+      <div class="set-label">RSPS Hub is free.</div>
+      <div class="set-sub" style="margin-bottom:8px">Costs are low and donations aren't expected. If you want to chip in anyway, Ko-fi's below.</div>
+      <button class="set-browse-btn" id="set-kofi-btn" style="align-self:flex-start;padding:8px 18px">☕ Support on Ko-fi</button>
+    </div>
+  </div>
+
+  <div class="set-section">
     <div class="set-section-hdr">ℹ️&nbsp; About</div>
     <div class="set-row set-between"><span class="set-label">RSPS Hub</span><span class="set-value" id="about-version">v…</span></div>
     <div class="set-row set-between"><span class="set-label">Platform</span><span class="set-value">Electron + Java</span></div>
@@ -6475,6 +6705,11 @@ function bindSettingsEvents(el, initial) {
 
   // Developer portal
   el.querySelector('#set-open-devportal')?.addEventListener('click', () => openDevPortal('my-servers'));
+
+  // Ko-fi donation — opens the support page in the user's default browser.
+  el.querySelector('#set-kofi-btn')?.addEventListener('click', () => {
+    window.hub?.openExternal('https://ko-fi.com/rspshub');
+  });
 
   // Staff panel shortcuts
   el.querySelector('#set-open-staff')?.addEventListener('click',    () => openDevPortal('all-servers'));
