@@ -1745,7 +1745,7 @@ function openNewsDetail(post, container) {
     <div class="news-modal news-detail-modal">
       <div class="news-modal-hdr">
         <div class="news-detail-hdr-meta">
-          ${post.tag ? `<span class="news-tag tag-${post.tag.toLowerCase()}">${escHtml(post.tag)}</span>` : ''}
+          ${post.tag ? `<span class="news-tag tag-${post.tag.toLowerCase().replace(/\s+/g, '-')}">${escHtml(post.tag)}</span>` : ''}
           <span class="news-server-name">${escHtml(titleName)}</span>
           <span class="news-dot">·</span>
           <span class="news-author">${escHtml(post.username)}</span>
@@ -2390,7 +2390,7 @@ const NEWS_EMOJI = [
 const NEWS_TAGS = {
   hub:       ['Update', 'Event', 'News'],
   server:    ['Update', 'Event', 'Drop', 'Maintenance'],
-  community: ['Guide',  'Review', 'LFG', 'Discussion'],
+  community: ['Guide',  'Review', 'LFG', 'Discussion', 'New Server'],
 };
 const NEWS_REACTIONS = {
   hub:       ['🔥', '❤️', '👀'],
@@ -2734,7 +2734,7 @@ function renderNewsCard(p, section, isStaff, myUsername) {
     crestHtml = `<div class="news-crest player">${escHtml((p.username || '?')[0].toUpperCase())}</div>`;
   }
 
-  const tagHtml = p.tag ? `<span class="news-tag tag-${p.tag.toLowerCase()}">${escHtml(p.tag)}</span>` : '';
+  const tagHtml = p.tag ? `<span class="news-tag tag-${p.tag.toLowerCase().replace(/\s+/g, '-')}">${escHtml(p.tag)}</span>` : '';
   const pinTag  = p.pinned        ? `<div class="news-pin-tag">📌 Pinned</div>`
                 : p.server_pinned ? `<div class="news-pin-tag server">⭐ Pinned by server owner</div>` : '';
   const viewBadge = (p.view_count > 0)

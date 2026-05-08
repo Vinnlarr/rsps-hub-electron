@@ -4098,6 +4098,8 @@ body > * { position: relative; z-index: 1; }
 .news-tag.tag-review      { background: rgba(200,168,64,0.12); color: #c8a840; }
 .news-tag.tag-lfg         { background: rgba(220,160,100,0.12); color: #d8a868; }
 .news-tag.tag-discussion  { background: rgba(140,120,90,0.12); color: #8a7a5a; }
+/* "New Server" tag — green pill so it stands out as an announcement type. */
+.news-tag.tag-new-server  { background: rgba(122,216,138,0.18); color: #7ad88a; }
 
 .news-reactions { margin-left: auto; display: flex; gap: 4px; align-items: center; }
 .news-react {
