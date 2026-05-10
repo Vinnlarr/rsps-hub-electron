@@ -18,8 +18,8 @@
   nsExec::ExecToLog 'cmd /c taskkill /F /IM java.exe /T 2>nul'
   nsExec::ExecToLog 'cmd /c taskkill /F /IM javaw.exe /T 2>nul'
   Sleep 1000
-  ; Electron user-data: %APPDATA%\RSPS Hub\
+  ; Electron user-data folder under APPDATA
   RMDir /r "$APPDATA\RSPS Hub"
-  ; JAR + per-server install cache: %USERPROFILE%\.rsps_hub\
+  ; JAR + per-server install cache under USERPROFILE
   RMDir /r "$PROFILE\.rsps_hub"
 !macroend
