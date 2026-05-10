@@ -2021,6 +2021,36 @@ body > * { position: relative; z-index: 1; }
 .set-danger-btn:hover { background: #3a0e0e; border-color: #cc4444; color: #ff6666; }
 
 /* ── STONE BUTTON BASE ── */
+/* Loading state for Play / Install buttons — small spinner before the
+   text. Hides the existing ::before stone-grain overlay while loading
+   and replaces it with a rotating ring so players know the launcher
+   is doing work, not frozen. */
+.action-btn.is-loading {
+  pointer-events: none;
+  opacity: 0.92;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.action-btn.is-loading::before {
+  content: '';
+  position: static;
+  display: inline-block;
+  width: 12px; height: 12px;
+  background: none;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: hubSpin 0.8s linear infinite;
+  inset: auto;
+}
+.action-btn.is-loading::after { display: none; }
+@keyframes hubSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 .action-btn {
   width: 112px;
   height: 38px;
@@ -4562,6 +4592,20 @@ h5.news-md-h { font-size: 0.88rem; color: #c8a840; }
   font-size: 0.86rem; transition: all 0.12s;
 }
 .news-cmt-action:hover { color: #c8a840; background: rgba(200,168,64,0.08); }
+
+/* Hub credentials line under the commenter's name — total time on hub +
+   number of servers tried. Mirrors the .sd-rev-creds line on reviews. */
+.news-cmt-creds {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  color: #6a5a3a;
+  margin: 2px 0 6px;
+  font-style: italic;
+}
+.news-cmt-creds-sep { opacity: 0.5; }
+
 .news-cmt-body { color: #cdc0a0; font-size: 0.88rem; line-height: 1.5; }
 .news-cmt-write {
   margin-top: 12px; padding: 10px 12px;

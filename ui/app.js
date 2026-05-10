@@ -1008,9 +1008,14 @@ async function loadServers(opts = {}) {
 // One-shot per launcher session — see loadServers() above.
 let _jarRefreshDone = false;
 async function refreshInstalledJars() {
-  const installed = state.servers.filter(s => s.downloaded && s.jarUrl);
+  // Skip native .exe clients (BattleScape, EmberHold, Bethlehem, etc.).
+  // They self-update via their own internal patcher; redownloading the
+  // installer here is wasteful and can clobber a running .exe.
+  const installed = state.servers.filter(s =>
+    s.downloaded && s.jarUrl && !/\.exe(\?|$)/i.test(s.jarUrl)
+  );
   if (!installed.length) return;
-  console.log(`[jar-refresh] checking ${installed.length} installed server(s) for updates...`);
+  console.log(`[jar-refresh] checking ${installed.length} installed JAR server(s) for updates...`);
   let updated = 0;
   for (const s of installed) {
     try {
@@ -1279,10 +1284,12 @@ function buildServerCard(server) {
     const btn    = e.currentTarget;
     const action = btn.dataset.action;
     btn.disabled = true;
-    btn.textContent = action === 'play' ? 'Launching...' : 'Downloading...';
+    btn.classList.add('is-loading');
+    btn.textContent = action === 'play' ? 'Updating...' : 'Downloading...';
     try {
       if (action === 'play') {
         await api.play(server.name);
+        btn.classList.remove('is-loading');
         btn.disabled = false;
         btn.textContent = 'PLAY';
         startActiveSessionChip(server.name);
@@ -1292,13 +1299,14 @@ function buildServerCard(server) {
         const result = await api.install(server.name, server.jarUrl);
         if (result && result.error) {
           showToast('Install failed: ' + result.error, 'error');
+          btn.classList.remove('is-loading');
           btn.disabled = false;
           btn.textContent = 'INSTALL';
         } else if (result && result.success) {
           await loadServers();
         } else {
-          // Unexpected response — show raw
           showToast('Unexpected response: ' + JSON.stringify(result), 'error');
+          btn.classList.remove('is-loading');
           btn.disabled = false;
           btn.textContent = 'INSTALL';
         }
@@ -1306,6 +1314,7 @@ function buildServerCard(server) {
     } catch (err) {
       console.error('Install error:', err);
       showToast('Install failed: ' + (err.message || err), 'error');
+      btn.classList.remove('is-loading');
       btn.disabled = false;
       btn.textContent = 'INSTALL';
     }
@@ -1573,11 +1582,26 @@ async function renderAltContent(tab, el) {
     `;
     // Bind library button actions (replaces onclick=… to avoid string injection)
     el.querySelectorAll('[data-lib-action]').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const name = btn.getAttribute('data-lib-name') || '';
         const action = btn.getAttribute('data-lib-action');
-        if (action === 'play')      handleLibraryPlay(name);
-        else if (action === 'uninstall') handleLibraryUninstall(name);
+        if (action === 'play') {
+          // Show spinner so the player knows the launcher is doing the
+          // pre-launch JAR freshness check, not frozen.
+          const original = btn.textContent;
+          btn.disabled = true;
+          btn.classList.add('is-loading');
+          btn.textContent = 'Updating...';
+          try {
+            await handleLibraryPlay(name);
+          } finally {
+            btn.classList.remove('is-loading');
+            btn.disabled = false;
+            btn.textContent = original;
+          }
+        } else if (action === 'uninstall') {
+          handleLibraryUninstall(name);
+        }
       });
     });
   }
@@ -1932,6 +1956,15 @@ function openNewsDetail(post, container) {
     const ago = formatNewsTs(c.created_at) + (c.edited_at ? ' · edited' : '');
     const initial = (c.username || '?')[0].toUpperCase();
     const avatarUrl = c.has_avatar ? `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(c.username)}.jpg` : '';
+    // Equipped cosmetics + hub stats — match the way server reviews render
+    // commenter credentials (title pill, time on hub, servers tried).
+    const eq        = c.equipped || {};
+    const titlePill = eq.title
+      ? `<span class="eq-title" style="${escAttr(eq.title.style?.nameStyle || '')}">${escHtml(eq.title.name)}</span>`
+      : '';
+    const totalMin  = c.hub_total_minutes || 0;
+    const totalLbl  = totalMin >= 60 ? `${Math.round(totalMin/60)}h on hub` : `${totalMin}m on hub`;
+    const srvCount  = c.hub_servers_played || 0;
     return `
       <div class="news-cmt-item ${isReply ? 'is-reply' : ''}" data-cmt-id="${c.id}">
         <div class="news-cmt-avatar">
@@ -1941,10 +1974,16 @@ function openNewsDetail(post, container) {
         </div>
         <div class="news-cmt-content">
           <div class="news-cmt-row">
-            <span class="news-cmt-name lb-clickable" data-open-profile="${escAttr(c.username)}">${escHtml(c.username)}</span>
+            <span class="news-cmt-name lb-clickable" data-open-profile="${escAttr(c.username)}">${renderName(c.username, eq)}</span>
+            ${titlePill}
             <span class="news-cmt-ts" data-ts="${escAttr(c.created_at)}">${ago}</span>
             ${c.can_edit ? `<button class="news-cmt-action" data-edit-cmt="${c.id}" title="Edit">✎</button>` : ''}
             ${(c.is_own || state.user?.isStaff) ? `<button class="news-cmt-action" data-delete-cmt="${c.id}" title="Delete">🗑</button>` : ''}
+          </div>
+          <div class="news-cmt-creds">
+            <span title="Total time this user has played across all servers">${escHtml(totalLbl)}</span>
+            <span class="news-cmt-creds-sep">·</span>
+            <span title="Number of different servers tried">${srvCount} server${srvCount === 1 ? '' : 's'} tried</span>
           </div>
           <div class="news-cmt-body">${renderNewsBody(c.body)}</div>
           <div class="news-cmt-actions">
@@ -3318,33 +3357,45 @@ async function handleLibraryPlay(name) {
 }
 
 async function handleLibraryUninstall(name) {
-  const btn = event.target;
-  btn.disabled = true;
-  btn.textContent = 'REMOVING...';
+  // Optimistic UI: flip the server's downloaded flag locally + re-render
+  // immediately so the row vanishes the instant the user clicks. The API
+  // call happens in the background; if it fails we restore the entry.
+  // Was using `event.target` (non-standard global) which broke the button
+  // state and left rows stuck on "REMOVING…" until manual reload.
+  const srv = state.servers.find(s => s.name === name);
+  const wasDownloaded = srv?.downloaded;
+  if (srv) srv.downloaded = false;
+  rerenderLibraryIfOpen();
+
   try {
     const result = await api.uninstall(name);
     if (result && result.success) {
       showToast(`${name} uninstalled.`, 'success');
-      await loadServers();
-      // Re-render library if still on library tab
-      const panel = document.getElementById('slide-panel');
-      if (panel && panel.classList.contains('open')) {
-        const activeTab = document.querySelector('.rs-tab.active')?.dataset?.tab;
-        if (activeTab === 'library') {
-          const inner = document.getElementById('slide-inner');
-          if (inner) renderAltContent('library', inner);
-        }
-      }
+      // Refresh in background so other state (e.g. card aggregates) catches up,
+      // but the UI already shows the right thing.
+      loadServers().catch(() => {});
     } else {
-      showToast('Uninstall failed.', 'error');
-      btn.disabled = false;
-      btn.textContent = 'UNINSTALL';
+      // Restore: API said it failed, put the row back.
+      if (srv) srv.downloaded = wasDownloaded;
+      rerenderLibraryIfOpen();
+      showToast('Uninstall failed' + (result?.error ? ': ' + result.error : '.'), 'error');
     }
   } catch (err) {
+    if (srv) srv.downloaded = wasDownloaded;
+    rerenderLibraryIfOpen();
     showToast('Uninstall error: ' + err.message, 'error');
-    btn.disabled = false;
-    btn.textContent = 'UNINSTALL';
   }
+}
+
+// Re-render the library tab in-place if it's the currently visible nav tab.
+// Library is a top nav-tab (data-tab="library"), not a sidebar rs-tab —
+// previous code was checking the wrong DOM tree, so the row never updated
+// after uninstall and the user had to reload manually.
+function rerenderLibraryIfOpen() {
+  const activeNav = document.querySelector('.nav-tab.active')?.dataset?.tab;
+  if (activeNav !== 'library') return;
+  const altContent = document.getElementById('alt-content');
+  if (altContent) renderAltContent('library', altContent);
 }
 
 function buildStatsHTML(data) {
@@ -4369,14 +4420,16 @@ function showServerDetail(server) {
     e.stopPropagation();
     const btn = overlay.querySelector('#sd-play-btn');
     btn.disabled = true;
+    btn.classList.add('is-loading');
     if (isInstalled) {
-      btn.textContent = 'Launching...';
+      btn.textContent = 'Updating...';
       try {
         await api.play(server.name);
         startActiveSessionChip(server.name);
         closeServerDetail();
         if (state.settings?.minimizeOnLaunch) window.hub.minimize();
       } catch { showToast('Failed to launch ' + server.name, 'error'); }
+      btn.classList.remove('is-loading');
       btn.disabled = false;
       btn.textContent = 'PLAY';
     } else {
@@ -4389,12 +4442,14 @@ function showServerDetail(server) {
           closeServerDetail();
         } else {
           showToast('Install failed: ' + (result?.error || 'unknown error'), 'error');
+          btn.classList.remove('is-loading');
           btn.disabled = false;
           btn.textContent = 'INSTALL';
           btn.classList.add('install-btn');
         }
       } catch (err) {
         showToast('Install failed: ' + (err.message || err), 'error');
+        btn.classList.remove('is-loading');
         btn.disabled = false;
         btn.textContent = 'INSTALL';
         btn.classList.add('install-btn');
