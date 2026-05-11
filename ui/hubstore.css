@@ -610,6 +610,139 @@
   box-shadow: inset 0 -1px 0 rgba(160,240,160,0.3);
 }
 
+/* Theme preview banner — pinned to the top of the launcher when the
+   user is previewing a theme from the store. Same visual language as
+   .sm-preview-banner over in stats.css. */
+#theme-preview-banner {
+  position: fixed;
+  top: 36px;     /* clear the OS-style title bar */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 16px;
+  background: linear-gradient(90deg, rgba(60,42,16,0.95), rgba(28,18,8,0.92));
+  border: 1px solid #c8a840;
+  border-radius: 4px;
+  color: #e0c87a;
+  font-size: 0.92rem;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+}
+#theme-preview-banner b { color: #ffd070; }
+#theme-preview-close {
+  padding: 5px 14px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  font-weight: 800;
+  background: linear-gradient(180deg, #5a4218 0%, #3a2810 100%);
+  border: 2px solid #6b5228;
+  border-radius: 3px;
+  color: #ffd070;
+  cursor: pointer;
+}
+#theme-preview-close:hover {
+  border-color: #c8a840;
+  box-shadow: 0 0 10px rgba(200,168,64,0.5);
+}
+
+/* Launcher theme preview — mini-chrome mockup that reads as a tiny
+   launcher window. Painted with the theme's palette so the user sees
+   what equipping it would do at a glance. */
+.hs-theme-preview {
+  position: relative;
+  height: 140px;
+  border: 1px solid;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: inset 0 0 24px rgba(0,0,0,0.4);
+}
+.hs-theme-titlebar {
+  height: 14px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(0,0,0,0.4);
+}
+.hs-theme-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.hs-theme-sidebar {
+  width: 28px;
+  border-right: 1px solid;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.hs-theme-pip {
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  box-shadow: 0 0 6px currentColor;
+}
+.hs-theme-pip.dim { box-shadow: none; opacity: 0.6; }
+.hs-theme-content {
+  flex: 1;
+  padding: 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hs-theme-line {
+  height: 7px;
+  border-radius: 2px;
+  opacity: 0.85;
+}
+
+/* Legendary themes ship an SVG centerpiece (overlayHtml). Render scaled
+   into the mini preview so the tile actually shows the Astrolabe/Forge/Crown
+   instead of looking blank. The wrapping SVG in overlayHtml is normally
+   absolutely positioned at 560px — we override and clip to the tile. */
+.hs-theme-overlay-mini {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 1;
+}
+.hs-theme-overlay-mini > svg {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 110% !important;
+  height: 110% !important;
+  opacity: 0.55 !important;
+}
+/* Center banner image painted UNDER the overlay, OVER the body bg.
+   Spans the full preview so the banner reads as the dominant artwork. */
+.hs-theme-center-img {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  z-index: 0;
+  opacity: 1;
+}
+/* When the tile has a banner image, fade the mini-chrome strips so the
+   banner is the focal point rather than getting half-hidden by the
+   pretend sidebar + content lines. */
+.hs-theme-preview.has-banner .hs-theme-titlebar { opacity: 0.7; }
+.hs-theme-preview.has-banner .hs-theme-sidebar  { opacity: 0.6; }
+.hs-theme-preview.has-banner .hs-theme-line     { opacity: 0.5; }
+/* Make sure the chrome (titlebar/sidebar/content) sits ABOVE the overlay
+   so it still reads as a launcher. Without this the SVG would cover it. */
+.hs-theme-preview .hs-theme-titlebar,
+.hs-theme-preview .hs-theme-body { position: relative; z-index: 2; }
+/* Let the body fill be transparent so the overlay/banner shows through
+   in the central viewing area. */
+.hs-theme-preview .hs-theme-content { background: transparent; }
+
 /* ── Effect previews — animated layers (Profile Effects category) ── */
 .hs-fx-preview {
   position: relative;

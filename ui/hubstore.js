@@ -167,6 +167,14 @@
       featured:        !!(raw.featured),
       featuredTag:     raw.featured_tag || raw.featuredTag || '',
       featuredSubline: raw.featured_subline || raw.featuredSubline || '',
+      // Launcher theme palette — used by .cat='themes' items. Renders as
+      // a mini-chrome preview in the tile and gets handed to applyTheme()
+      // when the user equips the theme.
+      palette:      style.palette || null,
+      // Optional SVG / animated overlay packaged with the theme. Legendary
+      // themes use these for centerpiece spectacles (Astrolabe, Forge, etc.)
+      overlayHtml:  style.overlayHtml || '',
+      overlayCss:   style.overlayCss  || '',
     };
   }
 
@@ -178,6 +186,7 @@
       if (Array.isArray(items) && items.length) {
         catalog = items.map(normaliseItem);
         publishCatalog();
+        applyEquippedThemeOnLoad();
         return;
       }
     } catch (e) {
@@ -185,6 +194,37 @@
     }
     catalog = FALLBACK_CATALOG_RAW.map(normaliseItem);
     publishCatalog();
+    injectAllThemeOverlayCss();
+  }
+
+  // After every catalog load, look up the user's equipped theme item
+  // and paint its palette. Survives launcher restarts without needing a
+  // separate user-state fetch (the catalog already carries equipped flags
+  // for the logged-in user via /api/store/list joining user_equipped).
+  // Inject every theme's overlayCss into ONE global <style id="hs-theme-overlay-css">
+  // so the mini-previews (which use the same SVG class names like .t-astro-outer)
+  // animate in the store tiles. Idempotent — replaces on each catalog load.
+  function injectAllThemeOverlayCss() {
+    // Overlays disabled — banners are the art. Wipe any previously-injected
+    // overlay CSS so leftover animations don't keep running.
+    let css = '';
+    let tag = document.getElementById('hs-theme-overlay-css');
+    if (!tag) {
+      tag = document.createElement('style');
+      tag.id = 'hs-theme-overlay-css';
+      document.head.appendChild(tag);
+    }
+    tag.textContent = css;
+  }
+
+  function applyEquippedThemeOnLoad() {
+    injectAllThemeOverlayCss();
+    const t = catalog.find(i => i.cat === 'themes' && i.equipped);
+    if (t?.palette && typeof window.applyTheme === 'function') {
+      window.applyTheme(t.palette, t.overlayHtml, t.overlayCss);
+    } else if (typeof window.clearTheme === 'function') {
+      window.clearTheme();
+    }
   }
 
   // Expose the catalog as a global lookup table so other modules (notably
@@ -212,6 +252,7 @@
     { id:'colors',  ico:'🎨', name:'Name Colors',     titleHdr:'NAME COLORS',        titleSub:'Recolour your name across the launcher. Subtle or loud.' },
     { id:'borders', ico:'⭕', name:'Avatar Borders',  titleHdr:'AVATAR BORDERS',     titleSub:'Frame your face. From quiet stone to legendary inferno.' },
     { id:'effects', ico:'✨', name:'Profile Effects', titleHdr:'PROFILE EFFECTS',    titleSub:'Animated overlays that play on your profile card. The flex tier.' },
+    { id:'themes',  ico:'🎭', name:'Launcher Themes', titleHdr:'LAUNCHER THEMES',    titleSub:'Repaint the entire launcher. Background, sidebars, top bar, accent.' },
   ];
 
   // Tier display order + label
@@ -461,6 +502,53 @@
   }
 
   function renderTileArt(item) {
+    if (item.cat === 'themes') {
+      // Mini-chrome preview: 3 stacked bars + a body fill, painted with
+      // the theme's actual palette. Reads at-a-glance what swapping to
+      // this theme would look like.
+      const p = item.palette || {};
+      const bg = p.bgColor || '#0d0a06';
+      const titlebar = p.titlebarBg || '#1a1610';
+      const sidebar = p.sidebarBg || 'linear-gradient(180deg, #241e12, #1a1610)';
+      const accent = p.accent || '#c8a840';
+      const accentHot = p.accentHot || '#ffd070';
+      const border = p.sidebarBorder || '#5a4828';
+      // Hand-rolled SVG-free preview: outer card = body bg, top strip =
+      // titlebar, left strip = sidebar, accent dot for the active tab,
+      // brighter accent badge bottom-right.
+      // Overlay SVGs disabled — banner images now carry the art alone.
+      const overlay = '';
+      // Optional center image (Gemini/MJ banner). Painted under the overlay.
+      // Centre-image URL is `url("https://...")` with double quotes inside —
+      // strip them so they don't break the outer style="" attribute, then
+      // re-wrap with single quotes inside url().
+      let ci = '';
+      if (p.centerImage) {
+        const m = String(p.centerImage).match(/url\(\s*["']?([^"')]+)["']?\s*\)/);
+        const src = m ? m[1] : p.centerImage;
+        const filt = esc(p.centerImageFilter || 'brightness(0.9)');
+        ci = `<div class="hs-theme-center-img" style="background-image:url('${esc(src)}');filter:${filt}"></div>`;
+      }
+      const hasBannerCls = ci ? ' has-banner' : '';
+      return `
+        <div class="hs-theme-preview${hasBannerCls}" style="background:${esc(bg)};border-color:${esc(border)}">
+          ${ci}
+          ${overlay}
+          <div class="hs-theme-titlebar" style="background:${esc(titlebar)}"></div>
+          <div class="hs-theme-body">
+            <div class="hs-theme-sidebar" style="background:${esc(sidebar)};border-right-color:${esc(border)}">
+              <span class="hs-theme-pip" style="background:${esc(accentHot)}"></span>
+              <span class="hs-theme-pip dim" style="background:${esc(accent)}"></span>
+              <span class="hs-theme-pip dim" style="background:${esc(accent)}"></span>
+            </div>
+            <div class="hs-theme-content">
+              <div class="hs-theme-line" style="background:${esc(accentHot)};width:55%"></div>
+              <div class="hs-theme-line" style="background:${esc(accent)};width:35%;opacity:0.5"></div>
+              <div class="hs-theme-line" style="background:${esc(accent)};width:40%;opacity:0.4"></div>
+            </div>
+          </div>
+        </div>`;
+    }
     if (item.cat === 'effects') {
       // For effects: a live-animated mini profile card with the user's
       // real avatar so they see themselves in the preview.
@@ -760,7 +848,7 @@
     const slot = result.slot;
     const newId = result.item_id;
     // Only one item per slot may be equipped — clear all in this slot first.
-    const slotToCat = { title:'titles', color:'colors', border:'borders', effect:'effects', background:'backgrounds' };
+    const slotToCat = { title:'titles', color:'colors', border:'borders', effect:'effects', background:'backgrounds', theme:'themes' };
     const cat = slotToCat[slot] || null;
     catalog.forEach(i => {
       if ((cat && i.cat === cat) || (!cat && false)) i.equipped = (i.id === newId);
@@ -769,7 +857,7 @@
   function applyUnequipResult(result) {
     if (!result || !result.success) return;
     const slot = result.slot;
-    const slotToCat = { title:'titles', color:'colors', border:'borders', effect:'effects', background:'backgrounds' };
+    const slotToCat = { title:'titles', color:'colors', border:'borders', effect:'effects', background:'backgrounds', theme:'themes' };
     const cat = slotToCat[slot] || null;
     if (cat) catalog.forEach(i => { if (i.cat === cat) i.equipped = false; });
   }
@@ -951,6 +1039,14 @@
       if (action === 'buy')      { applyBuyResult(result);     toast(`Purchased "${item.name}" for ${item.cost.toLocaleString()} coins.`, 'success'); }
       if (action === 'equip')    { applyEquipResult(result);   toast(`Equipped "${item.name}".`, 'success'); }
       if (action === 'unequip')  { applyUnequipResult(result); toast(`Unequipped "${item.name}".`, 'info'); }
+      // Themes need a live repaint of the launcher chrome on equip/unequip.
+      if (item.cat === 'themes') {
+        if (action === 'equip' && item.palette && typeof window.applyTheme === 'function') {
+          window.applyTheme(item.palette, item.overlayHtml, item.overlayCss);
+        } else if (action === 'unequip' && typeof window.clearTheme === 'function') {
+          window.clearTheme();
+        }
+      }
       // Invalidate the stats cache so the next time the user opens their
       // stats modal it pulls fresh equipped data — without this the modal
       // shows cached "Title: None" even after a successful equip.
@@ -978,8 +1074,15 @@
   // looks on their profile (title under name, name color applied, avatar
   // border, profile effect playing) before deciding to buy.
   function openPreviewModal(item) {
+    // Themes preview at the launcher-chrome level, not the stats modal.
+    // Apply the palette live + show a top banner the user can dismiss to
+    // revert to their actual equipped theme.
+    if (item.cat === 'themes') {
+      previewTheme(item);
+      return;
+    }
     if (typeof window.openStatsModal !== 'function') {
-      toast('Preview not available — stats module did not load.', 'error');
+      toast('Preview not available, stats module did not load.', 'error');
       return;
     }
     // Build an override object the stats modal will apply on top of the
@@ -991,6 +1094,34 @@
       return;
     }
     window.openStatsModal(null, { previewItem: item, previewSlot: slot });
+  }
+
+  // Theme preview: apply the palette to the live launcher chrome + show
+  // a dismiss-banner pinned to the top. Closing or pressing Escape reverts
+  // back to the user's actual equipped theme (or default if none equipped).
+  function previewTheme(item) {
+    if (!item?.palette || typeof window.applyTheme !== 'function') return;
+    // Snapshot current equipped so we can restore exactly that on close.
+    const restore = () => {
+      const equipped = catalog.find(i => i.cat === 'themes' && i.equipped);
+      if (equipped?.palette) window.applyTheme(equipped.palette, equipped.overlayHtml, equipped.overlayCss);
+      else                   window.clearTheme?.();
+      document.getElementById('theme-preview-banner')?.remove();
+      document.removeEventListener('keydown', onEsc);
+    };
+    const onEsc = (e) => { if (e.key === 'Escape') restore(); };
+
+    window.applyTheme(item.palette, item.overlayHtml, item.overlayCss);
+    document.getElementById('theme-preview-banner')?.remove();
+
+    const banner = document.createElement('div');
+    banner.id = 'theme-preview-banner';
+    banner.innerHTML = `
+      <span>👁️&nbsp; Previewing theme: <b>${esc(item.name)}</b>. Your actual theme is unchanged.</span>
+      <button id="theme-preview-close">CLOSE PREVIEW</button>`;
+    document.body.appendChild(banner);
+    banner.querySelector('#theme-preview-close').addEventListener('click', restore);
+    document.addEventListener('keydown', onEsc);
   }
 
   // Pre-load the catalog as soon as the launcher window finishes booting.

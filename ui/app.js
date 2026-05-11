@@ -325,8 +325,18 @@ if (window.hub?.onUpdateAvailable) {
     const banner = document.createElement('div');
     banner.id = 'update-banner';
     banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#1a1d24;border-top:1px solid #2a2e39;color:#c8a840;font-family:Cinzel,serif;font-size:0.8rem;padding:10px 20px;display:flex;align-items:center;gap:12px;z-index:999999';
-    banner.innerHTML = `<span>✦ Update ready to install</span><button onclick="window.hub.installUpdate()" style="background:#ff981f;color:#0f1115;border:none;padding:5px 14px;border-radius:3px;font-family:Cinzel,serif;font-size:0.75rem;cursor:pointer;font-weight:700">RESTART & UPDATE</button><button onclick="this.parentElement.remove()" style="background:none;border:none;color:#666;cursor:pointer;margin-left:auto;font-size:1rem">✕</button>`;
+    banner.innerHTML = `<span>✦ Update ready to install</span><button id="update-banner-restart" style="background:#ff981f;color:#0f1115;border:none;padding:5px 14px;border-radius:3px;font-family:Cinzel,serif;font-size:0.75rem;cursor:pointer;font-weight:700">RESTART & UPDATE</button><button onclick="this.parentElement.remove()" style="background:none;border:none;color:#666;cursor:pointer;margin-left:auto;font-size:1rem">✕</button>`;
     document.body.appendChild(banner);
+    // Confirm before restarting — a running game JAR gets killed on app
+    // restart, so we want a clear heads-up rather than silently nuking
+    // someone mid-fight.
+    banner.querySelector('#update-banner-restart').addEventListener('click', async () => {
+      const ok = await confirmThemed(
+        'Restarting the launcher will close any RSPS game windows you have open. Save and log out first if you are in-game.',
+        { title: 'Restart to apply update?', okLabel: 'Restart now', cancelLabel: 'Not yet', danger: true }
+      );
+      if (ok) window.hub.installUpdate();
+    });
   });
 }
 
@@ -371,6 +381,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       // checks of state.user.isStaff (camelCase) work everywhere.
       state.user = { ...userData, isStaff: !!(userData.is_staff ?? userData.isStaff) };
       await window.hub.setActiveUser(userData.username);
+      // If the user has a theme equipped, repaint the launcher chrome
+      // immediately so they don't see the default palette flash first.
+      // Equipped theme metadata is stored on user_equipped[slot=theme]
+      // and loaded by /api/store/list once that's wired. For now this
+      // runs against any state.equipped.theme.style we have.
+      try { applyEquippedThemeIfAny(); } catch (_) {}
       // Load the per-user profile (avatarPath, displayName, bio, etc.) NOW
       // that we know who's logged in. Was previously called outside this
       // block with an undefined username, which silently returned the
@@ -661,6 +677,113 @@ function renderName(username, equipped) {
     : safe;
 }
 window.renderName = renderName;
+
+// ── LAUNCHER THEMES ──────────────────────────────────────────────────────────
+// Phase 0 of the Hub Store theme system. Themes live as items in the store
+// catalog with style_json carrying a palette. When equipped, applyTheme()
+// injects a single <style id="theme-vars"> block that overrides :root vars,
+// repainting the title bar / sidebars / background on the fly.
+//
+// Token names match the defaults declared at the top of style.css.
+//
+// Usage from console (for testing):
+//   applyTheme({ bgColor:'#1a0808', sidebarBg:'#2a0808', accent:'#ff4040' })
+//   clearTheme()
+const THEME_TOKEN_MAP = {
+  bgColor:           '--bg-color',
+  bgImage:           '--bg-image',           // CSS url(...) or 'none'
+  bgImageFilter:     '--bg-image-filter',    // e.g. 'brightness(0.6)'
+  centerImage:         '--center-image',          // banner over bg, under chrome
+  centerImageFilter:   '--center-image-filter',
+  centerImageSize:     '--center-image-size',     // cover | contain | <length>
+  centerImagePosition: '--center-image-position', // e.g. "center top", "70% 50%"
+  titlebarBg:        '--titlebar-bg',
+  titlebarBorder:    '--titlebar-border',
+  navbarBg:          '--navbar-bg',
+  navbarBorder:      '--navbar-border',
+  sidebarBg:         '--sidebar-bg',
+  sidebarBorder:     '--sidebar-border',
+  rsTabBg:           '--rstab-bg',
+  rsTabBgHover:      '--rstab-bg-hover',
+  rsTabBgActive:     '--rstab-bg-active',
+  rsTabBorder:       '--rstab-border',
+  accent:            '--accent',
+  accentHot:         '--accent-hot',
+};
+
+function applyTheme(palette, overlayHtml, overlayCss) {
+  if (!palette || typeof palette !== 'object') return;
+  // Overlay SVGs (leaves, anvil, crown, runic rings, jellyfish) are
+  // disabled — banner images are now the sole centerpiece. Keep the
+  // signature so callers don't have to change.
+  overlayHtml = '';
+  overlayCss  = '';
+  const lines = [];
+  for (const [key, val] of Object.entries(palette)) {
+    const cssVar = THEME_TOKEN_MAP[key];
+    if (!cssVar || val == null || val === '') continue;
+    lines.push(`  ${cssVar}: ${val};`);
+  }
+  if (!lines.length) { clearTheme(); return; }
+  let tag = document.getElementById('theme-vars');
+  if (!tag) {
+    tag = document.createElement('style');
+    tag.id = 'theme-vars';
+    document.head.appendChild(tag);
+  }
+  tag.textContent = `:root {\n${lines.join('\n')}\n}\n`;
+
+  // Optional SVG / animated overlay layer. Lives at body level behind the
+  // chrome (z-index 0, while .body > * children are z-index 1). Lets a
+  // theme ship a centerpiece spectacle (astrolabe, forge, sigil, etc.)
+  // that quietly animates behind the launcher. Cleared on unequip.
+  let overlay = document.getElementById('theme-overlay');
+  let overlayStyle = document.getElementById('theme-overlay-css');
+  if (overlayHtml) {
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'theme-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden';
+      document.body.insertBefore(overlay, document.body.firstChild);
+    }
+    overlay.innerHTML = overlayHtml;
+  } else {
+    overlay?.remove();
+  }
+  if (overlayCss) {
+    if (!overlayStyle) {
+      overlayStyle = document.createElement('style');
+      overlayStyle.id = 'theme-overlay-css';
+      document.head.appendChild(overlayStyle);
+    }
+    overlayStyle.textContent = overlayCss;
+  } else {
+    overlayStyle?.remove();
+  }
+}
+
+function clearTheme() {
+  document.getElementById('theme-vars')?.remove();
+  document.getElementById('theme-overlay')?.remove();
+  document.getElementById('theme-overlay-css')?.remove();
+}
+
+// Called after login + after equip/unequip in the store. Looks up the
+// equipped theme item from the catalog and applies its palette. No-op if
+// none equipped, or if the catalog hasn't loaded the user's equipped slot
+// yet (which is fine — applyTheme will be called again post-load).
+function applyEquippedThemeIfAny() {
+  const t = state.equipped?.theme?.style;
+  if (t?.palette) {
+    applyTheme(t.palette, t.overlayHtml, t.overlayCss);
+  } else {
+    clearTheme();
+  }
+}
+
+window.applyTheme               = applyTheme;
+window.clearTheme               = clearTheme;
+window.applyEquippedThemeIfAny  = applyEquippedThemeIfAny;
 
 // Tiny gold/gradient title pill that sits under or beside a username in
 // chat / DMs / friends / etc. Returns "" if no title equipped.
@@ -3978,7 +4101,16 @@ async function openGCRoom(el, roomId, roomName) {
     const senderHtml = (!isOwn && !isSystem)
       ? `<span class="dm-sender lb-clickable" data-open-profile="${escAttr(m.username)}">${senderInner}</span>`
       : `<span class="dm-sender">${senderInner}</span>`;
-    div.innerHTML = `<div class="dm-sender-row">${senderHtml}${titlePill}</div><div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`;
+    // Staff get a tiny 🗑 next to each non-system message so they can
+    // moderate inline without an SQL trip. Hidden when the row is just
+    // an optimistic local bubble (no real server id yet).
+    const isStaff   = !!(state.user?.is_staff || state.user?.isStaff);
+    const canDelete = isStaff && !opts.optimistic && m.id && !isSystem;
+    const deleteBtn = canDelete
+      ? `<button class="hub-msg-delete" data-delete-hub-msg="${m.id}" title="Delete (staff)">🗑</button>`
+      : '';
+    if (m.id) div.dataset.msgId = m.id;
+    div.innerHTML = `<div class="dm-sender-row">${senderHtml}${titlePill}${deleteBtn}</div><div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`;
     msgEl.appendChild(div);
   }
 
@@ -4067,6 +4199,32 @@ async function openGCRoom(el, roomId, roomName) {
   // Pop-out button — spawns a floating always-on-top chat window
   el.querySelector('#gc-popout')?.addEventListener('click', () => {
     if (window.hub?.openChatPopout) window.hub.openChatPopout('hub');
+  });
+
+  // Staff inline delete on hub chat messages. Optimistic remove from the
+  // DOM so the click feels instant; if the API call fails, restore.
+  msgEl.addEventListener('click', async e => {
+    const btn = e.target.closest('[data-delete-hub-msg]');
+    if (!btn) return;
+    e.stopPropagation();
+    const id = parseInt(btn.dataset.deleteHubMsg, 10);
+    if (!id) return;
+    if (!confirm('Delete this message?')) return;
+    const row = btn.closest('.dm-msg');
+    const placeholder = row?.nextSibling;
+    const parent = row?.parentNode;
+    row?.remove();
+    try {
+      const res = await window.hub.post('/api/chat/hub/delete', { id });
+      if (!res?.ok) {
+        // Restore on failure.
+        if (parent && row) parent.insertBefore(row, placeholder);
+        showToast('Delete failed: ' + (res?.error || 'unknown'), 'error');
+      }
+    } catch (err) {
+      if (parent && row) parent.insertBefore(row, placeholder);
+      showToast('Delete failed: ' + (err.message || err), 'error');
+    }
   });
 }
 
