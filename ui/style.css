@@ -1119,10 +1119,10 @@ body > * { position: relative; z-index: 1; }
 .refresh-btn {
   height: 36px;
   padding: 0 14px;
-  background: linear-gradient(180deg, #2a2418 0%, #1a1410 100%);
-  border: 1px solid #4a3a18;
+  background: var(--rstab-bg, linear-gradient(180deg, #2a2418 0%, #1a1410 100%));
+  border: 1px solid var(--rstab-border, #4a3a18);
   border-radius: 3px;
-  color: #c8a840;
+  color: var(--accent, #c8a840);
   font-size: 0.8rem;
   font-family: 'Cinzel', serif;
   font-weight: 600;
@@ -1130,29 +1130,31 @@ body > * { position: relative; z-index: 1; }
   transition: all 0.15s;
 }
 .refresh-btn:hover {
-  border-color: #c8a840;
-  background: linear-gradient(180deg, #3a3020 0%, #2a2418 100%);
+  border-color: var(--accent-hot, #c8a840);
+  background: var(--rstab-bg-hover, linear-gradient(180deg, #3a3020 0%, #2a2418 100%));
+  color: var(--accent-hot, #c8a840);
 }
 /* "Request a Server" sits next to refresh and shares its skin so the
    header line stays visually consistent. */
 .request-srv-btn {
   height: 36px;
   padding: 0 14px;
-  background: linear-gradient(180deg, #2a2418 0%, #1a1410 100%);
-  border: 1px solid #4a3a18;
+  background: var(--rstab-bg, linear-gradient(180deg, #2a2418 0%, #1a1410 100%));
+  border: 1px solid var(--rstab-border, #4a3a18);
   border-radius: 3px;
-  color: #c8a840;
+  color: var(--accent, #c8a840);
   font-size: 0.8rem;
   font-family: 'Cinzel', serif;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
   margin-left: 6px;
   letter-spacing: 0.04em;
 }
 .request-srv-btn:hover {
-  border-color: #c8a840;
-  background: linear-gradient(180deg, #3a3020 0%, #2a2418 100%);
+  border-color: var(--accent-hot, #c8a840);
+  background: var(--rstab-bg-hover, linear-gradient(180deg, #3a3020 0%, #2a2418 100%));
+  color: var(--accent-hot, #c8a840);
 }
 
 /* ── REQUEST A SERVER MODAL ── */

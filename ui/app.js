@@ -1,3 +1,49 @@
+// ── JS ERROR TELEMETRY ────────────────────────────────────────────────────
+// Production users can't open DevTools, so any uncaught error would be
+// invisible. POST every error to /api/log/js-error so we see them on the
+// backend instead of guessing. Self-throttled to 1 every 2s so a render
+// loop doesn't DDoS the endpoint. Errors thrown FROM this handler itself
+// are swallowed.
+(function initJsErrorTelemetry() {
+  let lastReport = 0;
+  function report(payload) {
+    const now = Date.now();
+    if (now - lastReport < 2000) return;   // throttle
+    lastReport = now;
+    try {
+      const body = JSON.stringify({
+        ...payload,
+        version: (window.APP_VERSION || ''),
+        context: (location.hash || document.title || '').slice(0, 240),
+      });
+      // Direct POST to the VPS — bypass the local Java proxy so errors
+      // before the proxy is up still get captured. Anonymous accepted.
+      fetch('https://api.therspshub.com/api/log_js_error.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true,
+      }).catch(() => {});
+    } catch {}
+  }
+  window.addEventListener('error', (e) => {
+    report({
+      message: e.message || 'unknown error',
+      source:  e.filename || '',
+      lineno:  e.lineno || 0,
+      colno:   e.colno  || 0,
+      stack:   (e.error && e.error.stack) ? String(e.error.stack).slice(0, 4000) : '',
+    });
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e.reason || {};
+    report({
+      message: 'unhandled promise: ' + (r.message || String(r)).slice(0, 400),
+      stack:   r.stack ? String(r.stack).slice(0, 4000) : '',
+    });
+  });
+})();
+
 // ── SPLASH SCREEN ─────────────────────────────────────────────────────────────
 
 (function initSplash() {
@@ -1322,7 +1368,7 @@ function buildServerCard(server) {
   const xpPct        = calcXpProgress(minutes);
   const rankName     = getRankName(level);
   const milestoneClr = getMilestoneColor(level);
-  const tags         = (server.tags || []).slice(0, 4);
+  const tags         = (server.tags || []).slice(0, 6);
   const accent       = server.accentColor || server.accent_color || '#c8a840';
 
   // Smart badges
@@ -6289,6 +6335,7 @@ function renderDevEditor(el, server) {
         <div class="dp-img-row">
           <input class="dp-input" id="dp-icon-url" type="text" value="${escHtml(s.iconUrl)}" placeholder="https://...">
           <button class="dp-file-btn" id="dp-icon-pick">📁</button>
+          <button class="dp-file-btn dp-clear-btn" data-target="dp-icon-url" data-preview="dp-icon-preview" title="Remove image">✕</button>
         </div>
         <div class="dp-size-hint">Recommended: <b>256 × 256</b> (square, 1:1) · PNG with transparent background</div>
         <div class="dp-img-thumb" id="dp-icon-preview">${s.iconUrl ? `<img src="${escHtml(s.iconUrl)}" onerror="this.style.display='none'">` : ''}</div>
@@ -6298,6 +6345,7 @@ function renderDevEditor(el, server) {
         <div class="dp-img-row">
           <input class="dp-input" id="dp-card-banner-url" type="text" value="${escHtml(s.cardBannerUrl)}" placeholder="https://...">
           <button class="dp-file-btn" id="dp-card-banner-pick">📁</button>
+          <button class="dp-file-btn dp-clear-btn" data-target="dp-card-banner-url" data-preview="dp-card-banner-preview" title="Remove image">✕</button>
         </div>
         <div class="dp-size-hint">Recommended: <b>840 × 460</b> (aspect 1.83:1) · displays at 210×115 · PNG or JPG</div>
         <div class="dp-img-thumb dp-img-wide" id="dp-card-banner-preview">${s.cardBannerUrl ? `<img src="${escHtml(s.cardBannerUrl)}" onerror="this.style.display='none'">` : ''}</div>
@@ -6307,6 +6355,7 @@ function renderDevEditor(el, server) {
         <div class="dp-img-row">
           <input class="dp-input" id="dp-banner-url" type="text" value="${escHtml(s.bannerUrl)}" placeholder="https://...">
           <button class="dp-file-btn" id="dp-banner-pick">📁</button>
+          <button class="dp-file-btn dp-clear-btn" data-target="dp-banner-url" data-preview="dp-banner-preview" title="Remove image">✕</button>
         </div>
         <div class="dp-size-hint">Recommended: <b>1920 × 540</b> (ultra-wide, aspect 3.5:1) · PNG or JPG</div>
         <div class="dp-img-thumb dp-img-wide" id="dp-banner-preview">${s.bannerUrl ? `<img src="${escHtml(s.bannerUrl)}" onerror="this.style.display='none'">` : ''}</div>
@@ -6486,6 +6535,24 @@ function renderDevEditor(el, server) {
     el.querySelector(`#${input}`)?.addEventListener('input', e => {
       const p = el.querySelector(`#${preview}`);
       if (p) p.innerHTML = e.target.value ? `<img src="${escHtml(e.target.value)}" onerror="this.style.display='none'">` : '';
+      // Typing wipes the "cleared" flag — user has clearly given up on deleting.
+      e.target.dataset.cleared = '';
+      devRefreshPreview(el);
+    });
+  });
+
+  // ✕ clear buttons next to each image picker. Flag the input as "cleared"
+  // so devCollect sends the 'delete' sentinel — update.php otherwise ignores
+  // empty URL values to protect against stale-form-blank overwrites.
+  el.querySelectorAll('.dp-clear-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      const targetId  = btn.dataset.target;
+      const previewId = btn.dataset.preview;
+      const input  = el.querySelector('#' + targetId);
+      const prev   = el.querySelector('#' + previewId);
+      if (input) { input.value = ''; input.dataset.cleared = '1'; }
+      if (prev)  prev.innerHTML = '';
       devRefreshPreview(el);
     });
   });
@@ -6533,20 +6600,43 @@ function dpShotRow(url, idx) {
 function devCollect(el) {
   const tags  = [...el.querySelectorAll('.dp-tag-cb:checked')].map(c => c.dataset.tag);
   const shots = [...el.querySelectorAll('.dp-shot-input')].map(i => i.value.trim()).filter(Boolean);
+  // URL fields: ONLY include if non-empty. The upload endpoints (upload_icon /
+  // upload_banner / upload_card_banner) write the public URL directly to the
+  // DB. If we always sent these fields and an input happened to be blank
+  // (race condition, re-render, etc.) the save endpoint would overwrite the
+  // URL the upload just stored. By omitting them when empty, the only way to
+  // clear a URL is to type "delete" into the field, which we treat below.
+  const iconEl   = el.querySelector('#dp-icon-url');
+  const cardEl   = el.querySelector('#dp-card-banner-url');
+  const bannerEl = el.querySelector('#dp-banner-url');
+  const iconVal   = iconEl?.value.trim()   || '';
+  const cardVal   = cardEl?.value.trim()   || '';
+  const bannerVal = bannerEl?.value.trim() || '';
+  // For each URL field: a typed value gets sent as-is; an empty field that
+  // the user explicitly cleared via the ✕ button gets the sentinel 'delete'
+  // so update.php blanks the column; a quiet empty (race condition, stale
+  // form) gets omitted so update.php leaves the DB alone.
+  const urlFields = {};
+  if (iconVal)               urlFields.icon_url        = iconVal;
+  else if (iconEl?.dataset.cleared === '1')   urlFields.icon_url        = 'delete';
+  if (cardVal)               urlFields.card_banner_url = cardVal;
+  else if (cardEl?.dataset.cleared === '1')   urlFields.card_banner_url = 'delete';
+  if (bannerVal)             urlFields.banner_url      = bannerVal;
+  else if (bannerEl?.dataset.cleared === '1') urlFields.banner_url      = 'delete';
   return {
     name:            el.querySelector('#dp-name')?.value.trim()           || '',
     tagline:         el.querySelector('#dp-tagline')?.value.trim()        || '',
     accent_color:    el.querySelector('#dp-accent')?.value.trim()         || '#c8a840',
-    icon_url:        el.querySelector('#dp-icon-url')?.value.trim()       || '',
-    card_banner_url: el.querySelector('#dp-card-banner-url')?.value.trim()|| '',
-    banner_url:      el.querySelector('#dp-banner-url')?.value.trim()     || '',
+    ...urlFields,
     description:     el.querySelector('#dp-desc')?.value.trim()           || '',
     changelog:       el.querySelector('#dp-changelog')?.value.trim()      || '',
     jar_url:         el.querySelector('#dp-jar')?.value.trim()            || '',
     xp_rate:         el.querySelector('#dp-xprate')?.value                || '1x',
     website_url:     el.querySelector('#dp-website')?.value.trim()        || '',
     discord_url:     el.querySelector('#dp-discord')?.value.trim()        || '',
-    tags:            tags.join(','),
+    // Same guard as URL fields: only send tags if at least one is checked,
+    // so a save with no boxes ticked can't blank an existing tag list.
+    ...(tags.length ? { tags: tags.join(',') } : {}),
     screenshots:     shots,
     // Only include `visible` if the checkbox is actually in the form. When
     // it's absent (e.g. on a new submission), leave it out so the server
