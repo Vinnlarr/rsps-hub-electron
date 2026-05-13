@@ -306,10 +306,25 @@
           <input type="checkbox" id="asl-remember" checked>
           <span>Remember me</span>
         </label>
+        <span class="auth-screen-link" id="asl-forgot" style="margin-left:auto;font-size:12px">Forgot password?</span>
       </div>
       <div class="auth-screen-err" id="asl-err" style="display:none"></div>
       <button class="auth-screen-btn" id="asl-btn">LOGIN</button>
       <div class="auth-screen-switch">Don't have an account? <span class="auth-screen-link" id="asl-to-reg">Create one</span></div>
+    </div>
+
+    <!-- FORGOT PASSWORD FORM -->
+    <div id="auth-screen-forgot" style="display:none">
+      <div class="auth-screen-title">RESET PASSWORD</div>
+      <p class="auth-screen-tagline" style="font-size:12px;margin-bottom:14px">Enter your email. If we find a match, we'll send a reset link. Link is good for 1 hour.</p>
+      <div class="auth-screen-field">
+        <label class="auth-screen-label">EMAIL</label>
+        <input class="auth-screen-input" id="asf-email" type="email" placeholder="you@example.com" autocomplete="off">
+      </div>
+      <div class="auth-screen-err" id="asf-err" style="display:none"></div>
+      <div class="auth-screen-ok"  id="asf-ok"  style="display:none;color:#80e080;font-size:13px;margin:6px 0 12px"></div>
+      <button class="auth-screen-btn" id="asf-btn">SEND RESET LINK</button>
+      <div class="auth-screen-switch"><span class="auth-screen-link" id="asf-to-login">Back to sign in</span></div>
     </div>
 
     <!-- REGISTER FORM -->

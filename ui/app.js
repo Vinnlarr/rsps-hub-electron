@@ -4940,6 +4940,12 @@ function resetAuthForms() {
   if (loginPass) loginPass.value = '';
   const regPass = document.getElementById('asr-pass');
   if (regPass)   regPass.value   = '';
+  // Forgot-password form reset too
+  const fBtn = document.getElementById('asf-btn');
+  if (fBtn) { fBtn.disabled = false; fBtn.textContent = 'SEND RESET LINK'; fBtn.style.display = ''; }
+  const fErr = document.getElementById('asf-err'); if (fErr) { fErr.style.display = 'none'; fErr.textContent = ''; }
+  const fOk  = document.getElementById('asf-ok');  if (fOk)  { fOk.style.display  = 'none'; fOk.textContent  = ''; }
+  const fEml = document.getElementById('asf-email'); if (fEml) fEml.value = '';
 }
 
 function showAuthScreen() {
@@ -5016,6 +5022,45 @@ function setupAuthForms() {
     document.getElementById('auth-screen-register').style.display = 'none';
     document.getElementById('auth-screen-login').style.display    = '';
     document.getElementById('asl-user')?.focus();
+  });
+
+  // Forgot-password flow: login → email form → success message
+  document.getElementById('asl-forgot')?.addEventListener('click', () => {
+    resetAuthForms();
+    document.getElementById('auth-screen-login').style.display  = 'none';
+    document.getElementById('auth-screen-forgot').style.display = '';
+    document.getElementById('asf-email')?.focus();
+  });
+  document.getElementById('asf-to-login')?.addEventListener('click', () => {
+    resetAuthForms();
+    document.getElementById('auth-screen-forgot').style.display = 'none';
+    document.getElementById('auth-screen-login').style.display  = '';
+    document.getElementById('asl-user')?.focus();
+  });
+  document.getElementById('asf-btn')?.addEventListener('click', async () => {
+    const emailEl = document.getElementById('asf-email');
+    const errEl   = document.getElementById('asf-err');
+    const okEl    = document.getElementById('asf-ok');
+    const btn     = document.getElementById('asf-btn');
+    errEl.style.display = 'none'; okEl.style.display = 'none';
+    const email = (emailEl?.value || '').trim();
+    if (!email || !/.+@.+\..+/.test(email)) {
+      errEl.textContent = 'Enter a valid email.'; errEl.style.display = ''; return;
+    }
+    btn.disabled = true; btn.textContent = 'SENDING…';
+    try {
+      // Direct POST to VPS — works even when the local Java backend is down.
+      await fetch('https://api.therspshub.com/api/auth/forgot_password.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      okEl.textContent = 'If that email matches an account, a reset link is on its way. Check your inbox.';
+      okEl.style.display = '';
+      btn.style.display = 'none';
+    } catch {
+      errEl.textContent = 'Network error. Try again in a moment.'; errEl.style.display = '';
+      btn.disabled = false; btn.textContent = 'SEND RESET LINK';
+    }
   });
 
   // Show/hide password toggles
