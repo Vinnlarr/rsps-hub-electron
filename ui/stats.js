@@ -1213,15 +1213,21 @@
     const topServers = (data.topServers || []).slice(0, SERVERS_PER_SECTION);
 
     // Recent achievements (last 3 unlocked, mock until backend tracks unlock-time)
-    const achRows = recentAch.length ? recentAch.map(a => `
+    const achRows = recentAch.length ? recentAch.map(a => {
+      // Pull the real coin value from the server's published catalog instead
+      // of the old "default to 100" hardcode that made every row look the
+      // same. _achCatalogByName is pre-fetched on launcher init.
+      const reward = _achCatalogByName[a.name]?.coins ?? a.coins ?? 0;
+      return `
       <div class="sm-ach-row">
         <div class="sm-ach-icon">${esc(a.icon || '🏆')}</div>
         <div class="sm-ach-info">
           <div class="sm-ach-name">${esc(a.name)}</div>
           <div class="sm-ach-meta">${esc(a.sub || '')}</div>
         </div>
-        <div class="sm-ach-coin">+${a.coins || 100}</div>
-      </div>`).join('') : '<div class="sm-empty-mini">No achievements yet. Go play to unlock some.</div>';
+        <div class="sm-ach-coin">+${reward}</div>
+      </div>`;
+    }).join('') : '<div class="sm-empty-mini">No achievements yet. Go play to unlock some.</div>';
 
     // Coin activity from /api/coins/me. Pretty-print the source string so
     // users see "Achievement: First Steps" instead of "achievement / first_steps".
@@ -1252,10 +1258,14 @@
         const pretty = slug.replace(/\b\w/g, c => c.toUpperCase());
         return 'Bought: ' + pretty;
       }
-      if (src === 'milestone')  return 'Hub Level milestone';
-      if (src === 'admin')      return 'Staff adjustment';
-      if (src === 'refund')     return 'Refund';
-      return src ? (src.charAt(0).toUpperCase() + src.slice(1)) : 'Transaction';
+      if (src === 'milestone')    return 'Hub Level milestone';
+      if (src === 'admin')        return 'Staff adjustment';
+      if (src === 'refund')       return 'Refund';
+      if (src === 'login_streak') return 'Login streak bonus';
+      if (src === 'referral')     return 'Referral bonus';
+      // Fallback: snake_case → Sentence case (e.g. "some_thing" → "Some thing")
+      if (!src) return 'Transaction';
+      return src.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
     }
     function fmtTxWhen(iso) {
       if (!iso) return '';

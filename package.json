@@ -5,6 +5,7 @@
   "author": "RSPS Hub",
   "main": "main.js",
   "scripts": {
+    "prestart": "node scripts/prebuild-jar.js",
     "start": "electron .",
     "prebuild": "node scripts/prebuild-jar.js",
     "build": "electron-builder",

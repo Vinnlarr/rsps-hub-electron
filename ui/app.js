@@ -5137,12 +5137,14 @@ function setupAuthForms() {
     const user  = document.getElementById('asr-user')?.value.trim();
     const email = document.getElementById('asr-email')?.value.trim();
     const pass  = document.getElementById('asr-pass')?.value;
+    const ref   = (document.getElementById('asr-ref')?.value || '').trim().toUpperCase() || undefined;
     const err   = document.getElementById('asr-err');
     err.style.display = 'none';
     if (!user || !pass) { err.textContent = 'Username and password are required.'; err.style.display = ''; return; }
+    if (ref && !/^[A-Z0-9]{8}$/.test(ref)) { err.textContent = 'Referral code must be 8 characters.'; err.style.display = ''; return; }
     btn.disabled = true; btn.textContent = 'CREATING…';
     try {
-      const res = await window.hub.post('/api/auth/register', { username: user, password: pass, email });
+      const res = await window.hub.post('/api/auth/register', { username: user, password: pass, email, ref });
       if (res?.error) throw new Error(res.error);
       onAuthSuccess(res, true);
     } catch (e) {
@@ -7000,6 +7002,22 @@ function buildSettingsHTML(s) {
       <span class="set-value">${escHtml(state.user?.username)}</span>
     </div>
     <div class="set-row set-col" style="margin-top:8px">
+      <div class="set-label">Email
+        ${state.profile?.email_verified_at
+          ? '<span style="color:#4caf50;font-size:11px;margin-left:8px">✓ verified</span>'
+          : (state.profile?.email
+              ? '<span style="color:#c96;font-size:11px;margin-left:8px">⚠ unverified</span> <button id="set-email-resend" class="set-link-btn" style="font-size:11px;margin-left:6px;background:none;border:0;color:#c8a840;cursor:pointer;text-decoration:underline;padding:0">Resend verification</button>'
+              : '')}
+      </div>
+      <div class="set-sub" style="margin-bottom:6px">Used for password resets. We never share it. Changing it triggers a fresh verification email.</div>
+      <div class="set-row set-between" style="gap:8px">
+        <input class="set-input" id="set-email-input" type="email" placeholder="you@example.com"
+               value="${escAttr(state.profile?.email || '')}" style="flex:1">
+        <button class="set-browse-btn" id="set-email-submit">Update Email</button>
+      </div>
+      <div id="set-email-msg" class="set-sub" style="color:#888;margin-top:4px"></div>
+    </div>
+    <div class="set-row set-col" style="margin-top:8px">
       <div class="set-label">Change Password</div>
       <div class="set-sub" style="margin-bottom:6px">Requires your current password. Other devices will be signed out.</div>
       ${[
@@ -7018,6 +7036,28 @@ function buildSettingsHTML(s) {
         <div id="set-pw-msg" class="set-sub" style="color:#888"></div>
         <button class="set-browse-btn" id="set-pw-submit">Change Password</button>
       </div>
+    </div>
+    <div class="set-row set-col" style="margin-top:8px">
+      <div class="set-label">Refer a Friend
+        <span id="set-ref-count" class="set-sub" style="margin-left:8px;font-size:11px;color:#888">…</span>
+      </div>
+      <div class="set-sub" style="margin-bottom:6px">Share your code. When a friend signs up using it, you BOTH get <b>500 hub coins</b> after their first login.</div>
+      <div class="set-row set-between" style="gap:8px">
+        <input class="set-input" id="set-ref-code" type="text" readonly style="flex:1;text-transform:uppercase;letter-spacing:2px;font-family:monospace;background:#1a1610">
+        <button class="set-browse-btn" id="set-ref-copy">Copy Code</button>
+      </div>
+    </div>
+    <div class="set-row set-col" style="margin-top:8px">
+      <div class="set-label">Discord
+        <span id="set-discord-status" class="set-sub" style="margin-left:8px;font-size:11px;color:#888">Loading…</span>
+      </div>
+      <div class="set-sub" style="margin-bottom:6px">Pair your Discord with this hub account. In Discord, run <b>/link</b> and paste the 6-char code below.</div>
+      <div class="set-row set-between" style="gap:8px">
+        <input class="set-input" id="set-discord-code" type="text" placeholder="ABC123" maxlength="6"
+               style="flex:1;text-transform:uppercase;letter-spacing:2px;font-family:monospace">
+        <button class="set-browse-btn" id="set-discord-submit">Link Discord</button>
+      </div>
+      <div id="set-discord-msg" class="set-sub" style="color:#888;margin-top:4px"></div>
     </div>
     <div class="set-account-btns" style="margin-top:10px">
       <button class="set-danger-btn" id="set-logout">Logout</button>
@@ -7099,6 +7139,145 @@ function bindSettingsEvents(el, initial) {
       btn.textContent = shown ? '👁' : '🙈';
       btn.setAttribute('aria-label', shown ? 'Show password' : 'Hide password');
     });
+  });
+
+  // Referral code: load + copy button
+  (async () => {
+    const codeEl  = el.querySelector('#set-ref-code');
+    const cntEl   = el.querySelector('#set-ref-count');
+    if (!codeEl) return;
+    let res = null;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const r = await window.hub.get('/api/referrals/me');
+        if (r && r.code) { res = r; break; }
+      } catch {}
+      await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    }
+    if (res?.code) {
+      codeEl.value = res.code;
+      if (cntEl) cntEl.textContent = `${res.paid || 0} paid · ${res.total || 0} total`;
+    } else if (cntEl) {
+      cntEl.textContent = 'failed to load';
+    }
+  })();
+  el.querySelector('#set-ref-copy')?.addEventListener('click', () => {
+    const codeEl = el.querySelector('#set-ref-code');
+    if (!codeEl?.value) return;
+    navigator.clipboard.writeText(codeEl.value).then(() => {
+      const btn = el.querySelector('#set-ref-copy');
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    }).catch(() => showToast('Could not copy. Select the code manually.', 'error'));
+  });
+
+  // Discord link status + actions
+  const dStatusEl = el.querySelector('#set-discord-status');
+  const dCodeEl   = el.querySelector('#set-discord-code');
+  const dMsgEl    = el.querySelector('#set-discord-msg');
+  const dBtnEl    = el.querySelector('#set-discord-submit');
+  const dSetStatus = (linked) => {
+    if (!dStatusEl) return;
+    if (linked) {
+      dStatusEl.innerHTML = '<span style="color:#4caf50">✓ linked</span> <a href="#" id="set-discord-unlink" style="color:#c96;margin-left:8px;font-size:11px">Unlink</a>';
+      el.querySelector('#set-discord-unlink')?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (!await rhConfirm('Unlink your Discord from this account?', { title: 'Unlink Discord', confirmText: 'Unlink', cancelText: 'Cancel' })) return;
+        try { await window.hub.post('/api/discord/unlink', {}); dSetStatus(false); }
+        catch { showToast('Unlink failed', 'error'); }
+      });
+      if (dCodeEl) dCodeEl.disabled = true;
+      if (dBtnEl)  dBtnEl.disabled  = true;
+    } else {
+      dStatusEl.innerHTML = '<span style="color:#888">not linked</span>';
+      if (dCodeEl) dCodeEl.disabled = false;
+      if (dBtnEl)  dBtnEl.disabled  = false;
+    }
+  };
+  // Try status check up to 3x with backoff — Java's HTTP client occasionally
+  // times out reaching the VPS. Without retry the UI sticks on "not linked"
+  // even when the DB says otherwise.
+  (async () => {
+    let res = null;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const r = await window.hub.get('/api/discord/status');
+        if (r && (r.linked !== undefined)) { res = r; break; }
+      } catch {}
+      await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    }
+    dSetStatus(!!res?.linked);
+  })();
+  el.querySelector('#set-discord-submit')?.addEventListener('click', async () => {
+    const code = (dCodeEl?.value || '').trim().toUpperCase();
+    const setMsg = (t, c = '#c96') => { if (dMsgEl) { dMsgEl.textContent = t; dMsgEl.style.color = c; } };
+    if (!/^[A-Z0-9]{6}$/.test(code)) { setMsg('Code must be 6 characters (letters + numbers).'); return; }
+    dBtnEl.disabled = true; setMsg('Linking…', '#888');
+    let res = null;
+    try {
+      res = await window.hub.post('/api/discord/confirm-link', { code });
+    } catch {}
+    // Java backend timeouts are common when the VPS is slow. Even when the
+    // POST appears to fail, the backend may already have committed the link.
+    // Re-check status as the source of truth before declaring failure.
+    if (res?.ok) {
+      setMsg('Discord linked!', '#4caf50');
+      dCodeEl.value = '';
+      dSetStatus(true);
+    } else {
+      let statusRes = null;
+      try { statusRes = await window.hub.get('/api/discord/status'); } catch {}
+      if (statusRes?.linked) {
+        setMsg('Discord linked!', '#4caf50');
+        dCodeEl.value = '';
+        dSetStatus(true);
+      } else {
+        setMsg(res?.error || 'Link failed. Try again in a moment.');
+      }
+    }
+    dBtnEl.disabled = false;
+  });
+
+  // Resend verification email
+  el.querySelector('#set-email-resend')?.addEventListener('click', async () => {
+    const btn = el.querySelector('#set-email-resend');
+    const msg = el.querySelector('#set-email-msg');
+    const setMsg = (t, c = '#c96') => { if (msg) { msg.textContent = t; msg.style.color = c; } };
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res = await window.hub.post('/api/auth/send-verification', {});
+      if (res?.ok) {
+        setMsg('Verification email sent. Check your inbox.', '#4caf50');
+        if (res.already_verified && state.profile) state.profile.email_verified_at = new Date().toISOString();
+      } else {
+        setMsg(res?.error || 'Failed to send verification.');
+      }
+    } catch (e) { setMsg('Network error.'); }
+    finally { btn.disabled = false; btn.textContent = 'Resend verification'; }
+  });
+
+  el.querySelector('#set-email-submit')?.addEventListener('click', async () => {
+    const inp = el.querySelector('#set-email-input');
+    const msg = el.querySelector('#set-email-msg');
+    const btn = el.querySelector('#set-email-submit');
+    const setMsg = (text, color = '#c96') => { msg.textContent = text; msg.style.color = color; };
+    const email = (inp?.value || '').trim();
+    if (!email || !/.+@.+\..+/.test(email)) return setMsg('Enter a valid email.');
+    btn.disabled = true; setMsg('Updating…', '#888');
+    try {
+      const res = await window.hub.post('/api/users/update-email', { email });
+      if (res && res.success) {
+        setMsg('Email updated.', '#4caf50');
+        if (state.profile) state.profile.email = email;
+      } else {
+        setMsg(res?.error || 'Failed to update email.');
+      }
+    } catch (err) {
+      setMsg((err && err.message) || 'Network error.');
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   el.querySelector('#set-pw-submit')?.addEventListener('click', async () => {
