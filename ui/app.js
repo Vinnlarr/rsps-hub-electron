@@ -863,15 +863,32 @@ function updateNavbarAvatar() {
   const navInitial = document.getElementById('user-initial');
   if (!navImg || !navInitial) return;
 
-  if (p.avatarPath) {
-    navImg.src = 'file:///' + p.avatarPath.replace(/\\/g, '/') + '?t=' + Date.now();
-    navImg.style.display = '';
-    navInitial.style.display = 'none';
-  } else {
+  const fallback = () => {
     navImg.style.display = 'none';
     navInitial.style.display = '';
     navInitial.textContent = (p.displayName || state.user?.username || 'P')[0].toUpperCase();
+  };
+  const username = state.user?.username;
+  if (!username) { fallback(); return; }
+
+  // Prefer local file if hydrated. Otherwise blindly try the server URL —
+  // onerror swaps to the initial letter if there's no avatar. Avoids
+  // having to coordinate hasAvatar across every endpoint.
+  let src = null;
+  if (p.avatarPath) {
+    src = 'file:///' + p.avatarPath.replace(/\\/g, '/') + '?t=' + Date.now();
+  } else {
+    const safe = String(username).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (safe) src = `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(safe)}.jpg?t=${Date.now()}`;
   }
+  if (!src) { fallback(); return; }
+
+  navImg.onerror = fallback;
+  navImg.onload  = () => {
+    navImg.style.display = '';
+    navInitial.style.display = 'none';
+  };
+  navImg.src = src;
 }
 
 function populateAccountDropdown() {
@@ -886,18 +903,34 @@ function populateAccountDropdown() {
   const initial    = document.getElementById('account-initial');
   const navImg     = document.getElementById('nav-avatar-img');
   const navInitial = document.getElementById('user-initial');
-  if (p.avatarPath) {
-    const src = 'file:///' + p.avatarPath.replace(/\\/g, '/') + '?t=' + Date.now();
-    if (avatarImg) { avatarImg.src = src; avatarImg.style.display = ''; }
-    if (navImg)    { navImg.src    = src; navImg.style.display    = ''; }
-    if (initial)    initial.style.display    = 'none';
-    if (navInitial) navInitial.style.display = 'none';
-  } else {
+  const ch         = (displayName[0] || '?').toUpperCase();
+  const showInitials = () => {
     if (avatarImg) avatarImg.style.display = 'none';
     if (navImg)    navImg.style.display    = 'none';
-    const ch = (displayName[0] || '?').toUpperCase();
     if (initial)    { initial.style.display    = ''; initial.textContent    = ch; }
     if (navInitial) { navInitial.style.display = ''; navInitial.textContent = ch; }
+  };
+  // Prefer local file if hydrated. Otherwise blindly try server URL with
+  // onerror fallback — same trick as updateNavbarAvatar.
+  let src = null;
+  if (p.avatarPath) {
+    src = 'file:///' + p.avatarPath.replace(/\\/g, '/') + '?t=' + Date.now();
+  } else {
+    const safe = String(state.user?.username || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (safe) src = `https://api.therspshub.com/uploads/avatars/${encodeURIComponent(safe)}.jpg?t=${Date.now()}`;
+  }
+  if (!src) { showInitials(); }
+  else {
+    if (avatarImg) {
+      avatarImg.onerror = showInitials;
+      avatarImg.onload  = () => { avatarImg.style.display = ''; if (initial) initial.style.display = 'none'; };
+      avatarImg.src = src;
+    }
+    if (navImg) {
+      navImg.onerror = showInitials;
+      navImg.onload  = () => { navImg.style.display = ''; if (navInitial) navInitial.style.display = 'none'; };
+      navImg.src = src;
+    }
   }
 
   const displaynameEl = document.getElementById('account-displayname');
@@ -1401,6 +1434,7 @@ function buildServerCard(server) {
         ${isNew    ? '<span class="card-badge b-new">NEW</span>' : ''}
         ${isActive ? '<span class="card-badge b-hot">🔥 ACTIVE</span>' : ''}
       </div>` : ''}
+      ${buildLiveBadgeHTML(server)}
     </div>
     <div class="card-info">
       <div class="card-header">
@@ -1429,7 +1463,7 @@ function buildServerCard(server) {
       </div>
     </div>
     <div class="card-actions">
-      <span class="player-count">${players > 0 ? '<span class="player-pulse"></span>' : '▲ '}${formatNumber(players)} Hub Players Online</span>
+      <span class="player-count">${buildPlayerCountHTML(server, players)}</span>
       <button class="action-btn ${isDownloaded ? 'play-btn' : 'install-btn'}"
               data-action="${isDownloaded ? 'play' : 'install'}"
               data-name="${server.name}">
@@ -1550,6 +1584,32 @@ function renderFavSidebar() {
 }
 
 // ── NAV TABS ──────────────────────────────────────────────────────────────────
+
+/**
+ * Build the player-count line for a server card. Logic:
+ *  - If the server has self-reported a count in the last 10 min, show it as
+ *    the primary number ("X live") with the hub count as a secondary
+ *    verification badge so users can spot fake inflation.
+ *  - Otherwise just show the hub count we trust directly.
+ */
+function buildPlayerCountHTML(server, hubPlayers) {
+  // Always single-line, byte-identical to the original. The server-reported
+  // live count (when fresh) is rendered as a floating badge on the banner
+  // image instead — see buildLiveBadgeHTML — so the action column stays
+  // the same size as every other card.
+  return (hubPlayers > 0 ? '<span class="player-pulse"></span>' : '▲ ') +
+         `${formatNumber(hubPlayers)} Hub Players Online`;
+}
+
+/** Returns an HTML snippet for the "X in game" pill that overlays the
+ *  server card banner. Empty string when no fresh self-report exists. */
+function buildLiveBadgeHTML(server) {
+  const selfCount = server.playersOnline || 0;
+  const ageSec    = server.playersOnlineAgeSeconds;
+  const isFresh   = typeof ageSec === 'number' && ageSec >= 0 && ageSec < 600;
+  if (!isFresh || selfCount <= 0) return '';
+  return `<span class="card-live-badge" title="Server-reported live player count">● ${formatNumber(selfCount)} in game</span>`;
+}
 
 function setupNavTabs() {
   document.querySelectorAll('.nav-tab').forEach(btn => {
@@ -1836,6 +1896,120 @@ async function renderAltContent(tab, el) {
       el.innerHTML = '<p class="loading-msg">Loading Hub Store...</p>';
     }
   }
+
+  else if (tab === 'bluemoon') {
+    renderBlueMoonTab(el);
+  }
+}
+
+// ── BLUEMOON TAB ──────────────────────────────────────────────────────────
+// Dedicated tab for the BlueMoon TCG collab. On first open we claim one of
+// the pre-imported pack codes for this user (atomic on the backend) and
+// show it with a copy button. Below sits a full-height <webview> at
+// bmtcg.com/play so users can play without leaving the launcher.
+function renderBlueMoonTab(el) {
+  el.innerHTML = `
+    <div class="bm-tab" id="bm-tab-root">
+      <div class="bm-frame-wrap">
+        <webview class="bm-frame" src="https://bmtcg.com/play/" allowpopups></webview>
+      </div>
+      <!-- Floating chip top-right. Click opens a panel with the user's
+           code or a Claim button. Stays out of the way of the game. -->
+      <button class="bm-chip" id="bm-chip">
+        <span class="bm-chip-dot"></span> FREE PACK
+      </button>
+      <div class="bm-panel" id="bm-panel" style="display:none">
+        <div class="bm-panel-hdr">
+          <span>BlueMoon free pack code</span>
+          <button class="bm-panel-close" id="bm-panel-close" title="Close">✕</button>
+        </div>
+        <div class="bm-panel-body" id="bm-code-card">
+          <div class="bm-code-sub">Loading…</div>
+        </div>
+      </div>
+    </div>`;
+
+  const chip     = el.querySelector('#bm-chip');
+  const panel    = el.querySelector('#bm-panel');
+  const closeBtn = el.querySelector('#bm-panel-close');
+  chip.addEventListener('click', () => {
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  });
+  closeBtn.addEventListener('click', () => { panel.style.display = 'none'; });
+
+  const cardEl = el.querySelector('#bm-code-card');
+
+  // Render the "show code" state once we have one.
+  const renderShow = (code, packQty, packName) => {
+    cardEl.innerHTML = `
+      <div>
+        <div class="bm-code-label">Your free pack code</div>
+        <div class="bm-code-value" id="bm-code-value">${escAttr(code)}</div>
+        <div class="bm-code-sub">Redeem in game for ${packQty || 5} free ${escHtml(packName || 'Standard Packs')}. One use only.</div>
+      </div>
+      <button class="bm-code-copy" id="bm-code-copy">COPY</button>
+    `;
+    cardEl.querySelector('#bm-code-copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(code).then(() => {
+        const btn = cardEl.querySelector('#bm-code-copy');
+        btn.textContent = 'COPIED';
+        setTimeout(() => { btn.textContent = 'COPY'; }, 1500);
+      });
+    });
+  };
+
+  // Render the "no code yet, here's a button to claim one" state.
+  const renderClaim = () => {
+    cardEl.innerHTML = `
+      <div>
+        <div class="bm-code-label">Free pack giveaway</div>
+        <div class="bm-code-sub" style="margin-top:0">Tap below to grab your code, redeemable in game for 5 free Standard Packs. One per hub account, while stocks last.</div>
+      </div>
+      <button class="bm-code-copy" id="bm-code-claim">CLAIM CODE</button>
+    `;
+    cardEl.querySelector('#bm-code-claim').addEventListener('click', async () => {
+      const btn = cardEl.querySelector('#bm-code-claim');
+      btn.disabled = true; btn.textContent = 'CLAIMING…';
+      try {
+        const res = await window.hub.post('/api/bluemoon/claim', {});
+        if (res?.claimed && res.code) {
+          renderShow(res.code, res.pack_quantity, res.pack_name);
+        } else {
+          btn.textContent = 'TRY AGAIN';
+          btn.disabled = false;
+          const sub = cardEl.querySelector('.bm-code-sub');
+          if (sub) { sub.textContent = res?.error || 'Could not claim a code. Try again in a moment.'; sub.style.color = '#e07070'; }
+        }
+      } catch {
+        btn.textContent = 'TRY AGAIN';
+        btn.disabled = false;
+      }
+    });
+  };
+
+  // Loading shell while we check status.
+  cardEl.innerHTML = `
+    <div>
+      <div class="bm-code-label">BlueMoon code</div>
+      <div class="bm-code-sub" style="margin-top:0">Loading…</div>
+    </div>`;
+
+  // Source of truth: /api/bluemoon/me. If they've already claimed, show
+  // the existing code (idempotent — re-opens never re-claim). Otherwise
+  // present the claim button so we don't burn the code pool on idle
+  // tab-clickers who'll never actually play.
+  (async () => {
+    try {
+      const res = await window.hub.get('/api/bluemoon/me');
+      if (res?.claimed && res.code) {
+        renderShow(res.code, res.pack_quantity, res.pack_name);
+      } else {
+        renderClaim();
+      }
+    } catch {
+      renderClaim();   // fail-safe: show the claim button anyway
+    }
+  })();
 }
 
 // ── THEMED CONFIRM ────────────────────────────────────────────────────────
@@ -4454,7 +4628,6 @@ function showServerDetail(server) {
       <!-- STATS ROW -->
       <div class="sd-stats-row">
         <div class="sd-stat"><span class="sd-stat-val">${players.toLocaleString()}</span><span class="sd-stat-lbl">Hub Players Online</span></div>
-        ${server.xpRate ? `<div class="sd-stat"><span class="sd-stat-val">${server.xpRate}</span><span class="sd-stat-lbl">XP Rate</span></div>` : ''}
         ${stars ? `<div class="sd-stat"><span class="sd-stat-val sd-stars" title="${(server.avgRating||0).toFixed(1)}/5">${stars}</span><span class="sd-stat-lbl">${server.reviewCount || 0} Reviews</span></div>` : ''}
       </div>
 
@@ -5253,12 +5426,25 @@ function startActiveSessionChip(serverName) {
         clearInterval(_activeSessionInterval);
         _activeSessionInterval = null;
         chip.style.display = 'none';
+        // Bust every cache that could carry stale post-session data so the
+        // next render anywhere shows fresh numbers. Without this the stats
+        // modal / sidebar happily showed minute-stale playtime, which made
+        // users think tracking was broken when it actually wasn't.
+        invalidateCaches('stats', 'friends', 'friendReqs');
         try {
           const pt = await api.getPlaytime();
           if (pt && pt.perServer) state.playtime = pt.perServer;
           updatePlaytimeStatus();
           // Pull fresh server list from VPS (new hub_players, per-server totals)
           await loadServers();
+          // Refresh state.profile too — that's what hero / sidebar / nav
+          // pull from for the "X hours played" badge. Otherwise the badge
+          // sticks at pre-session totals until the user navigates away.
+          try {
+            const fresh = await window.hub.getProfile(state.user?.username);
+            if (fresh) state.profile = fresh;
+            renderUser();
+          } catch {}
           // If the Stats tab is currently the active panel, re-render it
           // so totals/heatmap/top-servers reflect the just-ended session.
           const activePanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
@@ -5772,12 +5958,16 @@ function startSessionTimer() {
 // server that isn't in this list still shows up as a checkbox (pre-checked)
 // so saving never accidentally wipes something the server already had.
 const DEV_TAGS_LIST = [
-  'OSRS', 'Pre-EOC', 'EOC', 'Custom',
+  // Era
+  'OSRS', 'Pre-EOC', 'EOC',
+  // Style
   'PvM', 'PvP', 'Economy', 'Gambling',
-  'Ironman', 'Group Ironman', 'Hardcore', 'Leagues',
-  'Skilling', 'Raids', 'Bossing', 'Minigames',
-  'Vanilla', '1x XP', 'High XP',
-  'RuneLite', 'Mobile',
+  // Mode
+  'Ironman', 'Group Ironman',
+  // Content
+  'Skilling', 'Raids', 'Bossing', 'Minigames', 'Vanilla',
+  // Client
+  'Custom', 'RuneLite', 'Mobile',
 ];
 const XP_RATES = ['1x','5x','10x','25x','50x','100x','Custom/Varies'];
 
@@ -5940,7 +6130,6 @@ function renderDevServerList(el, servers, isAll, fallbackReason) {
               <span class="dp-badge ${s.approved ? 'dp-badge-ok' : 'dp-badge-warn'}">${s.approved ? 'Approved' : 'Pending'}</span>
               <span class="dp-badge ${s.serverOnline === 1 ? 'dp-badge-ok' : 'dp-badge-off'}">${s.serverOnline === 1 ? 'Online' : 'Offline'}</span>
               ${s.hubPlayers > 0 ? `<span class="dp-badge">${s.hubPlayers} hub players</span>` : ''}
-              ${s.xpRate ? `<span class="dp-badge">${escHtml(s.xpRate)}</span>` : ''}
             </div>
           </div>
           <button class="dp-edit-btn" data-id="${s.id}">Edit</button>
@@ -5968,7 +6157,6 @@ function renderDevPending(el, servers) {
         <div class="dp-server-name">${escHtml(s.name)} <span class="dp-view-hint">👁 click to review</span></div>
         <div class="dp-pending-desc">${escHtml((s.description || '').slice(0, 120))}${(s.description?.length || 0) > 120 ? '…' : ''}</div>
         <div class="dp-pending-meta">
-          ${s.xpRate ? `<span>${escHtml(s.xpRate)} XP</span>` : ''}
           ${s.submittedBy ? `<span>by ${escHtml(s.submittedBy)}</span>` : ''}
           ${s.jarUrl ? `<span class="dp-jar-url">${escHtml(s.jarUrl.slice(0,40))}…</span>` : ''}
         </div>
@@ -6371,13 +6559,6 @@ function renderDevEditor(el, server) {
         <input class="dp-input" id="dp-tagline" type="text" value="${escHtml(s.tagline)}" placeholder="Short catchy line" maxlength="80">
       </div>
       <div class="dp-field">
-        <label class="dp-label">Accent Color</label>
-        <div class="dp-color-row">
-          <input class="dp-input dp-color-text" id="dp-accent" type="text" value="${escHtml(s.accentColor || '#c8a840')}" maxlength="7" placeholder="#c8a840">
-          <input type="color" id="dp-accent-picker" value="${escHtml(s.accentColor || '#c8a840')}" class="dp-color-swatch-input">
-        </div>
-      </div>
-      <div class="dp-field">
         <label class="dp-label">Server Icon</label>
         <div class="dp-img-row">
           <input class="dp-input" id="dp-icon-url" type="text" value="${escHtml(s.iconUrl)}" placeholder="https://...">
@@ -6436,12 +6617,6 @@ function renderDevEditor(el, server) {
         <input class="dp-input" id="dp-jar" type="text" value="${escHtml(s.jarUrl)}" placeholder="https://...">
       </div>
       <div class="dp-field">
-        <label class="dp-label">XP Rate</label>
-        <select class="dp-select" id="dp-xprate">
-          ${XP_RATES.map(r => `<option value="${r}"${s.xpRate === r ? ' selected' : ''}>${r}</option>`).join('')}
-        </select>
-      </div>
-      <div class="dp-field">
         <label class="dp-label">Website URL</label>
         <input class="dp-input" id="dp-website" type="text" value="${escHtml(s.websiteUrl)}" placeholder="https://yourserver.com">
       </div>
@@ -6455,6 +6630,65 @@ function renderDevEditor(el, server) {
         <input class="dp-input" id="dp-players" type="number" value="${s.playersOnline || 0}" min="0">
       </div>` : ''}
     </div>
+
+    ${s.apiKey ? `
+    <div class="dp-form-section">
+      <div class="dp-form-section-hdr">📡 Live Player Count API</div>
+      <div class="dp-field">
+        <label class="dp-label">Your API Key <span class="dp-hint">— keep this private</span></label>
+        <div class="dp-img-row">
+          <input class="dp-input" id="dp-apikey" type="text" value="${escHtml(s.apiKey)}" readonly style="font-family:monospace;font-size:11px">
+          <button class="dp-file-btn" id="dp-apikey-copy" title="Copy key">📋</button>
+        </div>
+        <div class="dp-size-hint">Push your server's live player count to the hub by POSTing every 30 to 60 seconds. Counts above 5000 get capped. Counts older than 10 minutes vanish from the card.</div>
+      </div>
+      <div class="dp-field">
+        <label class="dp-label">Example: bash loop <span class="dp-hint">(runs forever, push every 60s — drop into systemd or screen)</span></label>
+        <pre class="dp-snippet" id="dp-snippet-curl">#!/bin/bash
+# Push live player count to the RSPS Hub every 60 seconds.
+# Replace the COUNT query with whatever your server uses to track online players.
+while true; do
+  COUNT=$(mysql -uroot rsps -sN -e "SELECT COUNT(*) FROM players WHERE online=1")
+  curl -sX POST https://api.therspshub.com/api/servers/update_players.php \\
+    -H "Content-Type: application/json" \\
+    -H "X-Server-Key: ${escHtml(s.apiKey)}" \\
+    -H "X-Server-Name: ${escHtml(s.name)}" \\
+    -d "{\\"count\\": $COUNT}"
+  sleep 60
+done</pre>
+      </div>
+      <div class="dp-field">
+        <label class="dp-label">Example: Java (drop into a scheduled task)</label>
+        <pre class="dp-snippet" id="dp-snippet-java">var url = java.net.URI.create("https://api.therspshub.com/api/servers/update_players.php").toURL();
+var c   = (java.net.HttpURLConnection) url.openConnection();
+c.setRequestMethod("POST");
+c.setRequestProperty("Content-Type", "application/json");
+c.setRequestProperty("X-Server-Key", "${escHtml(s.apiKey)}");
+c.setRequestProperty("X-Server-Name", "${escHtml(s.name)}");
+c.setDoOutput(true);
+try (var os = c.getOutputStream()) {
+    os.write(("{\\"count\\":" + World.getPlayers().size() + "}").getBytes());
+}
+c.getResponseCode();   // ignore body, we just need the round-trip</pre>
+      </div>
+      <div class="dp-field">
+        <label class="dp-label">Example: PHP (cron every minute)</label>
+        <pre class="dp-snippet" id="dp-snippet-php">$count = (int) $db->query("SELECT COUNT(*) FROM players WHERE online=1")->fetchColumn();
+$ch = curl_init("https://api.therspshub.com/api/servers/update_players.php");
+curl_setopt_array($ch, [
+  CURLOPT_POST           => true,
+  CURLOPT_RETURNTRANSFER => true,
+  CURLOPT_HTTPHEADER     => [
+    "Content-Type: application/json",
+    "X-Server-Key: ${escHtml(s.apiKey)}",
+    "X-Server-Name: ${escHtml(s.name)}",
+  ],
+  CURLOPT_POSTFIELDS => json_encode(["count" => $count]),
+]);
+curl_exec($ch);
+curl_close($ch);</pre>
+      </div>
+    </div>` : ''}
 
     <div class="dp-form-section">
       <div class="dp-form-section-hdr">🏷 Tags</div>
@@ -6524,42 +6758,53 @@ function renderDevEditor(el, server) {
   });
 
   // Live preview refresh on any input
-  ['dp-name','dp-tagline','dp-accent','dp-desc','dp-card-banner-url','dp-banner-url','dp-icon-url'].forEach(id => {
+  ['dp-name','dp-tagline','dp-desc','dp-card-banner-url','dp-banner-url','dp-icon-url'].forEach(id => {
     el.querySelector(`#${id}`)?.addEventListener('input', () => devRefreshPreview(el));
   });
   el.querySelectorAll('.dp-tag-cb').forEach(cb => cb.addEventListener('change', () => devRefreshPreview(el)));
-  el.querySelector('#dp-accent-picker')?.addEventListener('input', e => {
-    el.querySelector('#dp-accent').value = e.target.value;
-    devRefreshPreview(el);
-  });
-  el.querySelector('#dp-accent')?.addEventListener('input', e => {
-    if (/^#[0-9a-f]{6}$/i.test(e.target.value))
-      el.querySelector('#dp-accent-picker').value = e.target.value;
-    devRefreshPreview(el);
-  });
 
-  // Image file pickers — uploads to VPS and sets public URL
+  // Image file pickers — for new submissions we stash the picked file's
+  // base64 in memory and upload AFTER submit (when we have a real id).
+  // For existing servers we upload immediately. devPortalSave reads from
+  // this stash on submit success and fires the deferred uploads.
+  const _pendingUploads = el._pendingUploads = el._pendingUploads || {};
   [
-    { pick: 'dp-icon-pick',        input: 'dp-icon-url',        preview: 'dp-icon-preview',        endpoint: '/api/dev/upload/icon'        },
-    { pick: 'dp-card-banner-pick', input: 'dp-card-banner-url', preview: 'dp-card-banner-preview', endpoint: '/api/dev/upload/card-banner' },
-    { pick: 'dp-banner-pick',      input: 'dp-banner-url',      preview: 'dp-banner-preview',      endpoint: '/api/dev/upload/banner'      },
-  ].forEach(({ pick, input, preview, endpoint }) => {
+    { pick: 'dp-icon-pick',        input: 'dp-icon-url',        preview: 'dp-icon-preview',        endpoint: '/api/dev/upload/icon',         field: 'icon'        },
+    { pick: 'dp-card-banner-pick', input: 'dp-card-banner-url', preview: 'dp-card-banner-preview', endpoint: '/api/dev/upload/card-banner',  field: 'card_banner' },
+    { pick: 'dp-banner-pick',      input: 'dp-banner-url',      preview: 'dp-banner-preview',      endpoint: '/api/dev/upload/banner',       field: 'banner'      },
+  ].forEach(({ pick, input, preview, endpoint, field }) => {
     el.querySelector(`#${pick}`)?.addEventListener('click', async () => {
       const btn = el.querySelector(`#${pick}`);
       const filePath = await window.hub.pickAvatar();
       if (!filePath) return;
 
-      // If server doesn't have an id yet (new submission), just show local preview
       const serverId = s.id;
+      // New submission path — read the file NOW, stash it, defer upload
+      // until the server gets created via submit.
       if (!serverId) {
-        const localUrl = 'file:///' + filePath.replace(/\\/g, '/');
-        el.querySelector(`#${input}`).value = localUrl;
-        const p = el.querySelector(`#${preview}`);
-        if (p) p.innerHTML = `<img src="${localUrl}">`;
-        devRefreshPreview(el);
+        btn.textContent = '⏳';
+        btn.disabled = true;
+        try {
+          const base64 = await window.hub.readFileBase64(filePath);
+          if (!base64) throw new Error('Could not read file');
+          _pendingUploads[field] = { endpoint, base64, input };
+          // Show a local-file preview so the user can see what they picked.
+          const localUrl = 'file:///' + filePath.replace(/\\/g, '/');
+          el.querySelector(`#${input}`).value = '';   // don't pollute the form with file:///
+          el.querySelector(`#${input}`).placeholder = 'will upload on submit';
+          const p = el.querySelector(`#${preview}`);
+          if (p) p.innerHTML = `<img src="${localUrl}">`;
+          devRefreshPreview(el);
+        } catch (e) {
+          showToast('Could not load image: ' + e.message, 'error');
+        } finally {
+          btn.textContent = '📁';
+          btn.disabled = false;
+        }
         return;
       }
 
+      // Existing-server path — upload immediately.
       btn.textContent = '⏳';
       btn.disabled = true;
       try {
@@ -6602,6 +6847,25 @@ function renderDevEditor(el, server) {
       if (prev)  prev.innerHTML = '';
       devRefreshPreview(el);
     });
+  });
+
+  // Live Player Count API — copy buttons (key + each language snippet)
+  const copyToClipboard = (text, btn) => {
+    navigator.clipboard.writeText(text).then(() => {
+      if (!btn) return;
+      const orig = btn.textContent;
+      btn.textContent = '✓';
+      setTimeout(() => { btn.textContent = orig; }, 1200);
+    });
+  };
+  el.querySelector('#dp-apikey-copy')?.addEventListener('click', () => {
+    const inp = el.querySelector('#dp-apikey');
+    if (inp?.value) copyToClipboard(inp.value, el.querySelector('#dp-apikey-copy'));
+  });
+  // Click any snippet block to copy its full contents.
+  el.querySelectorAll('.dp-snippet').forEach(pre => {
+    pre.addEventListener('click', () => copyToClipboard(pre.textContent, null));
+    pre.title = 'Click to copy';
   });
 
   // Screenshots
@@ -6673,12 +6937,13 @@ function devCollect(el) {
   return {
     name:            el.querySelector('#dp-name')?.value.trim()           || '',
     tagline:         el.querySelector('#dp-tagline')?.value.trim()        || '',
-    accent_color:    el.querySelector('#dp-accent')?.value.trim()         || '#c8a840',
+    // accent_color removed — dev portal no longer exposes a colour picker
     ...urlFields,
     description:     el.querySelector('#dp-desc')?.value.trim()           || '',
     changelog:       el.querySelector('#dp-changelog')?.value.trim()      || '',
     jar_url:         el.querySelector('#dp-jar')?.value.trim()            || '',
-    xp_rate:         el.querySelector('#dp-xprate')?.value                || '1x',
+    // xp_rate removed from the dev portal — was redundant with the
+    // server's own description and ended up wrong on most listings.
     website_url:     el.querySelector('#dp-website')?.value.trim()        || '',
     discord_url:     el.querySelector('#dp-discord')?.value.trim()        || '',
     // Same guard as URL fields: only send tags if at least one is checked,
@@ -6713,6 +6978,26 @@ async function devPortalSave(el, server) {
     } else {
       const res = await window.hub.post('/api/dev/submit', data);
       if (res?.error) throw new Error(res.error);
+      // Backend returns { success, id, message } for a successful submit.
+      // Use the new id to fire any deferred image uploads the dev queued
+      // before the server existed.
+      const newId = res?.id;
+      const pending = el._pendingUploads || {};
+      const keys = Object.keys(pending);
+      if (newId && keys.length) {
+        btn.textContent = `Uploading ${keys.length} image${keys.length === 1 ? '' : 's'}…`;
+        for (const k of keys) {
+          const { endpoint, base64 } = pending[k];
+          try {
+            await window.hub.post(endpoint, { serverId: newId, base64 });
+          } catch (uerr) {
+            console.warn(`[submit] ${k} upload failed:`, uerr);
+            // Non-fatal — server is created, the dev can re-upload from edit
+            showToast(`Image upload for ${k} failed — try the edit page.`, 'error');
+          }
+        }
+        el._pendingUploads = {};
+      }
       showToast('Server submitted for review!', 'success');
       devPortalLoadSection('my-servers');
     }
@@ -6781,7 +7066,7 @@ function buildDevDetailPreview(s) {
   const tags   = Array.isArray(s.tags) ? s.tags : (s.tags||'').split(',').map(t=>t.trim()).filter(Boolean);
   const desc   = s.description || '';
   const tagline= s.tagline || '';
-  const xp     = s.xpRate || s.xp_rate || '';
+  const xp     = '';   // XP rate removed
   const grad   = bannerColor(name);
   // Scale real modal (natural 500px wide) down to fit 272px preview panel
   const SCALE = 0.544, NW = 500;
@@ -6824,7 +7109,6 @@ function buildDevDetailPreview(s) {
           <span class="sd-stat-val">0</span>
           <span class="sd-stat-lbl">Hub Players Online</span>
         </div>
-        ${xp ? `<div class="sd-stat"><span class="sd-stat-val">${escHtml(xp)}</span><span class="sd-stat-lbl">XP Rate</span></div>` : ''}
       </div>
       <div style="padding:16px 20px">
         ${desc ? `

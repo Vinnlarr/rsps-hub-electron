@@ -182,6 +182,9 @@ function createWindow() {
       // to open the renderer console to inspect auth tokens, edit UI state,
       // or tamper with the API layer. Dev builds keep it enabled.
       devTools: !app.isPackaged,
+      // Enable <webview> so the BlueMoon tab can embed bmtcg.com/play
+      // (plain iframe is blocked by their X-Frame-Options: SAMEORIGIN).
+      webviewTag: true,
     }
   });
 
