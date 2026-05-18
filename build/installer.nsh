@@ -1,3 +1,37 @@
+!macro customInit
+  ; Runs BEFORE the existing uninstaller is invoked. v1.0.51 and earlier
+  ; had a customUnInstall block that wiped ~/.rsps_hub on every update.
+  ; Stash the session + downloaded JARs in TEMP first so they survive the
+  ; old uninstaller, then customInstall puts them back. After everyone
+  ; upgrades past v1.0.52, the new (non-wiping) uninstaller takes over and
+  ; this dance is a no-op.
+  CreateDirectory "$TEMP\rspshub_migrate"
+  CopyFiles /SILENT "$PROFILE\.rsps_hub\session.json"     "$TEMP\rspshub_migrate\session.json"
+  CopyFiles /SILENT "$PROFILE\.rsps_hub\settings.json"    "$TEMP\rspshub_migrate\settings.json"
+  CopyFiles /SILENT "$PROFILE\.rsps_hub\playtime.json"    "$TEMP\rspshub_migrate\playtime.json"
+!macroend
+
+!macro customInstall
+  ; Restore the files we stashed in customInit, but only if .rsps_hub got
+  ; wiped during the update (i.e. the file we backed up is gone). Skip the
+  ; copy back if the file is still there to avoid clobbering newer state.
+  IfFileExists "$PROFILE\.rsps_hub\session.json"  skipSessionRestore restoreSession
+  restoreSession:
+    CreateDirectory "$PROFILE\.rsps_hub"
+    CopyFiles /SILENT "$TEMP\rspshub_migrate\session.json"  "$PROFILE\.rsps_hub\session.json"
+  skipSessionRestore:
+  IfFileExists "$PROFILE\.rsps_hub\settings.json" skipSettingsRestore restoreSettings
+  restoreSettings:
+    CopyFiles /SILENT "$TEMP\rspshub_migrate\settings.json" "$PROFILE\.rsps_hub\settings.json"
+  skipSettingsRestore:
+  IfFileExists "$PROFILE\.rsps_hub\playtime.json" skipPlaytimeRestore restorePlaytime
+  restorePlaytime:
+    CopyFiles /SILENT "$TEMP\rspshub_migrate\playtime.json" "$PROFILE\.rsps_hub\playtime.json"
+  skipPlaytimeRestore:
+  ; clean up the temp stash
+  RMDir /r "$TEMP\rspshub_migrate"
+!macroend
+
 !macro customCloseApplications
   ; Force-kill RSPS Hub and Java before NSIS checks for running processes
   nsExec::ExecToLog 'cmd /c taskkill /F /IM "RSPS Hub.exe" /T 2>nul'
