@@ -164,7 +164,7 @@ const api = {
   login:            (u, p)          => window.hub.post('/api/auth/login', { username: u, password: p }),
   logout:           ()              => window.hub.post('/api/auth/logout'),
   play:             (name)          => window.hub.post(`/api/servers/${encodeURIComponent(name)}/play`),
-  install:          (name, jarUrl)  => window.hub.post(`/api/servers/${encodeURIComponent(name)}/install`, { jarUrl }),
+  install:          (name, jarUrl, jarSha256, jarSizeBytes) => window.hub.post(`/api/servers/${encodeURIComponent(name)}/install`, { jarUrl, jarSha256, jarSizeBytes }),
   uninstall:        (name)          => window.hub.post(`/api/servers/${encodeURIComponent(name)}/uninstall`),
   toggleFavourite:  (name)          => window.hub.post(`/api/servers/${encodeURIComponent(name)}/favourite`),
   getPlaytime:      ()              => window.hub.get('/api/playtime'),
@@ -308,6 +308,21 @@ async function logoutCleanup() {
   for (const k of Object.keys(DM_STORE)) delete DM_STORE[k];
   // Clear server favourites (will be re-fetched from server on next login)
   state.favourites.clear();
+  // Drop equipped cosmetics so the next user doesn't briefly inherit the
+  // previous user's title/colour/border/effect on first render.
+  state.equipped = null;
+  // Strip any active theme CSS (background image, accent palette, overlays)
+  // so the next login starts on the default palette until their own catalog
+  // loads. Without this the previous user's theme keeps painting the
+  // launcher chrome until something else triggers a reload.
+  if (typeof window.clearTheme === 'function') {
+    try { window.clearTheme(); } catch {}
+  }
+  // Force the Hub Store catalog to refetch on next visit so equipped flags
+  // reflect the new user, not whatever was cached for the previous one.
+  if (typeof window.invalidateHubStoreCatalog === 'function') {
+    try { window.invalidateHubStoreCatalog(); } catch {}
+  }
   // Clear tab data cache so the next login doesn't see the previous user's cached data
   window.clearCaches();
   // Tell music module to drop its prefs (favs, last track, etc.)
@@ -427,12 +442,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       // checks of state.user.isStaff (camelCase) work everywhere.
       state.user = { ...userData, isStaff: !!(userData.is_staff ?? userData.isStaff) };
       await window.hub.setActiveUser(userData.username);
-      // If the user has a theme equipped, repaint the launcher chrome
-      // immediately so they don't see the default palette flash first.
-      // Equipped theme metadata is stored on user_equipped[slot=theme]
-      // and loaded by /api/store/list once that's wired. For now this
-      // runs against any state.equipped.theme.style we have.
+      // Paint the user's cached theme INSTANTLY from localStorage so they
+      // don't see the default palette flash before the catalog finishes
+      // loading. The catalog fetch below confirms / corrects it.
+      try { paintCachedThemeFor(userData.username); } catch (_) {}
       try { applyEquippedThemeIfAny(); } catch (_) {}
+      // Background catalog refetch so the painted theme is reconciled
+      // against the user's current server-side state. If they unequipped
+      // or switched themes elsewhere, this overwrites the cached paint.
+      if (typeof window.reloadHubStoreCatalog === 'function') {
+        try { window.reloadHubStoreCatalog(); } catch (_) {}
+      }
       // Load the per-user profile (avatarPath, displayName, bio, etc.) NOW
       // that we know who's logged in. Was previously called outside this
       // block with an undefined username, which silently returned the
@@ -756,6 +776,60 @@ const THEME_TOKEN_MAP = {
   accent:            '--accent',
   accentHot:         '--accent-hot',
 };
+
+// Per-user cache of the last-applied theme palette. Lets a login paint the
+// equipped theme INSTANTLY from localStorage instead of waiting for the
+// /api/store/list round-trip + JSON parse + applyEquippedThemeOnLoad chain
+// to resolve. The catalog fetch still runs in the background and the real
+// state always wins; the cache is purely a paint-asap optimisation. Key
+// shape: rsps_hub_theme_${username}. Stored value is the same shape
+// applyTheme expects: { palette, overlayHtml?, overlayCss? } or null if
+// the user has nothing equipped.
+function _themeCacheKey(username) {
+  if (!username) return null;
+  return 'rsps_hub_theme_' + String(username).toLowerCase();
+}
+function saveThemeCache(username, payload) {
+  const k = _themeCacheKey(username);
+  if (!k) return;
+  try {
+    if (payload && payload.palette) {
+      localStorage.setItem(k, JSON.stringify(payload));
+    } else {
+      // payload null/no-palette signals "user unequipped" — drop the cache
+      // so the next login doesn't repaint a theme they no longer have.
+      localStorage.removeItem(k);
+    }
+  } catch (_) { /* quota or private-mode: silent */ }
+}
+function loadThemeCache(username) {
+  const k = _themeCacheKey(username);
+  if (!k) return null;
+  try {
+    const raw = localStorage.getItem(k);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (obj && obj.palette) return obj;
+  } catch (_) {}
+  return null;
+}
+// Public so hubstore.js can update the cache from applyEquippedThemeOnLoad.
+window.saveThemeCache = saveThemeCache;
+window.loadThemeCache = loadThemeCache;
+
+// Paint the cached theme for `username` immediately if one exists. Called
+// from the login paths before the catalog fetch resolves. Idempotent.
+function paintCachedThemeFor(username) {
+  const cached = loadThemeCache(username);
+  if (cached && cached.palette) {
+    applyTheme(cached.palette, cached.overlayHtml || '', cached.overlayCss || '');
+  } else {
+    // No cache (new user, cleared storage, or unequipped): make sure no
+    // previous user's theme is sticking around.
+    clearTheme();
+  }
+}
+window.paintCachedThemeFor = paintCachedThemeFor;
 
 function applyTheme(palette, overlayHtml, overlayCss) {
   if (!palette || typeof palette !== 'object') return;
@@ -1223,7 +1297,7 @@ async function refreshInstalledJars() {
     try {
       // Java decides whether to actually re-download based on remote
       // ETag / Last-Modified / size; if unchanged, this is a no-op HEAD.
-      const res = await api.install(s.name, s.jarUrl);
+      const res = await api.install(s.name, s.jarUrl, s.jarSha256, s.jarSizeBytes);
       if (res?.success) updated += 1;
     } catch (_) { /* best effort; never block the user */ }
   }
@@ -1466,10 +1540,10 @@ function buildServerCard(server) {
       <span class="player-count">${buildPlayerCountHTML(server, players)}</span>
       <button class="action-btn ${isDownloaded ? 'play-btn' : 'install-btn'}"
               data-action="${isDownloaded ? 'play' : 'install'}"
-              data-name="${server.name}">
+              data-name="${escAttr(server.name)}">
         ${isDownloaded ? 'PLAY' : 'INSTALL'}
       </button>
-      <button class="fav-btn ${isFav ? 'active' : ''}" data-name="${server.name}">
+      <button class="fav-btn ${isFav ? 'active' : ''}" data-name="${escAttr(server.name)}">
         ${isFav ? '★ Favourited' : '☆ Favourite'}
       </button>
     </div>
@@ -1499,7 +1573,7 @@ function buildServerCard(server) {
         if (state.settings?.minimizeOnLaunch) window.hub.minimize();
       }
       if (action === 'install') {
-        const result = await api.install(server.name, server.jarUrl);
+        const result = await api.install(server.name, server.jarUrl, server.jarSha256, server.jarSizeBytes);
         if (result && result.error) {
           showToast('Install failed: ' + result.error, 'error');
           btn.classList.remove('is-loading');
@@ -1911,7 +1985,7 @@ function renderBlueMoonTab(el) {
   el.innerHTML = `
     <div class="bm-tab" id="bm-tab-root">
       <div class="bm-frame-wrap">
-        <webview class="bm-frame" src="https://bmtcg.com/play/" allowpopups></webview>
+        <webview class="bm-frame" src="https://bmtcg.com/play/"></webview>
       </div>
       <!-- Floating chip top-right. Click opens a panel with the user's
            code or a Claim button. Stays out of the way of the game. -->
@@ -4657,6 +4731,13 @@ function showServerDetail(server) {
             : `<div class="sd-empty-section">No changelog posted yet — check back later for patch notes.</div>`}
         </div>
 
+        ${''/* Client integrity hash was previously surfaced here in the
+              UI but it's not useful to regular users (they can't do
+              anything with a SHA-256) and the rare staff need for it
+              is better served by the dev portal Re-hash button which
+              shows the value. Stays in the DB and enforced silently
+              on every download. */}
+
         ${state.user?.isStaff ? `
         <div class="sd-section sd-staff-review">
           <h3 class="sd-section-title" style="color:#ff7a7a">⚠ STAFF REVIEW</h3>
@@ -4813,7 +4894,7 @@ function showServerDetail(server) {
       btn.textContent = 'Downloading...';
       btn.classList.remove('install-btn');
       try {
-        const result = await api.install(server.name, server.jarUrl);
+        const result = await api.install(server.name, server.jarUrl, server.jarSha256, server.jarSizeBytes);
         if (result?.success) {
           await loadServers();
           closeServerDetail();
@@ -5256,6 +5337,18 @@ function setupAuthForms() {
   // deadlock the sign-in button. Wrap each call defensively.
   const onAuthSuccess = async (res, isNew) => {
     state.user = { username: res.username, token: res.token, isStaff: !!res.isStaff };
+    // Paint the user's cached theme INSTANTLY from localStorage. No network
+    // round-trip on the visual path. If they unequipped or changed theme
+    // since last login, the catalog fetch below will overwrite with the
+    // current state (small flicker, acceptable trade-off).
+    try { paintCachedThemeFor(res.username); } catch (_) {}
+    // Then fire the Hub Store catalog refetch in the background to confirm
+    // / correct the painted theme. Don't await — let it race against the
+    // rest of the login bookkeeping. The reload triggers
+    // applyEquippedThemeOnLoad internally which updates the cache too.
+    if (typeof window.reloadHubStoreCatalog === 'function') {
+      try { window.reloadHubStoreCatalog(); } catch (_) {}
+    }
     // Scope per-user caches BEFORE loading them (best effort — old main.js
     // without this handler just silently returns undefined, which is fine).
     try { if (window.hub.setActiveUser) await window.hub.setActiveUser(res.username); } catch {}
@@ -6115,32 +6208,181 @@ function renderDevServerList(el, servers, isAll, fallbackReason) {
         <span style="opacity:0.7">${escHtml(fallbackReason)}</span>
        </div>`
     : '';
+
+  // Persistent UI state so filter/sort survives a re-render after Re-hash etc.
+  // Scoped to the section element so My Servers and All Servers don't share.
+  const stateKey = '__devListState';
+  el[stateKey] = el[stateKey] || { query: '', sort: 'default' };
+  const state = el[stateKey];
+
+  // Build the toolbar (search + sort) once. The list itself gets re-rendered
+  // every keystroke / sort change so filtering feels instant.
   el.innerHTML = `
     <div class="dp-section-hdr">${title}</div>
     ${fallbackBanner}
-    <div class="dp-server-list">
-      ${servers.map(s => `
-        <div class="dp-server-row">
-          <div class="dp-server-icon" style="${s.iconUrl ? `background-image:url(${escHtml(s.iconUrl)});background-size:cover;background-position:center` : ''}">
-            ${!s.iconUrl ? escHtml(s.name?.[0]?.toUpperCase() || '?') : ''}
-          </div>
-          <div class="dp-server-info">
-            <div class="dp-server-name">${escHtml(s.name)}</div>
-            <div class="dp-server-badges">
-              <span class="dp-badge ${s.approved ? 'dp-badge-ok' : 'dp-badge-warn'}">${s.approved ? 'Approved' : 'Pending'}</span>
-              <span class="dp-badge ${s.serverOnline === 1 ? 'dp-badge-ok' : 'dp-badge-off'}">${s.serverOnline === 1 ? 'Online' : 'Offline'}</span>
-              ${s.hubPlayers > 0 ? `<span class="dp-badge">${s.hubPlayers} hub players</span>` : ''}
-            </div>
-          </div>
-          <button class="dp-edit-btn" data-id="${s.id}">Edit</button>
-        </div>
-      `).join('')}
-    </div>`;
+    <div class="dp-list-toolbar">
+      <input
+        class="dp-list-search"
+        type="text"
+        placeholder="Search ${servers.length} server${servers.length === 1 ? '' : 's'}..."
+        value="${escAttr(state.query)}"
+        autocomplete="off"
+        spellcheck="false">
+      <select class="dp-list-sort">
+        <option value="default"  ${state.sort === 'default'  ? 'selected' : ''}>Default order</option>
+        <option value="az"       ${state.sort === 'az'       ? 'selected' : ''}>Name A-Z</option>
+        <option value="za"       ${state.sort === 'za'       ? 'selected' : ''}>Name Z-A</option>
+        <option value="nohash"   ${state.sort === 'nohash'   ? 'selected' : ''}>No hash first</option>
+        <option value="pending"  ${state.sort === 'pending'  ? 'selected' : ''}>Pending JAR change first</option>
+      </select>
+      <span class="dp-list-count"></span>
+    </div>
+    <div class="dp-server-list"></div>`;
 
-  el.querySelectorAll('.dp-edit-btn').forEach(btn => {
-    const srv = servers.find(s => s.id === parseInt(btn.dataset.id));
-    btn.addEventListener('click', () => { if (srv) renderDevEditor(el, srv); });
+  const listEl  = el.querySelector('.dp-server-list');
+  const countEl = el.querySelector('.dp-list-count');
+  const searchEl = el.querySelector('.dp-list-search');
+  const sortEl   = el.querySelector('.dp-list-sort');
+
+  function renderRows() {
+    const q = state.query.trim().toLowerCase();
+    let rows = q
+      ? servers.filter(s => (s.name || '').toLowerCase().includes(q))
+      : servers.slice();
+
+    if (state.sort === 'az') {
+      rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
+    } else if (state.sort === 'za') {
+      rows.sort((a, b) => (b.name || '').localeCompare(a.name || '', undefined, { sensitivity: 'base' }));
+    } else if (state.sort === 'nohash') {
+      rows.sort((a, b) => {
+        const ah = a.jarSha256 ? 1 : 0;
+        const bh = b.jarSha256 ? 1 : 0;
+        if (ah !== bh) return ah - bh;
+        return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+      });
+    } else if (state.sort === 'pending') {
+      rows.sort((a, b) => {
+        const ap = a.pendingJarUrl ? 0 : 1;
+        const bp = b.pendingJarUrl ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+      });
+    }
+
+    countEl.textContent = q
+      ? `${rows.length} of ${servers.length} match`
+      : `${rows.length} server${rows.length === 1 ? '' : 's'}`;
+
+    if (!rows.length) {
+      listEl.innerHTML = `<div class="dp-list-empty">No servers match "${escHtml(state.query)}"</div>`;
+      return;
+    }
+
+    listEl.innerHTML = rows.map(s => `
+      <div class="dp-server-row">
+        <div class="dp-server-icon" style="${s.iconUrl ? `background-image:url(${escHtml(s.iconUrl)});background-size:cover;background-position:center` : ''}">
+          ${!s.iconUrl ? escHtml(s.name?.[0]?.toUpperCase() || '?') : ''}
+        </div>
+        <div class="dp-server-info">
+          <div class="dp-server-name">${escHtml(s.name)}</div>
+          <div class="dp-server-badges">
+            <span class="dp-badge ${s.approved ? 'dp-badge-ok' : 'dp-badge-warn'}">${s.approved ? 'Approved' : 'Pending'}</span>
+            <span class="dp-badge ${s.serverOnline === 1 ? 'dp-badge-ok' : 'dp-badge-off'}">${s.serverOnline === 1 ? 'Online' : 'Offline'}</span>
+            ${s.hubPlayers > 0 ? `<span class="dp-badge">${s.hubPlayers} hub players</span>` : ''}
+            ${s.jarSha256
+              ? `<span class="dp-badge dp-badge-ok" title="${escAttr(s.jarSha256)}">✓ Hash ${escHtml(s.jarSha256.slice(0,8))}</span>`
+              : `<span class="dp-badge dp-badge-warn">⚠ No hash</span>`}
+            ${s.pendingJarUrl
+              ? `<span class="dp-badge dp-badge-warn" title="${escAttr(s.pendingJarUrl)}">⏳ Pending JAR change</span>`
+              : ''}
+          </div>
+        </div>
+        ${isAll && s.approved ? `
+          <button class="dp-rehash-btn" data-id="${s.id}" title="Re-download the JAR and refresh the integrity hash">↻ Re-hash</button>
+          ${s.pendingJarUrl
+            ? `<button class="dp-promote-btn" data-id="${s.id}" title="Move pending_jar_url to live and re-hash">✓ Approve JAR change</button>`
+            : ''}
+        ` : ''}
+        <button class="dp-edit-btn" data-id="${s.id}">Edit</button>
+      </div>
+    `).join('');
+
+    // Wire row-level buttons after each re-render (innerHTML wipes listeners).
+    listEl.querySelectorAll('.dp-edit-btn').forEach(btn => {
+      const srv = servers.find(s => s.id === parseInt(btn.dataset.id));
+      btn.addEventListener('click', () => { if (srv) renderDevEditor(el, srv); });
+    });
+
+    // Re-hash: download the current live jar_url, recompute SHA-256, write
+    // the new value to the DB. Useful when a server pushes a new client.
+    listEl.querySelectorAll('.dp-rehash-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Hashing…';
+        try {
+          const res = await window.hub.post('/api/dev/rehash',
+            { id: parseInt(btn.dataset.id), promote_pending: false });
+          if (res.ok) {
+            showToast(`Hash updated: ${String(res.jar_sha256 || '').slice(0,16)}…`, 'success');
+            setTimeout(() => location.reload(), 600);
+          } else {
+            showToast(`Re-hash failed: ${res.error || 'unknown'}`, 'error');
+            btn.disabled = false; btn.textContent = orig;
+          }
+        } catch (e) {
+          showToast(`Re-hash failed: ${e.message}`, 'error');
+          btn.disabled = false; btn.textContent = orig;
+        }
+      });
+    });
+
+    // Approve a pending jar_url: atomically promote pending_jar_url to live
+    // and re-hash. Use when an owner has changed their download URL and
+    // we've reviewed the new one as legit.
+    listEl.querySelectorAll('.dp-promote-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!await rhConfirm('Promote the pending JAR URL to live and re-hash now?',
+              { title: 'Approve JAR change', confirmText: 'Approve' })) return;
+        btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Promoting…';
+        try {
+          const res = await window.hub.post('/api/dev/rehash',
+            { id: parseInt(btn.dataset.id), promote_pending: true });
+          if (res.ok) {
+            showToast(`Promoted and re-hashed: ${String(res.jar_sha256 || '').slice(0,16)}…`, 'success');
+            setTimeout(() => location.reload(), 600);
+          } else {
+            showToast(`Promote failed: ${res.error || 'unknown'}`, 'error');
+            btn.disabled = false; btn.textContent = orig;
+          }
+        } catch (e) {
+          showToast(`Promote failed: ${e.message}`, 'error');
+          btn.disabled = false; btn.textContent = orig;
+        }
+      });
+    });
+  }
+
+  // Wire toolbar handlers
+  searchEl.addEventListener('input', () => {
+    state.query = searchEl.value;
+    renderRows();
   });
+  sortEl.addEventListener('change', () => {
+    state.sort = sortEl.value;
+    renderRows();
+  });
+  // Ctrl+F-style: pressing / when the section is open focuses search
+  // (only if not already in an input, so it doesn't steal typing).
+  el.addEventListener('keydown', (e) => {
+    if (e.key === '/' && document.activeElement !== searchEl
+        && !(document.activeElement?.tagName === 'INPUT'
+          || document.activeElement?.tagName === 'TEXTAREA')) {
+      e.preventDefault();
+      searchEl.focus();
+    }
+  });
+
+  renderRows();
 }
 
 function renderDevPending(el, servers) {

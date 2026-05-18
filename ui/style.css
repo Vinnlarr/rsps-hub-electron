@@ -1537,6 +1537,11 @@ body > * { position: relative; z-index: 1; }
 .server-card {
   display: flex;
   align-items: stretch;
+  /* Lock the card to the banner height so every card is uniform regardless
+   * of description length. Description and other content overflow gets
+   * clipped by overflow:hidden below. Without this, longer descriptions
+   * stretched the card past the banner and left a gap beneath the image. */
+  height: 115px;
   background: linear-gradient(135deg, #3a3020 0%, #302818 60%, #281e10 100%);
   border: 1px solid #6b5228;
   border-radius: 4px;
@@ -3292,6 +3297,77 @@ body > * { position: relative; z-index: 1; }
 }
 .dp-edit-btn:hover { background: #3a2e14; border-color: #c8a840; }
 
+/* Toolbar above the server list: search + sort + count.
+ * Sticks just below the section header so it's always reachable
+ * even when scrolled deep into 40+ rows. */
+.dp-list-toolbar {
+  display: flex; gap: 10px; align-items: center;
+  margin-bottom: 12px;
+  padding: 8px 0;
+}
+.dp-list-search {
+  flex: 1;
+  background: #14100a;
+  border: 1px solid #2e2410;
+  color: #cdc0a0;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  padding: 8px 12px;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.dp-list-search:focus { border-color: #c8a840; }
+.dp-list-search::placeholder { color: #6a5a3a; }
+.dp-list-sort {
+  background: #14100a;
+  border: 1px solid #2e2410;
+  color: #cdc0a0;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.82rem;
+  padding: 7px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+.dp-list-sort:focus { border-color: #c8a840; }
+.dp-list-count {
+  color: #8a7a5a;
+  font-size: 0.74rem;
+  white-space: nowrap;
+  min-width: 100px;
+  text-align: right;
+}
+.dp-list-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #6a5a3a;
+  font-size: 0.85rem;
+  background: #14100a;
+  border: 1px dashed #2e2410;
+  border-radius: 4px;
+}
+
+/* Phase 2 admin buttons */
+.dp-rehash-btn, .dp-promote-btn {
+  background: #14201a;
+  border: 1px solid #2a5a4a;
+  color: #7ad88a;
+  font-family: 'Cinzel', serif;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 6px 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-right: 6px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.dp-rehash-btn:hover, .dp-promote-btn:hover { background: #1a2e24; border-color: #7ad88a; }
+.dp-rehash-btn:disabled, .dp-promote-btn:disabled { opacity: 0.5; cursor: default; }
+.dp-promote-btn { background: #2a1e10; border-color: #6b5228; color: #ffb060; }
+.dp-promote-btn:hover { background: #3a2e14; border-color: #ffb060; }
+
 /* Pending rows */
 .dp-pending-row {
   display: flex;
@@ -3311,6 +3387,36 @@ body > * { position: relative; z-index: 1; }
   margin-left: 8px;
   letter-spacing: 0;
   text-transform: none;
+}
+
+/* Client integrity section in server detail modal */
+.sd-integrity {
+  border: 1px solid rgba(122,216,138,0.25) !important;
+  background: rgba(122,216,138,0.04) !important;
+}
+.sd-integrity-row {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  margin-top: 6px;
+}
+.sd-integrity-badge {
+  padding: 3px 10px; border-radius: 12px;
+  font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.5px;
+  background: rgba(122,216,138,0.12);
+  color: #7ad88a;
+  border: 1px solid rgba(122,216,138,0.4);
+}
+.sd-integrity-hash {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.78rem;
+  color: #cdc0a0;
+  padding: 3px 8px;
+  background: #14100a;
+  border: 1px solid #2e2410;
+  border-radius: 4px;
+}
+.sd-integrity-size {
+  color: #8a7a5a; font-size: 0.78rem;
 }
 
 /* Staff review section in server detail modal */

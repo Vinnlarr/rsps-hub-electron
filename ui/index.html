@@ -7,7 +7,9 @@
   Content Security Policy. Restricts what the renderer can load/execute.
   - scripts: only bundled local scripts (and inline is allowed for small onclick handlers that remain)
   - styles: local + Google Fonts stylesheet
-  - images: local, data URIs, and the RSPS Hub API (both https and http for older uploads)
+  - images: local, data URIs, blob URIs, and any HTTPS source (server banners
+    live on owner-controlled CDNs; v1.0.54 dropped the http: allowance so a
+    passive network attacker can't swap banner content over plaintext)
   - connect: local Java backend + the RSPS Hub API
 -->
 <meta http-equiv="Content-Security-Policy" content="
@@ -15,7 +17,7 @@
   script-src 'self' 'unsafe-inline';
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' https://fonts.gstatic.com data:;
-  img-src 'self' data: blob: https: http:;
+  img-src 'self' data: blob: https:;
   media-src 'self' https://api.therspshub.com https://therspshub.com blob:;
   connect-src 'self' http://localhost:7890 https://api.therspshub.com https://therspshub.com;
   frame-src 'none';

@@ -234,6 +234,69 @@ function createWindow() {
   }
 }
 
+// Lock down every <webview> the renderer creates. Today the BlueMoon TCG tab
+// is the only one (src=https://bmtcg.com/play/), but we apply a strict policy
+// to any future webview by default:
+//   - strip preload, nodeIntegration, and the contextBridge so injected
+//     scripts inside the webview can't reach IPC or filesystem
+//   - pin navigation to the original host; a compromised page can't redirect
+//     the embedded view to an attacker origin
+//   - deny window.open() from inside the webview entirely
+//
+// Webview policy is enforced from the main process because the renderer
+// can't be trusted to set its own <webview> attributes correctly.
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') return;
+  // Pin navigation to whatever host the webview originally loaded.
+  let pinnedHost = null;
+  try {
+    pinnedHost = new URL(contents.getURL()).host;
+  } catch { /* set on first did-navigate below */ }
+  contents.on('did-navigate', (_e, url) => {
+    if (!pinnedHost) {
+      try { pinnedHost = new URL(url).host; } catch {}
+    }
+  });
+  contents.on('will-navigate', (e, url) => {
+    try {
+      const host = new URL(url).host;
+      if (pinnedHost && host !== pinnedHost) {
+        console.warn('[webview] blocked navigation to', host, '(pinned to', pinnedHost + ')');
+        e.preventDefault();
+      }
+    } catch {
+      e.preventDefault();
+    }
+  });
+  // Deny window.open from inside the webview. Send normal http(s) links
+  // to the system browser, drop anything else.
+  contents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        shell.openExternal(parsed.href);
+      }
+    } catch {}
+    return { action: 'deny' };
+  });
+});
+
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (_e, webPreferences, params) => {
+    // Strip anything that could give the embedded page access to Electron
+    // primitives. We only want a plain sandboxed browser tab.
+    delete webPreferences.preload;
+    delete webPreferences.preloadURL;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    // Block popups regardless of whether the renderer set allowpopups.
+    params.allowpopups = false;
+  });
+});
+
 // ── IPC HANDLERS ─────────────────────────────────────────────────────────────
 
 // Window controls

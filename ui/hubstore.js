@@ -220,10 +220,24 @@
   function applyEquippedThemeOnLoad() {
     injectAllThemeOverlayCss();
     const t = catalog.find(i => i.cat === 'themes' && i.equipped);
+    const username = window.state?.user?.username || null;
     if (t?.palette && typeof window.applyTheme === 'function') {
       window.applyTheme(t.palette, t.overlayHtml, t.overlayCss);
-    } else if (typeof window.clearTheme === 'function') {
-      window.clearTheme();
+      // Persist for instant repaint on next login.
+      if (typeof window.saveThemeCache === 'function') {
+        window.saveThemeCache(username, {
+          palette: t.palette,
+          overlayHtml: t.overlayHtml || '',
+          overlayCss:  t.overlayCss  || '',
+        });
+      }
+    } else {
+      if (typeof window.clearTheme === 'function') window.clearTheme();
+      // User has nothing equipped — drop any stale cache so the next login
+      // doesn't paint a theme they removed.
+      if (typeof window.saveThemeCache === 'function') {
+        window.saveThemeCache(username, null);
+      }
     }
   }
 
@@ -1133,4 +1147,19 @@
     // Defer one tick so the auto-login flow gets to set sessionToken first.
     setTimeout(() => { loadCatalog().catch(() => {}); }, 1500);
   }
+
+  // Exposed so app.js can force a catalog refetch on user switch, which
+  // pulls the new user's equipped flags + repaints their theme. Without
+  // this, switching accounts via logout/login leaves the previous user's
+  // theme painted on the chrome until they manually open the Hub Store tab.
+  window.reloadHubStoreCatalog = () => loadCatalog().catch(() => {});
+  // Hard reset used on logout. Wipes catalog + currently-painted theme so
+  // there's no stale equipped state lingering for the next login.
+  window.invalidateHubStoreCatalog = () => {
+    catalog = [];
+    publishCatalog();
+    if (typeof window.clearTheme === 'function') {
+      try { window.clearTheme(); } catch {}
+    }
+  };
 })();
