@@ -1573,6 +1573,19 @@ function buildServerCard(server) {
       <div class="card-header">
         <span class="card-title">${escHtml(server.name)}</span>
         ${isUnknown ? '' : `<span class="status-dot ${isOnline ? 'online' : 'offline'}"></span>`}
+        ${(() => {
+          // Pinned announcement from the owner — shows up to viewers as a
+          // small gold chip next to the name. Expires automatically per
+          // announcementUntil set in the dashboard.
+          if (!server.announcement) return '';
+          if (server.announcementUntil) {
+            const t = new Date(server.announcementUntil).getTime();
+            if (t && t < Date.now()) return '';
+          }
+          return `<span class="card-announcement" title="${escAttr(server.announcement)}">
+                    <span class="ann-pin">📌</span><span class="ann-text">${escHtml(server.announcement)}</span>
+                  </span>`;
+        })()}
         <span class="level-badge-wrap"
           data-lv="${level}"
           data-rank="${escHtml(rankName)}"
@@ -1753,6 +1766,11 @@ function setupNavTabs() {
 }
 
 function setActiveNavTab(tab) {
+  // If we're leaving the BlueMoon tab, close the active session so the
+  // ping interval doesn't keep counting time the user isn't actually playing.
+  if (state.activeTab === 'bluemoon' && tab !== 'bluemoon' && typeof stopBlueMoonSession === 'function') {
+    stopBlueMoonSession();
+  }
   state.activeTab = tab;
   document.querySelectorAll('.nav-tab').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === tab)
@@ -2147,7 +2165,86 @@ function renderBlueMoonTab(el) {
       renderClaim();   // fail-safe: show the claim button anyway
     }
   })();
+
+  // Kick off playtime tracking for BlueMoon, same active_sessions /
+  // session_log machinery the JAR servers use, just driven from the
+  // renderer because BlueMoon lives in a webview (no Java process to
+  // watch). startBlueMoonSession is idempotent — safe to re-call.
+  startBlueMoonSession();
 }
+
+// ── BLUEMOON PLAYTIME TRACKING ────────────────────────────────────────────
+// BlueMoon is server_id 63 in the hub DB (hidden, no JAR). Because it runs
+// inside an Electron <webview> there's no Java process to watch, so the
+// renderer talks to the same session_* endpoints the JAR launcher does:
+//   session_start  on tab open
+//   session_ping   every 60s while the tab is the active one + window visible
+//   session_end    when the user switches tabs, the window is closed, or the
+//                  app quits. The reaper cron also catches anything missed.
+const BLUEMOON_SERVER_ID = 63;
+let _blueMoonInterval    = null;
+let _blueMoonActive      = false;
+
+function blueMoonShouldTick() {
+  // Stop counting if the user minimized / hid the window. Matches the
+  // "no fake time when nobody is at the keyboard" rule we apply for JAR
+  // sessions via the Java process tracker.
+  return _blueMoonActive
+      && state.activeTab === 'bluemoon'
+      && document.visibilityState === 'visible';
+}
+
+async function startBlueMoonSession() {
+  if (_blueMoonActive) return;          // already running
+  if (!state.user?.username) return;    // need an account to attribute time
+  _blueMoonActive = true;
+  try {
+    await window.hub.post('/api/session/start', { server_id: BLUEMOON_SERVER_ID });
+  } catch (_) { /* silently retry on next ping */ }
+
+  if (_blueMoonInterval) clearInterval(_blueMoonInterval);
+  _blueMoonInterval = setInterval(async () => {
+    if (!blueMoonShouldTick()) return;
+    try {
+      await window.hub.post('/api/session/ping', { server_id: BLUEMOON_SERVER_ID });
+    } catch (_) {}
+  }, 60 * 1000);
+}
+
+async function stopBlueMoonSession() {
+  if (!_blueMoonActive) return;
+  _blueMoonActive = false;
+  if (_blueMoonInterval) { clearInterval(_blueMoonInterval); _blueMoonInterval = null; }
+  try {
+    await window.hub.post('/api/session/end', { server_id: BLUEMOON_SERVER_ID });
+  } catch (_) { /* reaper will catch it */ }
+}
+
+// Stop the session when the window is hidden or the user quits the app.
+// Webview/electron fires visibilitychange when minimized; beforeunload
+// fires on quit. Both are best-effort — the reaper cleans up if missed.
+window.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' && _blueMoonActive) {
+    // Don't fully end yet — just stop pinging. If they come back within
+    // 5 min the existing row keeps accumulating.
+    if (_blueMoonInterval) { clearInterval(_blueMoonInterval); _blueMoonInterval = null; }
+  } else if (document.visibilityState === 'visible' && _blueMoonActive && !_blueMoonInterval) {
+    // Came back to the window — resume pinging.
+    _blueMoonInterval = setInterval(async () => {
+      if (!blueMoonShouldTick()) return;
+      try { await window.hub.post('/api/session/ping', { server_id: BLUEMOON_SERVER_ID }); } catch (_) {}
+    }, 60 * 1000);
+  }
+});
+window.addEventListener('beforeunload', () => {
+  // Best-effort sync end on quit. sendBeacon can't add the bearer
+  // header so we can't talk to the hub API anonymously; we just call
+  // through the Java backend's auth-aware route. If the launcher quits
+  // before the request lands, the reaper cron (every 5 min) cleans up.
+  if (_blueMoonActive) {
+    try { window.hub.post('/api/session/end', { server_id: BLUEMOON_SERVER_ID }); } catch (_) {}
+  }
+});
 
 // ── THEMED CONFIRM ────────────────────────────────────────────────────────
 // Drop-in replacement for window.confirm() that matches our palette.
@@ -4730,7 +4827,11 @@ function showServerDetail(server) {
       <!-- BANNER — prefer the card banner (always present + curated), fall
            back to the wider bannerUrl only if no card banner exists. -->
       ${(() => {
-        const heroImg = server.cardBannerUrl || server.bannerUrl || '';
+        // Detail-page hero: prefer the FULL banner (1600x500). The card
+        // banner is a store-card crop, so falling back to it only matters
+        // when an owner hasn't uploaded a separate full banner yet.
+        // Matches the website's /server.php behaviour for consistency.
+        const heroImg = server.bannerUrl || server.cardBannerUrl || '';
         return `
         <div class="sd-banner" style="background:${bannerColor(server.name)}">
           ${heroImg
@@ -5136,7 +5237,17 @@ function renderReviewItem(r) {
       </div>
       <div class="sd-rev-content">
         <div class="sd-rev-row">
-          <span class="sd-rev-name lb-clickable" data-open-profile="${escAttr(r.username)}">${escHtml(r.username)}</span>
+          <span class="sd-rev-name lb-clickable" data-open-profile="${escAttr(r.username)}">${
+            renderName(r.username, {
+              color: {
+                style: {
+                  nameStyle:    r.name_style    || null,
+                  ncClass:      r.name_class    || null,
+                  splitLetters: !!r.split_letters,
+                }
+              }
+            })
+          }</span>
           <span class="sd-rev-stars-static">${stars}</span>
           <span class="sd-rev-ts">${ts}</span>
           ${!r.is_own ? `<button class="sd-rev-report" data-report-rev="${r.id}" title="Report">⚐</button>` : ''}
@@ -6945,36 +7056,29 @@ function renderDevEditor(el, server) {
           <input class="dp-input" id="dp-apikey" type="text" value="${escHtml(s.apiKey)}" readonly style="font-family:monospace;font-size:11px">
           <button class="dp-file-btn" id="dp-apikey-copy" title="Copy key">📋</button>
         </div>
-        <div class="dp-size-hint">Push your server's live player count to the hub by POSTing every 30 to 60 seconds. Counts above 5000 get capped. Counts older than 10 minutes vanish from the card.</div>
+        <div class="dp-size-hint">Push your server's live player count to the hub by POSTing every 5 minutes (anything faster is fine). Counts above 5000 get capped. <b>Counts go to zero after 10 minutes of silence</b> so a crashed cron job can't keep showing fake numbers — keep the heartbeat alive.</div>
       </div>
       <div class="dp-field">
-        <label class="dp-label">Example: bash loop <span class="dp-hint">(runs forever, push every 60s — drop into systemd or screen)</span></label>
-        <pre class="dp-snippet" id="dp-snippet-curl">#!/bin/bash
-# Push live player count to the RSPS Hub every 60 seconds.
-# Replace the COUNT query with whatever your server uses to track online players.
-while true; do
-  COUNT=$(mysql -uroot rsps -sN -e "SELECT COUNT(*) FROM players WHERE online=1")
-  curl -sX POST https://api.therspshub.com/api/servers/update_players.php \\
-    -H "Content-Type: application/json" \\
-    -H "X-Server-Key: ${escHtml(s.apiKey)}" \\
-    -H "X-Server-Name: ${escHtml(s.name)}" \\
-    -d "{\\"count\\": $COUNT}"
-  sleep 60
-done</pre>
+        <label class="dp-label">Example: curl <span class="dp-hint">(single POST, schedule via cron / systemd / screen to repeat every 30-60s)</span></label>
+        <pre class="dp-snippet" id="dp-snippet-curl">curl -X POST "https://therspshub.com/api/servers/update_players.php" \\
+  -H "X-Server-Key: ${escHtml(s.apiKey)}" \\
+  -H "X-Server-Name: ${escHtml(s.name)}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"count":56}'</pre>
       </div>
       <div class="dp-field">
-        <label class="dp-label">Example: Java (drop into a scheduled task)</label>
-        <pre class="dp-snippet" id="dp-snippet-java">var url = java.net.URI.create("https://api.therspshub.com/api/servers/update_players.php").toURL();
-var c   = (java.net.HttpURLConnection) url.openConnection();
-c.setRequestMethod("POST");
-c.setRequestProperty("Content-Type", "application/json");
-c.setRequestProperty("X-Server-Key", "${escHtml(s.apiKey)}");
-c.setRequestProperty("X-Server-Name", "${escHtml(s.name)}");
-c.setDoOutput(true);
-try (var os = c.getOutputStream()) {
-    os.write(("{\\"count\\":" + World.getPlayers().size() + "}").getBytes());
-}
-c.getResponseCode();   // ignore body, we just need the round-trip</pre>
+        <label class="dp-label">Example: Java OkHttp <span class="dp-hint">(drop into a scheduled task — credit: crazzmc)</span></label>
+        <pre class="dp-snippet" id="dp-snippet-java">RequestBody body = RequestBody.create(
+    "{\\"count\\":NUMERICAL_PLAYER_COUNT}",
+    MediaType.get("application/json")
+);
+
+Request request = new Request.Builder()
+    .url("https://therspshub.com/api/servers/update_players.php")
+    .header("X-Server-Key", "${escHtml(s.apiKey)}")
+    .header("X-Server-Name", "${escHtml(s.name)}")
+    .post(body)
+    .build();</pre>
       </div>
       <div class="dp-field">
         <label class="dp-label">Example: PHP (cron every minute)</label>
@@ -7366,7 +7470,8 @@ function buildDevCardPreview(s) {
 function buildDevDetailPreview(s) {
   const name   = s.name || 'Server Name';
   const accent = s.accentColor || s.accent_color || '#c8a840';
-  const banner = s.cardBannerUrl || s.card_banner_url || s.bannerUrl || s.banner_url || '';
+  // Match the real detail page: full banner first, card banner fallback.
+  const banner = s.bannerUrl || s.banner_url || s.cardBannerUrl || s.card_banner_url || '';
   const icon   = s.iconUrl || s.icon_url || '';
   const tags   = Array.isArray(s.tags) ? s.tags : (s.tags||'').split(',').map(t=>t.trim()).filter(Boolean);
   const desc   = s.description || '';

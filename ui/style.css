@@ -1700,6 +1700,38 @@ body > * { position: relative; z-index: 1; }
   color: #e0c87a;
   text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
 }
+.card-announcement {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(200,168,64,0.22), rgba(200,168,64,0.06));
+  border: 1px solid rgba(200,168,64,0.55);
+  color: #ffd070;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.3px;
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.card-announcement .ann-pin {
+  font-size: 0.72rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.card-announcement .ann-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  max-width: 320px;
+  vertical-align: middle;
+}
 .status-dot {
   width: 7px; height: 7px;
   border-radius: 50%;
@@ -2969,53 +3001,48 @@ body > * { position: relative; z-index: 1; }
 }
 .sd-overlay.open { background: rgba(0,0,0,0.78); }
 .sd-modal {
-  width: 680px; max-width: calc(100vw - 40px);
-  max-height: calc(100vh - 60px);
+  width: 1100px; max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 40px);
   background: linear-gradient(180deg, #1e1a10 0%, #141008 100%);
   border: 1px solid #5a4828;
   border-radius: 6px;
-  display: flex; flex-direction: column;
-  overflow: hidden;
+  /* Scroll the ENTIRE modal — banner + header + body all flow together
+     so scrolling past the banner reveals more content. Footer is made
+     position:sticky below so it stays pinned at the bottom. */
+  overflow-y: auto; overflow-x: hidden;
   transform: translateY(24px); opacity: 0;
   transition: transform 0.22s cubic-bezier(0.2,0,0,1), opacity 0.22s;
   box-shadow: 0 24px 80px rgba(0,0,0,0.9);
+  scrollbar-width: thin; scrollbar-color: #4a3a18 #14100a;
 }
+.sd-modal::-webkit-scrollbar { width: 6px; }
+.sd-modal::-webkit-scrollbar-thumb { background: #4a3a18; border-radius: 3px; }
+.sd-modal::-webkit-scrollbar-track { background: transparent; }
 .sd-overlay.open .sd-modal { transform: translateY(0); opacity: 1; }
 
-/* Banner */
+/* Banner — 16:9 aspect ratio matches the most common upload size
+   (card banners, OBS screenshots, etc.) so object-fit:cover fills the
+   area perfectly with minimal-to-no cropping. */
 .sd-banner {
-  height: 220px; min-height: 220px; position: relative; overflow: hidden; flex-shrink: 0;
+  aspect-ratio: 16 / 9; min-height: 0; position: relative; overflow: hidden; flex-shrink: 0;
   background: #14100a;
 }
-/* Background layer: same image scaled up + blurred to fill the wide banner.
-   Hides the awkward "letterboxed" gap that 1.83:1 card art leaves in a
-   ~5:1 detail banner area. */
-.sd-banner .sd-banner-blur {
-  position: absolute; inset: -10%;
-  width: 120%; height: 120%;
-  object-fit: cover; display: block;
-  filter: blur(28px) brightness(0.55) saturate(1.1);
-  transform: scale(1.05);
-  z-index: 0;
-  pointer-events: none;
-}
-/* Foreground layer: the actual image at its natural aspect, centered. */
+.sd-banner .sd-banner-blur { display: none; }
 .sd-banner .sd-banner-img {
-  position: absolute; inset: 12px 0 12px 0; margin: auto;
-  max-width: 100%; max-height: 100%;
-  width: auto; height: calc(100% - 24px);
-  object-fit: contain;
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
   display: block;
   z-index: 1;
-  filter: drop-shadow(0 8px 24px rgba(0,0,0,0.7));
 }
-/* Plain <img> selector kept for any legacy detail markup that still uses it */
 .sd-banner > img:not(.sd-banner-blur):not(.sd-banner-img) {
   width: 100%; height: 100%; object-fit: cover; display: block;
 }
+/* Pulled fade back so most of the image renders unobscured, matches
+   the website's 78% fade-start. */
 .sd-banner-gradient {
   position: absolute; inset: 0;
-  background: linear-gradient(to bottom, transparent 50%, #1e1a10 100%);
+  background: linear-gradient(to bottom, transparent 78%, #1e1a10 100%);
   z-index: 2;
 }
 .sd-close {
@@ -3090,7 +3117,9 @@ body > * { position: relative; z-index: 1; }
 .sd-stars { font-size: 0.85rem; letter-spacing: 1px; color: #c8a840; }
 
 /* Body */
-.sd-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
+/* No longer scrolls itself — the parent .sd-modal owns the scroll now,
+   so banner + header + body all scroll together as one continuous page. */
+.sd-body { padding: 16px 20px; }
 .sd-body::-webkit-scrollbar { width: 4px; }
 .sd-body::-webkit-scrollbar-thumb { background: #3a2e14; border-radius: 2px; }
 .sd-section { margin-bottom: 20px; }
@@ -3126,8 +3155,12 @@ body > * { position: relative; z-index: 1; }
 /* Footer */
 .sd-footer {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 20px; border-top: 1px solid #2a2010; flex-shrink: 0;
-  background: linear-gradient(180deg, transparent, rgba(0,0,0,0.3));
+  padding: 12px 20px; border-top: 1px solid #2a2010;
+  /* Pin to the bottom of the modal so the Install / Favourite / Discord
+     buttons stay reachable while the user scrolls through reviews. */
+  position: sticky; bottom: 0; z-index: 4;
+  background: linear-gradient(180deg, rgba(20,16,8,0.92), rgba(20,16,8,0.98));
+  backdrop-filter: blur(4px);
 }
 .sd-footer-left { display: flex; gap: 8px; }
 .sd-footer-right { display: flex; gap: 8px; }

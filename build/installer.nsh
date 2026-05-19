@@ -33,10 +33,17 @@
 !macroend
 
 !macro customCloseApplications
-  ; Force-kill RSPS Hub and Java before NSIS checks for running processes
+  ; Force-kill RSPS Hub itself. /T also kills its child tree so the
+  ; Electron renderer and any helper processes go too.
   nsExec::ExecToLog 'cmd /c taskkill /F /IM "RSPS Hub.exe" /T 2>nul'
-  nsExec::ExecToLog 'cmd /c taskkill /F /IM java.exe /T 2>nul'
-  nsExec::ExecToLog 'cmd /c taskkill /F /IM javaw.exe /T 2>nul'
+
+  ; Kill ONLY our Java backend (the one running RSPSHub.jar). Earlier
+  ; releases killed every java.exe / javaw.exe on the system, which took
+  ; down unrelated apps (RSPS server owners running their own clients,
+  ; IntelliJ, etc). We now filter on the command line so other Java apps
+  ; survive the update.
+  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'java.exe' -or $_.Name -eq 'javaw.exe') -and $_.CommandLine -like '*RSPSHub.jar*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+
   Sleep 1500
   ; Remove legacy rsps-hub install directory from old versions
   RMDir /r "$LOCALAPPDATA\Programs\rsps-hub"
