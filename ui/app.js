@@ -378,8 +378,67 @@ let state = window.state = {
 
 // ── AUTO UPDATE NOTIFICATIONS ────────────────────────────────────────────────
 
+// Tracks whether a manual update check is in flight. When true, the
+// next "no update" or "error" event surfaces a toast so the user gets
+// concrete feedback. Auto-fired periodic checks stay quiet to avoid
+// nagging anyone every hour with "already up to date" toasts.
+let _manualUpdateCheck = false;
+// Hard cooldown timestamp. Even after a check completes (the in-flight
+// flag clears), the button stays locked out for a few seconds so users
+// who spam-click don't get stacked toast walls.
+let _manualUpdateCooldownUntil = 0;
+
 if (window.hub?.onUpdateAvailable) {
+  // The sidebar "Check for updates" button. Asks main to run a fresh
+  // autoUpdater.checkForUpdates(), then surfaces a toast for whichever
+  // outcome event fires next.
+  const updateBtn = document.getElementById('rs-tab-update');
+  if (updateBtn) {
+    updateBtn.addEventListener('click', () => {
+      const now = Date.now();
+      if (_manualUpdateCheck || now < _manualUpdateCooldownUntil) return;
+      _manualUpdateCheck = true;
+      _manualUpdateCooldownUntil = now + 5000; // 5-second floor between checks
+      updateBtn.classList.add('rs-tab-checking');
+      showToast('Checking for updates…', 'info');
+      try { window.hub.checkForUpdate(); } catch (_) {}
+      // Safety: clear the in-flight flag after 30s so the button can
+      // be clicked again even if no event ever fires.
+      setTimeout(() => {
+        _manualUpdateCheck = false;
+        updateBtn.classList.remove('rs-tab-checking');
+      }, 30000);
+    });
+  }
+  if (window.hub.onUpdateChecking) {
+    window.hub.onUpdateChecking(() => {
+      // Periodic background check is starting. Quiet unless this is
+      // a user-initiated check.
+    });
+  }
+  if (window.hub.onUpdateNotAvailable) {
+    window.hub.onUpdateNotAvailable(() => {
+      if (_manualUpdateCheck) {
+        _manualUpdateCheck = false;
+        document.getElementById('rs-tab-update')?.classList.remove('rs-tab-checking');
+        showToast('You are on the latest version.', 'success');
+      }
+    });
+  }
+  if (window.hub.onUpdateError) {
+    window.hub.onUpdateError((msg) => {
+      if (_manualUpdateCheck) {
+        _manualUpdateCheck = false;
+        document.getElementById('rs-tab-update')?.classList.remove('rs-tab-checking');
+        showToast('Update check failed: ' + (msg || 'unknown'), 'error');
+      }
+    });
+  }
   window.hub.onUpdateAvailable(() => {
+    if (_manualUpdateCheck) {
+      _manualUpdateCheck = false;
+      document.getElementById('rs-tab-update')?.classList.remove('rs-tab-checking');
+    }
     showToast('Update available — downloading in background…', 'info');
   });
   window.hub.onUpdateDownloaded(() => {
@@ -1731,6 +1790,10 @@ function setupSidebarTabs() {
   document.querySelectorAll('.rs-tab').forEach(btn => {
     btn.addEventListener('click', () => {
       const panelId = btn.dataset.panel;
+      // Tabs without a data-panel (e.g. the UPDATE button) are action
+      // tabs that have their own click handler elsewhere. Don't try to
+      // open the slide panel for them.
+      if (!panelId) return;
       const already = btn.classList.contains('active');
 
       // Toggle off if clicking same one

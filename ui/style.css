@@ -865,6 +865,25 @@ body > * { position: relative; z-index: 1; }
 .rs-tab:hover .rs-tab-label  { color: var(--accent-hot); opacity: 1; }
 .rs-tab.active .rs-tab-label { color: var(--accent-hot); opacity: 1; }
 .rs-tab-bottom { margin-top: auto; }
+/* Manual update-check button. Sits just above SETTINGS at the bottom of
+ * the sidebar. Temporary placement while version fragmentation is being
+ * worked out; moves into Settings once auto-update reaches everyone. */
+.rs-tab-update {
+  /* Push it down to the bottom but above the SETTINGS tab. */
+  margin-top: auto;
+}
+.rs-tab-bottom.rs-tab-update + .rs-tab-bottom,
+.rs-tab-update + .rs-tab-bottom {
+  margin-top: 0;
+}
+.rs-tab-update.rs-tab-checking .rs-tab-icon {
+  animation: rs-tab-update-spin 0.9s linear infinite;
+  display: inline-block;
+}
+@keyframes rs-tab-update-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
 .tab-badge {
   position: absolute;
   top: 6px; right: 6px;

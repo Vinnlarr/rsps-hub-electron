@@ -42,8 +42,12 @@ contextBridge.exposeInMainWorld('hub', {
 
   // Auto updater
   installUpdate: () => ipcRenderer.send('install-update'),
-  onUpdateAvailable:  (cb) => ipcRenderer.on('update-available',  () => cb()),
-  onUpdateDownloaded: (cb) => ipcRenderer.on('update-downloaded', () => cb()),
+  checkForUpdate:        ()    => ipcRenderer.send('check-for-update'),
+  onUpdateChecking:      (cb)  => ipcRenderer.on('update-checking',      () => cb()),
+  onUpdateAvailable:     (cb)  => ipcRenderer.on('update-available',     () => cb()),
+  onUpdateNotAvailable:  (cb)  => ipcRenderer.on('update-not-available', () => cb()),
+  onUpdateDownloaded:    (cb)  => ipcRenderer.on('update-downloaded',    () => cb()),
+  onUpdateError:         (cb)  => ipcRenderer.on('update-error', (_, msg) => cb(msg)),
   setAutoUpdateLauncher: (enabled) => ipcRenderer.invoke('set-auto-update-launcher', enabled),
   getAutoUpdateLauncher: ()        => ipcRenderer.invoke('get-auto-update-launcher'),
 

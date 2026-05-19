@@ -556,9 +556,24 @@ function setupAutoUpdater() {
   autoUpdater.logger = require('electron-log');
   autoUpdater.logger.transports.file.level = 'info';
 
-  autoUpdater.on('checking-for-update', () => console.log('[updater] Checking for update...'));
-  autoUpdater.on('update-not-available', () => console.log('[updater] Already up to date.'));
-  autoUpdater.on('error', (err) => console.error('[updater] Error:', err?.message));
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[updater] Checking for update...');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-checking');
+    }
+  });
+  autoUpdater.on('update-not-available', () => {
+    console.log('[updater] Already up to date.');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-not-available');
+    }
+  });
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] Error:', err?.message);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-error', err?.message || 'unknown error');
+    }
+  });
   autoUpdater.on('download-progress', (p) => console.log(`[updater] Downloaded ${Math.round(p.percent)}%`));
 
   autoUpdater.on('update-available', () => {
@@ -575,11 +590,39 @@ function setupAutoUpdater() {
     }
   });
 
-  // Delay so renderer has time to register its IPC listeners before update-downloaded fires
+  // Initial check, 5 seconds after launch so the renderer is ready.
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch((err) => console.error('[updater] checkForUpdates error:', err?.message));
   }, 5000);
+
+  // Periodic re-check every hour. The original single-shot check at boot
+  // meant launchers left open for days never picked up new releases, which
+  // is the main reason we have so many users still on v1.0.50. This loop
+  // makes sure long-running launchers eventually see new versions without
+  // requiring the user to restart.
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch((err) => console.error('[updater] periodic check error:', err?.message));
+  }, 60 * 60 * 1000);
 }
+
+// Renderer-triggered manual check (the "Check for updates" button in
+// the sidebar). We always reply with one of: update-checking, update-
+// not-available, update-available, update-error so the UI can give
+// concrete feedback instead of going silent.
+ipcMain.on('check-for-update', () => {
+  if (!app.isPackaged) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-not-available');
+    }
+    return;
+  }
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[updater] manual check error:', err?.message);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-error', err?.message || 'check failed');
+    }
+  });
+});
 
 ipcMain.handle('app-version', () => app.getVersion());
 
