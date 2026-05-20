@@ -42,7 +42,11 @@
   ; down unrelated apps (RSPS server owners running their own clients,
   ; IntelliJ, etc). We now filter on the command line so other Java apps
   ; survive the update.
-  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'java.exe' -or $_.Name -eq 'javaw.exe') -and $_.CommandLine -like '*RSPSHub.jar*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+  ; $$ escapes the NSIS dollar-sign parser so PowerShell sees a literal
+  ; $_ pipeline variable. Without escaping, NSIS treats $_ as one of its
+  ; own variables, emits "warning 6000: unknown variable", and with
+  ; warnings-treated-as-errors the build fails.
+  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($$_.Name -eq 'java.exe' -or $$_.Name -eq 'javaw.exe') -and $$_.CommandLine -like '*RSPSHub.jar*' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
 
   Sleep 1500
   ; Remove legacy rsps-hub install directory from old versions
@@ -65,7 +69,11 @@
   ; the system. Same filter as customCloseApplications — earlier
   ; releases nuked IntelliJ / unrelated RSPS clients during update
   ; because the broad taskkill ran in this uninstall path too.
-  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'java.exe' -or $_.Name -eq 'javaw.exe') -and $_.CommandLine -like '*RSPSHub.jar*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+  ; $$ escapes the NSIS dollar-sign parser so PowerShell sees a literal
+  ; $_ pipeline variable. Without escaping, NSIS treats $_ as one of its
+  ; own variables, emits "warning 6000: unknown variable", and with
+  ; warnings-treated-as-errors the build fails.
+  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($$_.Name -eq 'java.exe' -or $$_.Name -eq 'javaw.exe') -and $$_.CommandLine -like '*RSPSHub.jar*' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
 
   Sleep 1000
 !macroend
