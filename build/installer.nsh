@@ -60,7 +60,12 @@
   ;   %APPDATA%\RSPS Hub
   ;   %USERPROFILE%\.rsps_hub
   nsExec::ExecToLog 'cmd /c taskkill /F /IM "RSPS Hub.exe" /T 2>nul'
-  nsExec::ExecToLog 'cmd /c taskkill /F /IM java.exe /T 2>nul'
-  nsExec::ExecToLog 'cmd /c taskkill /F /IM javaw.exe /T 2>nul'
+
+  ; Kill ONLY our Java backend (RSPSHub.jar), not every Java process on
+  ; the system. Same filter as customCloseApplications — earlier
+  ; releases nuked IntelliJ / unrelated RSPS clients during update
+  ; because the broad taskkill ran in this uninstall path too.
+  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'java.exe' -or $_.Name -eq 'javaw.exe') -and $_.CommandLine -like '*RSPSHub.jar*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+
   Sleep 1000
 !macroend
