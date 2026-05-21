@@ -19,6 +19,7 @@
   "build": {
     "appId": "com.rspshub.launcher",
     "productName": "RSPS Hub",
+    "afterPack": "build/afterPack.js",
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico",
@@ -31,8 +32,33 @@
       "installerHeaderIcon": "build/icon.ico"
     },
     "mac": {
-      "target": "dmg",
-      "icon": "build/icon.ico"
+      "target": {
+        "target": "dmg",
+        "arch": ["x64"]
+      },
+      "icon": "build/icon.icns",
+      "category": "public.app-category.games",
+      "artifactName": "RSPSHub-Setup-v${version}-mac-${arch}.${ext}",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null,
+      "extraResources": [
+        {
+          "from": "java-backend/lib",
+          "to": "java-backend/lib",
+          "filter": ["**/*"]
+        },
+        {
+          "from": "java-backend/bin",
+          "to": "java-backend/bin",
+          "filter": ["RSPSHub"]
+        },
+        {
+          "from": "java-backend-mac/jre",
+          "to": "java-backend/jre",
+          "filter": ["**/*"]
+        }
+      ]
     },
     "linux": {
       "target": "AppImage",

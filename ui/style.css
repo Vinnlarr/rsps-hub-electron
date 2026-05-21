@@ -256,6 +256,13 @@ body > * { position: relative; z-index: 1; }
 .tb-maximize::after { content: '□'; }
 .tb-close::after    { content: '✕'; }
 
+/* macOS uses native traffic-light buttons via titleBarStyle: 'hiddenInset',
+   so hide our custom Windows-style controls there to avoid duplicates.
+   Reserve space on the left for the traffic lights so they don't overlap
+   our logo. body.is-mac is added by app.js from window.hub.isMac. */
+body.is-mac .title-bar-btns { display: none; }
+body.is-mac .title-bar { padding-left: 80px; }
+
 /* ══════════════════════════════
    NAVBAR
 ══════════════════════════════ */

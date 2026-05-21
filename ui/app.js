@@ -364,7 +364,7 @@ let state = window.state = {
   activeTab:  'store',
   activeTag:  'All',
   search:     '',
-  sortOrder:  'rating',
+  sortOrder:  'players',
   favourites: new Set(),
   profile:    { displayName: 'Player', bio: '', visibility: 'online', avatarPath: null },
   playtime:   {},   // { serverName: minutesPlayed }
@@ -461,6 +461,14 @@ if (window.hub?.onUpdateAvailable) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Tag the body with the host platform so platform-specific CSS rules can
+  // hide our custom Windows-style window controls on macOS (where the OS
+  // already renders native traffic-light buttons via titleBarStyle).
+  try {
+    if (window.hub?.isMac)               document.body.classList.add('is-mac');
+    else if (window.hub?.platform === 'linux') document.body.classList.add('is-linux');
+    else                                 document.body.classList.add('is-win');
+  } catch (_) {}
   setupWindowControls();
   setupAuthForms();
   renderUser();
@@ -602,6 +610,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (window.splashDone) window.splashDone();
   // Show auth screen if not logged in after splash
   if (!state.user) showAuthScreen();
+
+  // Wire the force-update modal so any 426 from the hub API triggers
+  // it. Has to be initialised AFTER preload's window.hub is available,
+  // which it always is by this point.
+  if (window.RspsHubForceUpdate) {
+    try { window.RspsHubForceUpdate.init(); } catch (_) {}
+  }
+
+  // First-launch onboarding tour. Auto-fires once per device when the
+  // signed-in user lands on the store with the UI fully painted. No-op
+  // after the first completion. Users can re-run via Settings.
+  if (state.user && window.RspsHubOnboarding) {
+    try { window.RspsHubOnboarding.autoStart(); } catch (_) {}
+  }
 
   // Background quiet refresh — every 60s pull a fresh server list so
   // server_online / hub_players / NEW badges update without the user
@@ -5542,6 +5564,13 @@ function setupAuthForms() {
     // click on Stats / Friends / Chat renders instantly from cache.
     prefetchTabs();
     showToast(isNew ? 'Welcome, ' + res.username + '!' : 'Welcome back, ' + res.username + '!', 'success');
+
+    // First-launch onboarding — fires once per device. Brand-new accounts
+    // get the tour immediately after registration; returning users only
+    // see it if they've never completed it on this machine.
+    if (window.RspsHubOnboarding) {
+      try { window.RspsHubOnboarding.autoStart(); } catch (_) {}
+    }
   };
 
   // Login
@@ -7769,6 +7798,17 @@ function buildSettingsHTML(s) {
   </div>
 
   <div class="set-section">
+    <div class="set-section-hdr">🧭&nbsp; Help</div>
+    <div class="set-row set-between">
+      <div>
+        <span class="set-label">Show me around again</span>
+        <div class="set-sub">Replay the first-launch tour. Reminds you what every tab does and where things live.</div>
+      </div>
+      <button class="set-browse-btn" id="set-replay-onboarding" type="button">Start tour</button>
+    </div>
+  </div>
+
+  <div class="set-section">
     <div class="set-section-hdr">ℹ️&nbsp; About</div>
     <div class="set-row set-between"><span class="set-label">RSPS Hub</span><span class="set-value" id="about-version">v…</span></div>
     <div class="set-row set-between"><span class="set-label">Platform</span><span class="set-value">Electron + Java</span></div>
@@ -7787,6 +7827,17 @@ function bindSettingsEvents(el, initial) {
 
   // Developer portal
   el.querySelector('#set-open-devportal')?.addEventListener('click', () => openDevPortal('my-servers'));
+
+  // Re-run onboarding tour. Closes Settings panel first so the tour can
+  // highlight nav tabs without the settings panel covering them.
+  el.querySelector('#set-replay-onboarding')?.addEventListener('click', () => {
+    if (!window.RspsHubOnboarding) return;
+    // Switch back to the Store so the highlighted tabs are visible in
+    // their normal positions, then kick off the tour.
+    try { setActiveNavTab('store'); } catch (_) {}
+    window.RspsHubOnboarding.reset();
+    setTimeout(() => window.RspsHubOnboarding.start(), 200);
+  });
 
   // Ko-fi donation — opens the support page in the user's default browser.
   el.querySelector('#set-kofi-btn')?.addEventListener('click', () => {

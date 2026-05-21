@@ -1,6 +1,10 @@
 node_modules/
 dist/
 java-backend/
+# Mac bundled JRE — too big for git (~110 MB). CI downloads it on demand
+# (see .github/workflows/build-mac.yml), and Mac devs running `npm run build`
+# locally already have it from the workflow run or can re-download.
+java-backend-mac/
 .claude/
 *.log
 RSPSHub.jar
@@ -8,7 +12,11 @@ badge-preview.html
 .idea/
 
 # Ops / deploy scripts — these may embed VPS + DB credentials. NEVER commit.
-scripts/
+# Glob the contents instead of the dir itself so we can re-include the
+# prebuild hook below (git ignore can't re-include files under an excluded dir).
+scripts/*
+# ...except the prebuild hook, which is part of the build and ships no secrets.
+!scripts/prebuild-jar.js
 .env
 .env.*
 *.pem

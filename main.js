@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
 const { spawn, execSync } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
@@ -79,6 +79,17 @@ function killPortIfBusy(port) {
       const result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' });
       const match = result.match(/\s+(\d+)\s*$/m);
       if (match) execSync(`taskkill /F /PID ${match[1]}`, { stdio: 'ignore' });
+    } else {
+      // macOS and Linux ship lsof. Find any PID listening on `port` and kill
+      // it so a stale backend from a previous crash doesn't block startup.
+      try {
+        const out = execSync(`lsof -ti tcp:${port}`, { encoding: 'utf8' }).trim();
+        if (out) {
+          for (const pid of out.split(/\s+/)) {
+            try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch (_) {}
+          }
+        }
+      } catch (_) { /* lsof returns non-zero when nothing matches, that's fine */ }
     }
   } catch (_) {}
 }
@@ -105,6 +116,10 @@ function startJavaBackend() {
     RSPS_HUB_API_MODE: 'true',
     // API secret via env, not argv — argv is visible in `tasklist /v` to any local process
     RSPS_HUB_API_KEY: API_SECRET,
+    // Launcher version so the Java backend can tag every API request with
+    // X-Launcher-Version. The hub API uses this to refuse old launchers
+    // and force them through the auto-updater.
+    RSPS_HUB_LAUNCHER_VERSION: app.getVersion(),
   };
   if (hasBundledJre) childEnv.JAVA_HOME = bundledJreHome;
 
@@ -164,12 +179,21 @@ function isBackendAlive() {
 // ── WINDOW ───────────────────────────────────────────────────────────────────
 
 function createWindow() {
+  // macOS gets the native "traffic light" close/min/max buttons positioned
+  // inside our custom title-bar area via hiddenInset. On Windows + Linux we
+  // keep the fully frameless window with our own custom buttons. Mixing the
+  // two on the wrong platform looks broken (duplicate close buttons, or
+  // missing window controls).
+  const isMac = process.platform === 'darwin';
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 860,
     minWidth: 1100,
     minHeight: 650,
-    frame: false,          // custom title bar
+    frame: false,          // custom title bar everywhere
+    titleBarStyle: isMac ? 'hiddenInset' : 'default', // shows native traffic lights on Mac
+    trafficLightPosition: isMac ? { x: 16, y: 14 } : undefined,
     transparent: false,
     backgroundColor: '#0f1115',
     icon: path.join(__dirname, 'assets', 'icon.png'),
@@ -339,8 +363,24 @@ ipcMain.handle('api-call', async (_, { method, path: apiPath, body }) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch { resolve({ raw: data }); }
+        let parsed = null;
+        try { parsed = JSON.parse(data); }
+        catch { parsed = { raw: data }; }
+
+        // Hub API returns 426 + {error:"launcher_update_required",...} when
+        // the launcher is below the configured min version. Broadcast that
+        // to every renderer window so the blocking "Update Required" modal
+        // can fire from one place instead of every callsite checking.
+        if (parsed && parsed.error === 'launcher_update_required') {
+          try {
+            const { BrowserWindow } = require('electron');
+            BrowserWindow.getAllWindows().forEach(w => {
+              if (!w.isDestroyed()) w.webContents.send('launcher-update-required', parsed);
+            });
+          } catch (_) {}
+        }
+
+        resolve(parsed);
       });
     });
 
@@ -778,12 +818,80 @@ ipcMain.on('music-state', (_e, state) => {
 
 // ── APP LIFECYCLE ─────────────────────────────────────────────────────────────
 
+// macOS expects an application menu (About, Quit, Edit copy/paste, Window),
+// otherwise Cmd+C, Cmd+V, Cmd+Q etc. silently do nothing. On Windows + Linux
+// we keep the menu hidden because all controls live in our custom title bar.
+function buildApplicationMenu() {
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+  const appName = 'RSPS Hub';
+  const template = [
+    {
+      label: appName,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit', label: `Quit ${appName}`, accelerator: 'Cmd+Q' },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { role: 'close' },
+        { type: 'separator' },
+        { role: 'front' },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
+  buildApplicationMenu();
   startJavaBackend();
   waitForBackend(() => {
     createWindow();
     setupAutoUpdater();
   });
+});
+
+// Standard macOS behavior: clicking the dock icon when no windows are open
+// should re-create the main window instead of leaving the app stranded.
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
 
 function killJava() {

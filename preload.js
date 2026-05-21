@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld('hub', {
   onMusicPopoutCmd:(cb)    => ipcRenderer.on('music-popout-cmd', (_e, p) => cb(p?.cmd, p?.value)),
   selectFolder:    (defaultPath) => ipcRenderer.invoke('select-folder', defaultPath),
   getVersion:      ()            => ipcRenderer.invoke('app-version'),
+  // Platform info so the renderer can swap title-bar UI on macOS
+  platform:        process.platform,
+  isMac:           process.platform === 'darwin',
   readFileBase64:  (filePath)   => ipcRenderer.invoke('read-file-base64', filePath),
 
   // Auto updater
@@ -48,6 +51,8 @@ contextBridge.exposeInMainWorld('hub', {
   onUpdateNotAvailable:  (cb)  => ipcRenderer.on('update-not-available', () => cb()),
   onUpdateDownloaded:    (cb)  => ipcRenderer.on('update-downloaded',    () => cb()),
   onUpdateError:         (cb)  => ipcRenderer.on('update-error', (_, msg) => cb(msg)),
+  // Hub API said our version is too old. data = {min_version, detected_version, message, ...}
+  onForceUpdate:         (cb)  => ipcRenderer.on('launcher-update-required', (_, data) => cb(data)),
   setAutoUpdateLauncher: (enabled) => ipcRenderer.invoke('set-auto-update-launcher', enabled),
   getAutoUpdateLauncher: ()        => ipcRenderer.invoke('get-auto-update-launcher'),
 
