@@ -347,6 +347,33 @@ ipcMain.on('open-external', (_, url) => {
   }
 });
 
+// Internal helper to call our Java backend from main process code (not from
+// the renderer). Used by the web-server launch path below. Same auth + retry
+// semantics as the ipcMain api-call handler, but callable directly without
+// going through IPC.
+function callJavaBackend(method, apiPath, body) {
+  return new Promise(resolve => {
+    const options = {
+      hostname: 'localhost',
+      port: JAVA_PORT,
+      path: apiPath,
+      method: method || 'GET',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': API_SECRET },
+    };
+    const req = http.request(options, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { resolve({ raw: data }); }
+      });
+    });
+    req.on('error', err => resolve({ error: err.message || 'request failed' }));
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
 // API proxy — renderer asks main to call Java backend
 // Auto-retries on ECONNREFUSED (Java still starting) up to ~15s before giving up
 ipcMain.handle('api-call', async (_, { method, path: apiPath, body }) => {
@@ -689,6 +716,90 @@ ipcMain.handle('get-auto-update-launcher', () => readAutoUpdateLauncher());
 // backend on 127.0.0.1:7890 — Java auth is in-process state so no auth
 // plumbing is needed beyond running on the same machine.
 const chatPopouts = new Map(); // key (`hub` or `dm:<user>`) -> BrowserWindow
+
+// ── WEB-CLIENT SERVERS ────────────────────────────────────────────────────
+// Some RSPS run entirely in the browser (LostCity, Xternium, BlueMoon-style
+// servers). For these the launcher opens a dedicated BrowserWindow loading
+// the play URL and tracks playtime via the same session_* endpoints JAR
+// servers use, just driven by window lifecycle instead of a child process.
+//
+// Map of serverId -> { window, pingInterval, name }
+const webSessions = new Map();
+
+function endWebSessionTracking(serverId) {
+  const sess = webSessions.get(serverId);
+  if (!sess) return;
+  clearInterval(sess.pingInterval);
+  webSessions.delete(serverId);
+  callJavaBackend('POST', '/api/session/end', { server_id: serverId })
+    .catch(() => { /* reaper cleans up if this fails */ });
+  // Tell every renderer that the web session has ended so it can hide
+  // chips, refresh playtime, etc.
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) w.webContents.send('web-session-ended', { serverId });
+  });
+}
+
+ipcMain.handle('launch-web-server', async (_e, { serverId, name, url }) => {
+  if (!serverId || !url) return { error: 'missing serverId or url' };
+  // If a window for this server is already open, just focus it.
+  const existing = webSessions.get(serverId);
+  if (existing && !existing.window.isDestroyed()) {
+    existing.window.show();
+    existing.window.focus();
+    return { reused: true };
+  }
+
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    title: `${name || 'Web Client'} — RSPS Hub`,
+    icon: path.join(__dirname, 'assets', 'icon.png'),
+    backgroundColor: '#0f1115',
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      // Browser-style permissions: site can persist its own cookies / storage
+      // so the user stays logged in to the game between launches.
+      partition: `persist:webserver-${serverId}`,
+    },
+  });
+  // Hide the OS menu entirely. The web client is the only thing in here.
+  win.setMenuBarVisibility(false);
+  win.loadURL(url);
+
+  // Kick off session tracking. We don't await — if the API is briefly
+  // unreachable we still want the game window to open promptly. The reaper
+  // and subsequent pings will reconcile.
+  callJavaBackend('POST', '/api/session/start', { server_id: serverId })
+    .catch(() => {});
+
+  const pingInterval = setInterval(() => {
+    if (win.isDestroyed()) return;
+    // Don't count time when the user has minimized or hidden the window.
+    // Matches the JAR-side rule: no fake playtime when nobody is at the keyboard.
+    if (!win.isVisible() || win.isMinimized()) return;
+    callJavaBackend('POST', '/api/session/ping', { server_id: serverId })
+      .catch(() => {});
+  }, 60 * 1000);
+
+  webSessions.set(serverId, { window: win, pingInterval, name });
+
+  win.on('closed', () => endWebSessionTracking(serverId));
+
+  return { opened: true };
+});
+
+// On full app quit we end every open web session synchronously so playtime
+// is accurate up to the moment of quit. The reaper still covers cases where
+// the launcher crashes before this runs.
+app.on('before-quit', () => {
+  for (const serverId of Array.from(webSessions.keys())) {
+    endWebSessionTracking(serverId);
+  }
+});
 
 ipcMain.handle('chat-popout-open', (_e, opts) => {
   const { type = 'hub', user = '' } = opts || {};

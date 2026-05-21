@@ -1632,11 +1632,14 @@ function buildServerCard(server) {
     </div>
     <div class="card-actions">
       <span class="player-count">${buildPlayerCountHTML(server, players)}</span>
-      <button class="action-btn ${isDownloaded ? 'play-btn' : 'install-btn'}"
-              data-action="${isDownloaded ? 'play' : 'install'}"
-              data-name="${escAttr(server.name)}">
-        ${isDownloaded ? 'PLAY' : 'INSTALL'}
-      </button>
+      ${server.launchType === 'web'
+        ? `<button class="action-btn play-btn" data-action="play-web" data-name="${escAttr(server.name)}">PLAY</button>`
+        : `<button class="action-btn ${isDownloaded ? 'play-btn' : 'install-btn'}"
+                  data-action="${isDownloaded ? 'play' : 'install'}"
+                  data-name="${escAttr(server.name)}">
+             ${isDownloaded ? 'PLAY' : 'INSTALL'}
+           </button>`
+      }
       <button class="fav-btn ${isFav ? 'active' : ''}" data-name="${escAttr(server.name)}">
         ${isFav ? '★ Favourited' : '☆ Favourite'}
       </button>
@@ -1656,8 +1659,17 @@ function buildServerCard(server) {
     const action = btn.dataset.action;
     btn.disabled = true;
     btn.classList.add('is-loading');
-    btn.textContent = action === 'play' ? 'Updating...' : 'Downloading...';
+    btn.textContent = action === 'play' ? 'Updating...'
+                    : action === 'play-web' ? 'Opening...'
+                    : 'Downloading...';
     try {
+      if (action === 'play-web') {
+        await launchWebServer(server);
+        btn.classList.remove('is-loading');
+        btn.disabled = false;
+        btn.textContent = 'PLAY';
+        return;
+      }
       if (action === 'play') {
         await api.play(server.name);
         btn.classList.remove('is-loading');
@@ -4976,8 +4988,8 @@ function showServerDetail(server) {
           <button class="sd-link-btn ${isFav ? 'fav-active' : ''}" id="sd-fav-btn" style="min-width:120px">
             ${isFav ? '★ Favourited' : '☆ Favourite'}
           </button>
-          <button class="action-btn ${isInstalled ? 'play-btn' : 'install-btn'}" id="sd-play-btn" style="height:36px;font-size:0.72rem;min-width:100px">
-            ${isInstalled ? 'PLAY' : 'INSTALL'}
+          <button class="action-btn ${(server.launchType === 'web' || isInstalled) ? 'play-btn' : 'install-btn'}" id="sd-play-btn" style="height:36px;font-size:0.72rem;min-width:100px">
+            ${(server.launchType === 'web' || isInstalled) ? 'PLAY' : 'INSTALL'}
           </button>
         </div>
       </div>
@@ -5065,6 +5077,20 @@ function showServerDetail(server) {
     const btn = overlay.querySelector('#sd-play-btn');
     btn.disabled = true;
     btn.classList.add('is-loading');
+    // Web-client servers (LostCity, Xternium, etc) skip the JAR install path
+    // entirely: PLAY opens a dedicated BrowserWindow with the play URL and
+    // session tracking is driven by that window's lifecycle.
+    if (server.launchType === 'web') {
+      btn.textContent = 'Opening...';
+      try {
+        await launchWebServer(server);
+        closeServerDetail();
+      } catch { showToast('Failed to launch ' + server.name, 'error'); }
+      btn.classList.remove('is-loading');
+      btn.disabled = false;
+      btn.textContent = 'PLAY';
+      return;
+    }
     if (isInstalled) {
       btn.textContent = 'Updating...';
       try {
@@ -5693,6 +5719,100 @@ function startPlaytimeRefresh() {
 }
 
 let _activeSessionInterval = null;
+
+// ── WEB-CLIENT SERVER LAUNCH ──────────────────────────────────────────────
+// Sister to api.play() for JAR servers. Web-client servers (LostCity-style,
+// Xternium etc.) open a dedicated BrowserWindow in the main process which
+// owns session tracking + window lifecycle. The renderer's job is just to
+// kick it off and surface a chip while the game window is open.
+//
+// Active web session is tracked client-side as a Map of serverId -> { name,
+// startedAt, intervalId } so we can drive the chip even though the actual
+// session pings happen in main.js.
+const _activeWebSessions = new Map();
+
+async function launchWebServer(server) {
+  const url = server.webUrl || server.web_url;
+  if (!url) {
+    showToast(`${server.name}: no web client URL configured.`, 'error');
+    return;
+  }
+  const res = await window.hub.launchWebServer({
+    serverId: server.id,
+    name: server.name,
+    url,
+  });
+  if (res?.error) {
+    showToast(`Failed to launch ${server.name}: ${res.error}`, 'error');
+    return;
+  }
+  // Chip already running for this server (window was reused). Don't double-track.
+  if (res?.reused) return;
+  startWebSessionChip(server);
+}
+
+function startWebSessionChip(server) {
+  // The active-session chip is shared across JAR and web sessions. Web mode
+  // counts elapsed time client-side instead of polling /api/session/status
+  // since there's no Java child process to watch.
+  const chip   = document.getElementById('active-session-chip');
+  const nameEl = document.getElementById('active-session-name');
+  const timeEl = document.getElementById('active-session-time');
+  if (!chip) return;
+
+  // If a JAR-session interval is running, leave it alone — different server.
+  // We only show one chip at a time though, so the most recent launch wins
+  // the display. (If you click play on a second server while the first is
+  // still going, the chip shows the second.)
+  nameEl.textContent = server.name;
+  timeEl.textContent = '0:00:00';
+  chip.style.display = 'flex';
+
+  const startedAt = Date.now();
+  const intervalId = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    const h = Math.floor(elapsed / 3600);
+    const m = Math.floor((elapsed % 3600) / 60);
+    const s = elapsed % 60;
+    timeEl.textContent = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }, 1000);
+
+  _activeWebSessions.set(server.id, { name: server.name, startedAt, intervalId });
+
+  // Give the VPS a few seconds to record the session start, then refresh so
+  // our own card shows the +1 player count.
+  setTimeout(() => { loadServers().catch(() => {}); }, 4000);
+}
+
+// main.js fires 'web-session-ended' when the game window is closed. Hide the
+// chip + refresh everything that depends on session totals (playtime, hub
+// player count, profile time-played badge).
+if (window.hub?.onWebSessionEnded) {
+  window.hub.onWebSessionEnded(async ({ serverId }) => {
+    const sess = _activeWebSessions.get(serverId);
+    if (sess) {
+      clearInterval(sess.intervalId);
+      _activeWebSessions.delete(serverId);
+    }
+    // Only hide the chip if nothing else is showing in it. JAR sessions
+    // have their own interval that owns the chip, don't stomp it.
+    if (_activeWebSessions.size === 0 && !_activeSessionInterval) {
+      const chip = document.getElementById('active-session-chip');
+      if (chip) chip.style.display = 'none';
+    }
+    // Refresh playtime, server list, profile — same as JAR session end.
+    invalidateCaches('stats', 'friends', 'friendReqs');
+    try {
+      const pt = await api.getPlaytime();
+      if (pt && pt.perServer) state.playtime = pt.perServer;
+      updatePlaytimeStatus();
+      await loadServers();
+      const fresh = await window.hub.getProfile(state.user?.username);
+      if (fresh) state.profile = fresh;
+      renderUser();
+    } catch {}
+  });
+}
 
 function startActiveSessionChip(serverName) {
   const chip   = document.getElementById('active-session-chip');

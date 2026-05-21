@@ -60,6 +60,13 @@ contextBridge.exposeInMainWorld('hub', {
   // a floating window. The popout itself uses chatPopout.* methods.
   openChatPopout:        (type, user) => ipcRenderer.invoke('chat-popout-open', { type, user }),
   closeAllChatPopouts:   ()           => ipcRenderer.invoke('chat-popout-close-all'),
+
+  // Web-client servers (LostCity, Xternium, etc): launch the play URL in a
+  // dedicated BrowserWindow. main process owns session tracking + window
+  // lifecycle. Renderer subscribes to onWebSessionEnded so it can hide the
+  // active-session chip + refresh playtime when the user closes the window.
+  launchWebServer:       (opts)       => ipcRenderer.invoke('launch-web-server', opts),
+  onWebSessionEnded:     (cb)         => ipcRenderer.on('web-session-ended', (_, data) => cb(data)),
 });
 
 // Exposed only inside the chat popout window (uses the same preload but
