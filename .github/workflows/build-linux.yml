@@ -1,0 +1,107 @@
+name: Build Linux AppImage
+
+# Same trigger pattern as the Mac workflow: every v* tag push (what
+# `npm run release` does) plus workflow_dispatch for manual builds.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      attach_to_latest_release:
+        description: 'Attach built AppImage to the latest release tag?'
+        required: false
+        default: 'true'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout sibling Java repo (needed by prebuild-jar.js)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/rsps-hub-launcher
+          token: ${{ secrets.JAVA_REPO_TOKEN }}
+          path: java-source
+          fetch-depth: 1
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Install AppImage build tools
+        # electron-builder needs libarchive-tools (bsdtar) to assemble the
+        # AppImage on Ubuntu runners. fuse is required for AppImage testing
+        # but not needed for the build itself.
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+
+      - name: Ensure Linux JRE is present
+        # Bundled Linux JRE lives at java-backend-linux/jre. Download from
+        # Adoptium if missing (gitignored, never committed).
+        run: |
+          if [ ! -x "java-backend-linux/jre/bin/java" ]; then
+            echo "Linux JRE missing, downloading Temurin 17..."
+            mkdir -p java-backend-linux
+            curl -L 'https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jre/hotspot/normal/eclipse' -o /tmp/jre.tar.gz
+            tar -xzf /tmp/jre.tar.gz -C java-backend-linux
+            mv java-backend-linux/jdk-17*-jre java-backend-linux/jre
+            rm -rf /tmp/jre.tar.gz
+          fi
+          ls -la java-backend-linux/jre/bin/java
+
+      - name: Make scripts executable
+        run: |
+          chmod +x java-backend/bin/RSPSHub || true
+          chmod +x java-backend-linux/jre/bin/* || true
+          chmod +x java-backend-linux/jre/lib/jspawnhelper || true
+          chmod +x java-source/gradlew || true
+
+      - name: Build Java jar (prebuild hook)
+        env:
+          RSPS_HUB_JAVA_SRC: ${{ github.workspace }}/java-source
+        run: node scripts/prebuild-jar.js
+
+      - name: Build Linux AppImage (x64)
+        run: npx electron-builder --linux AppImage --x64 --publish=never
+
+      - name: List build output
+        run: ls -la dist/ | head -20
+
+      - name: Attach AppImage to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/RSPSHub-Setup-v*-linux-*.AppImage
+            dist/latest-linux.yml
+
+      - name: Upload as workflow artifact (for manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rspshub-linux-appimage
+          path: |
+            dist/RSPSHub-Setup-v*-linux-*.AppImage
+            dist/latest-linux.yml

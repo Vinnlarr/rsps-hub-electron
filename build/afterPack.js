@@ -1,59 +1,62 @@
 // electron-builder afterPack hook.
 //
-// On macOS the bundled Temurin JRE and the RSPSHub launch script need to be
-// executable inside the packaged .app, otherwise the Java backend never
-// starts ("Permission denied" on jre/bin/java or the shell script). When the
-// JRE was downloaded on macOS the +x bit is already set, but the project
-// also ships a copy from Windows where filesystems don't carry that bit, so
-// we re-apply it during pack regardless of the build host.
+// On macOS and Linux the bundled Temurin JRE and the RSPSHub launch script
+// need the executable bit, otherwise the Java backend never starts
+// ("Permission denied" on jre/bin/java or the shell script). When the JRE
+// is downloaded inside a Linux/Mac CI runner the bit is already set, but the
+// project also ships JRE copies from Windows where filesystems don't carry
+// that bit, so re-apply it during pack regardless of the build host.
 
 const fs   = require('fs');
 const path = require('path');
 
-module.exports = async function afterPack(context) {
-  if (context.electronPlatformName !== 'darwin') return;
+function chmodRecursive(p, mode) {
+  if (!fs.existsSync(p)) return;
+  const stat = fs.lstatSync(p);
+  if (stat.isDirectory()) {
+    try { fs.chmodSync(p, 0o755); } catch (_) {}
+    for (const child of fs.readdirSync(p)) {
+      chmodRecursive(path.join(p, child), mode);
+    }
+  } else {
+    try { fs.chmodSync(p, mode); } catch (_) {}
+  }
+}
 
-  // Find the .app folder inside appOutDir. electron-builder names it after
-  // productFilename, which may differ from productName once spaces are
-  // stripped on some versions, so glob for any *.app to stay version-proof.
-  const outDir = context.appOutDir;
-  let appBundle = null;
+function macResourcesDir(outDir) {
+  // Locate the .app bundle. electron-builder names it after productFilename
+  // which can vary across versions, so glob for any *.app to stay safe.
   for (const entry of fs.readdirSync(outDir)) {
-    if (entry.endsWith('.app')) { appBundle = entry; break; }
+    if (entry.endsWith('.app')) {
+      return path.join(outDir, entry, 'Contents', 'Resources', 'java-backend');
+    }
   }
-  if (!appBundle) {
-    console.warn('[afterPack] no .app bundle found in', outDir);
-    return;
-  }
-  const resourcesDir = path.join(
-    outDir,
-    appBundle,
-    'Contents',
-    'Resources',
-    'java-backend'
-  );
+  return null;
+}
 
-  // Files and directories that need the executable bit on macOS.
+module.exports = async function afterPack(context) {
+  const platform = context.electronPlatformName; // "darwin" | "linux" | "win32"
+  if (platform !== 'darwin' && platform !== 'linux') return;
+
+  let resourcesDir;
+  if (platform === 'darwin') {
+    resourcesDir = macResourcesDir(context.appOutDir);
+    if (!resourcesDir) {
+      console.warn('[afterPack] no .app bundle found in', context.appOutDir);
+      return;
+    }
+  } else {
+    // Linux unpacked layout: ${appOutDir}/resources/java-backend/
+    resourcesDir = path.join(context.appOutDir, 'resources', 'java-backend');
+  }
+
   const targets = [
     path.join(resourcesDir, 'bin', 'RSPSHub'),
     path.join(resourcesDir, 'jre', 'bin'),
     path.join(resourcesDir, 'jre', 'lib', 'jspawnhelper'),
   ];
 
-  function chmodRecursive(p, mode) {
-    if (!fs.existsSync(p)) return;
-    const stat = fs.lstatSync(p);
-    if (stat.isDirectory()) {
-      try { fs.chmodSync(p, 0o755); } catch (_) {}
-      for (const child of fs.readdirSync(p)) {
-        chmodRecursive(path.join(p, child), mode);
-      }
-    } else {
-      try { fs.chmodSync(p, mode); } catch (_) {}
-    }
-  }
-
   for (const t of targets) chmodRecursive(t, 0o755);
 
-  console.log('[afterPack] chmod +x applied to bundled JRE and launcher script');
+  console.log(`[afterPack] chmod +x applied to bundled JRE and launcher script (${platform})`);
 };

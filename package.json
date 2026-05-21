@@ -52,7 +52,16 @@
     },
     "linux": {
       "target": "AppImage",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "category": "Game",
+      "artifactName": "RSPSHub-Setup-v${version}-linux-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "java-backend-linux/jre",
+          "to": "java-backend/jre",
+          "filter": ["**/*"]
+        }
+      ]
     },
     "extraResources": [
       {

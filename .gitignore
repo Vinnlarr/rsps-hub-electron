@@ -5,6 +5,8 @@ java-backend/
 # (see .github/workflows/build-mac.yml), and Mac devs running `npm run build`
 # locally already have it from the workflow run or can re-download.
 java-backend-mac/
+# Same deal for Linux. CI downloads from Adoptium in build-linux.yml.
+java-backend-linux/
 .claude/
 *.log
 RSPSHub.jar
