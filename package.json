@@ -44,16 +44,6 @@
       "identity": null,
       "extraResources": [
         {
-          "from": "java-backend/lib",
-          "to": "java-backend/lib",
-          "filter": ["**/*"]
-        },
-        {
-          "from": "java-backend/bin",
-          "to": "java-backend/bin",
-          "filter": ["RSPSHub"]
-        },
-        {
           "from": "java-backend-mac/jre",
           "to": "java-backend/jre",
           "filter": ["**/*"]
