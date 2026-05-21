@@ -159,11 +159,35 @@
 
 * { scrollbar-width: thin; scrollbar-color: #4a3a18 #0e0c08; }
 
+/* Bundled emoji font. Most desktop Linux distros ship with an emoji font
+   (Ubuntu Desktop, Fedora, Mint, Pop_OS, etc.) but minimal installs (server
+   distros, WSL Ubuntu, Alpine) don't, which makes our sidebar / button
+   icons render as missing-glyph boxes. Shipping Noto Color Emoji inside
+   the app's resources guarantees emoji render everywhere with zero user
+   setup. Adds ~10MB to the bundle, worth it for the UX win.
+   The unicode-range list covers the emoji blocks we actually use. */
+@font-face {
+  font-family: 'NotoColorEmoji';
+  src: url('../assets/fonts/NotoColorEmoji.ttf') format('truetype');
+  font-display: swap;
+  unicode-range:
+    U+1F000-1FFFF,  /* Emoji & pictographs */
+    U+2600-27BF,    /* Misc symbols, dingbats (gears, arrows, stars) */
+    U+2300-23FF,    /* Misc technical (incl. ↻) */
+    U+2700-27BF,    /* Dingbats */
+    U+FE0F,         /* Variation selector-16 (emoji presentation) */
+    U+200D;         /* Zero-width joiner (combined emoji) */
+}
+
 /* ── RUNESCAPE BACKGROUND IMAGE ── */
 body {
   background-color: var(--bg-color);
   color: #e0d5c0;
-  font-family: 'Inter', sans-serif;
+  /* Inter handles all the text. Emoji codepoints fall through to
+     NotoColorEmoji (bundled in assets/fonts/). sans-serif is the final
+     fallback. Order matters: generic families MUST come after named ones
+     or browsers stop searching before the emoji font gets a chance. */
+  font-family: 'Inter', 'NotoColorEmoji', sans-serif;
   height: 100vh;
   overflow: hidden;
   display: flex;
