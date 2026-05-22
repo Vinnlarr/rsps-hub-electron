@@ -1,6 +1,6 @@
 {
   "name": "rsps-hub",
-  "version": "1.0.58",
+  "version": "1.0.59",
   "description": "RSPS Hub Launcher",
   "author": "RSPS Hub",
   "main": "main.js",
@@ -34,7 +34,9 @@
     "mac": {
       "target": {
         "target": "dmg",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       },
       "icon": "build/icon.icns",
       "category": "public.app-category.games",
@@ -46,7 +48,9 @@
         {
           "from": "java-backend-mac/jre",
           "to": "java-backend/jre",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },
@@ -59,7 +63,9 @@
         {
           "from": "java-backend-linux/jre",
           "to": "java-backend/jre",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },
