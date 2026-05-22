@@ -1,11 +1,11 @@
 name: Build Linux AppImage
 
-# Same trigger pattern as the Mac workflow: every v* tag push (what
-# `npm run release` does) plus workflow_dispatch for manual builds.
+# Manual-only via workflow_dispatch. Tag-push trigger is disabled until
+# the Linux build has been validated on a real Linux machine (WSL test
+# was inconclusive: launcher loaded but Apex closed instantly, unclear if
+# it was the launcher or the server's client being Windows-specific).
+# Re-enable the push.tags trigger once a real Linux user confirms.
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       attach_to_latest_release:

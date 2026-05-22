@@ -1,11 +1,10 @@
 name: Build macOS DMG
 
-# Triggers: every tag push (which is what `npm run release` does), and
-# manual via workflow_dispatch so you can build off main without tagging.
+# Triggers: manual-only via workflow_dispatch. Tag-push trigger is disabled
+# until the Mac build has been validated on a real Mac (waiting on crazzmc's
+# test feedback). When ready, re-enable the push.tags trigger so `npm run
+# release` v* tags automatically produce a Mac DMG attached to the release.
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       attach_to_latest_release:
