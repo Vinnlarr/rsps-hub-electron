@@ -255,6 +255,29 @@ function createWindow() {
   // Open DevTools in dev mode
   if (!app.isPackaged) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
+
+    // Default Electron menu carried Ctrl+R / Ctrl+Shift+I accelerators, but
+    // we null the menu on Windows/Linux to hide the menu bar, which kills
+    // those shortcuts too. Re-bind the common dev shortcuts here so the
+    // dev experience matches what you'd expect from any Electron app.
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      const key = (input.key || '').toLowerCase();
+      const ctrl = input.control || input.meta;
+      // Ctrl+R or Ctrl+Shift+R reloads the renderer
+      if (ctrl && key === 'r') {
+        if (input.shift) mainWindow.webContents.reloadIgnoringCache();
+        else             mainWindow.webContents.reload();
+        event.preventDefault();
+        return;
+      }
+      // F12 / Ctrl+Shift+I toggles DevTools
+      if (key === 'f12' || (ctrl && input.shift && key === 'i')) {
+        if (mainWindow.webContents.isDevToolsOpened()) mainWindow.webContents.closeDevTools();
+        else                                          mainWindow.webContents.openDevTools({ mode: 'detach' });
+        event.preventDefault();
+      }
+    });
   }
 }
 
