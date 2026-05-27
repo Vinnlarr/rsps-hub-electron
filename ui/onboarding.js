@@ -356,7 +356,21 @@
     if (stepIndex > 0) { stepIndex--; render(); }
   }
   function finish() {
+    // Persist to BOTH localStorage and the settings.json file (via /api/settings).
+    // localStorage was getting wiped by the auto-update process on Windows
+    // (Chromium localStorage db corruption when the launcher gets force-killed
+    // mid-write during the NSIS upgrade), making the tour re-fire after every
+    // update. The settings.json file lives in ~/.rsps_hub/ which the installer
+    // explicitly preserves + has restore logic for, so it's the durable home
+    // for this flag. localStorage stays as a fast-path so we don't have to
+    // round-trip on every launcher boot.
     try { localStorage.setItem(STORAGE_KEY, 'true'); } catch (_) {}
+    try {
+      if (window.hub && window.hub.post) {
+        window.hub.post('/api/settings', { hasCompletedOnboarding: true })
+                  .catch(() => {});
+      }
+    } catch (_) {}
     if (backdropEl) backdropEl.remove();
     document.querySelectorAll('.onb-spotlight, .onb-bubble').forEach(n => n.remove());
     if (onKeydown) document.removeEventListener('keydown', onKeydown);
@@ -382,14 +396,44 @@
   // Public API
   window.RspsHubOnboarding = {
     start,
-    isDone() { try { return localStorage.getItem(STORAGE_KEY) === 'true'; } catch (_) { return false; } },
-    reset()  { try { localStorage.removeItem(STORAGE_KEY); } catch (_) {} },
+    isDone() {
+      // localStorage is the fast-path check used by autoStart on launcher boot.
+      // The durable source of truth is settings.json (see autoStart below which
+      // rehydrates localStorage from settings if the file says we're done).
+      try { return localStorage.getItem(STORAGE_KEY) === 'true'; } catch (_) { return false; }
+    },
+    reset()  {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+      // Clear the durable flag too so the "Start tour" button in Settings
+      // actually replays the tour on next boot even if the user fully quits.
+      try {
+        if (window.hub && window.hub.post) {
+          window.hub.post('/api/settings', { hasCompletedOnboarding: false }).catch(() => {});
+        }
+      } catch (_) {}
+    },
     /** Called from app.js after the renderer + state.user are ready. Will
      *  auto-launch the tour on first run, no-op afterwards. */
     autoStart() {
       // Tiny delay so the DOM has settled (nav tabs rendered, etc.)
-      setTimeout(() => {
+      setTimeout(async () => {
+        // Fast path: localStorage already says done, bail.
         if (this.isDone()) return;
+        // Slow path: localStorage might have been wiped by an auto-update
+        // (Chromium localStorage db corruption when launcher is force-killed
+        // mid-write during NSIS upgrade). Check the durable settings.json
+        // flag via /api/settings before deciding to show the tour. If it
+        // says done, rehydrate localStorage so future boots take the fast
+        // path again.
+        try {
+          if (window.hub && window.hub.get) {
+            const s = await window.hub.get('/api/settings');
+            if (s && s.hasCompletedOnboarding === true) {
+              try { localStorage.setItem(STORAGE_KEY, 'true'); } catch (_) {}
+              return;
+            }
+          }
+        } catch (_) {}
         if (SKIP_ON_LOGIN && !window.state?.user) return;
         start();
       }, 600);
