@@ -3735,6 +3735,20 @@ body.is-mac .title-bar { padding-left: 80px; }
 /* Form footer */
 .dp-form-footer { border-top: 1px solid #2a2010 !important; }
 .dp-form-btns { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
+
+/* Save / Delete bar at the top of the preview panel.
+   Stays visible while scrolling the form, requested by Xterbium so you can
+   save without scrolling back to the bottom of long forms. Save is full
+   width and lit gold, Delete sits beside it as a smaller danger button. */
+.dp-preview-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2a2010;
+  background: #14100a;
+}
+.dp-preview-actions .dp-submit-btn { flex: 1; padding: 10px 14px; }
+.dp-preview-actions .dp-delete-btn { padding: 10px 12px; }
 .dp-submit-btn {
   background: linear-gradient(135deg,#4a3800,#3a2c00);
   border: 1px solid #c8a840; color: #c8a840;

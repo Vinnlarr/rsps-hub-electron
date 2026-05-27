@@ -7313,16 +7313,19 @@ curl_close($ch);</pre>
       </div>` : ''}
     </div>
 
-    <div class="dp-form-section dp-form-footer">
-      <div class="dp-form-btns">
-        ${!isNew ? `<button class="dp-delete-btn" id="dp-delete">Delete Server</button>` : ''}
-        <button class="dp-submit-btn" id="dp-save">${isNew ? 'Submit for Review' : 'Save Changes'}</button>
-      </div>
-    </div>
   </div>
 
-  <!-- ── LIVE PREVIEW ── -->
+  <!-- ── LIVE PREVIEW + STICKY ACTION BAR ── -->
+  <!-- Save / Delete buttons used to live at the bottom of the form column,
+       which meant scrolling all the way down every time. Xterbium asked to
+       move them somewhere always visible. Now they sit at the top of the
+       right column above the live preview, so you can save without losing
+       your place in a long form. -->
   <div class="dp-preview-panel">
+    <div class="dp-preview-actions">
+      <button class="dp-submit-btn" id="dp-save">${isNew ? 'Submit for Review' : 'Save Changes'}</button>
+      ${!isNew ? `<button class="dp-delete-btn" id="dp-delete">Delete</button>` : ''}
+    </div>
     <div class="dp-preview-hdr">
       Live Preview
       <div class="dp-preview-tabs">
