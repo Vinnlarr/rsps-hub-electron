@@ -1748,18 +1748,43 @@ function renderFavSidebar() {
     const server = state.servers.find(s => s.name === name);
     const slot   = document.createElement('div');
     slot.className = 'fav-slot';
-    slot.title     = name;
+    // No `title` attribute — that produces the ugly native OS tooltip with
+    // wrong colors / wrong font. The .fav-tooltip span below is the custom
+    // themed hover-name instead.
     const safeInitial = escHtml(name[0].toUpperCase());
-    const safeName = escHtml(name.length > 6 ? name.slice(0, 5) + '…' : name);
+    // Don't truncate the name client-side. Let CSS handle overflow with
+    // ellipsis so we keep as much of the name visible as the slot allows,
+    // and the full name still shows in the hover tooltip.
+    const safeName = escHtml(name);
     slot.innerHTML = `
       ${server?.serverOnline === 1 ? '<span class="fav-online-dot"></span>' : ''}
-      <button class="fav-remove-btn" title="Remove favourite">✕</button>
+      <button class="fav-remove-btn" aria-label="Remove favourite">✕</button>
       <span class="fav-initial">${safeInitial}</span>
       <span class="fav-name">${safeName}</span>
+      <span class="fav-tooltip">${safeName}</span>
     `;
-    slot.addEventListener('click', e => {
+    // Quick-play: click the slot to launch instead of opening the detail
+    // modal. Web servers open their BrowserWindow. Installed JAR servers
+    // start the game directly with the session chip. Not-yet-installed
+    // ones fall back to the detail page so the user can install first.
+    slot.addEventListener('click', async e => {
       if (e.target.closest('.fav-remove-btn')) return;
-      if (server) showServerDetail(server);
+      if (!server) return;
+      if (server.launchType === 'web') {
+        try { await launchWebServer(server); }
+        catch { showToast('Failed to launch ' + server.name, 'error'); }
+        return;
+      }
+      if (server.downloaded) {
+        try {
+          await api.play(server.name);
+          startActiveSessionChip(server.name);
+          if (state.settings?.minimizeOnLaunch) window.hub.minimize();
+        } catch { showToast('Failed to launch ' + server.name, 'error'); }
+        return;
+      }
+      // Not installed yet: show details so they can hit Install.
+      showServerDetail(server);
     });
     slot.querySelector('.fav-remove-btn').addEventListener('click', async e => {
       e.stopPropagation();

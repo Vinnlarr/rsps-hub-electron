@@ -728,17 +728,43 @@ body.is-mac .title-bar { padding-left: 80px; }
   line-height: 1;
 }
 .fav-name {
-  font-size: 0.52rem;
-  color: #8a7a5a;
+  font-size: 0.62rem;
+  color: #b0a070;
   text-align: center;
   line-height: 1.1;
-  max-width: 62px;
+  max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
+
+/* Custom tooltip showing the full server name on hover. Replaces the old
+   native browser tooltip (slot.title=…) which used the wrong font and
+   colors and looked off-theme. */
+.fav-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1d24;
+  border: 1px solid #2a2e39;
+  color: #f4d77c;
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+}
+.fav-slot:hover .fav-tooltip { opacity: 1; }
 .fav-online-dot {
   position: absolute;
   top: 4px; right: 4px;
