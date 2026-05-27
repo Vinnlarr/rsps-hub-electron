@@ -568,6 +568,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           const c = res.current || 1;
           window.showToast(`🔥 ${c}-day login streak! Keep it going.`, 'success');
         }
+        // The checkin endpoint runs achievement sync server-side after the
+        // streak update, so streak-based unlocks (week_warrior, dedicated,
+        // devotee, etc.) get the coin toast on the same launcher session
+        // they're earned, not on next Stats tab open.
+        (res.newly_unlocked || []).forEach(a => {
+          if (window.showToast) window.showToast(`🏆 ${a.name} unlocked! +${a.coins} coins`, 'success');
+        });
+        if (res.newly_unlocked?.length) {
+          try { invalidateCaches('stats'); } catch {}
+        }
       }).catch(() => {});
 
       // Streak-at-risk reminder. The Settings toggle "Streak Reminders"
@@ -5810,6 +5820,13 @@ if (window.hub?.onWebSessionEnded) {
       const fresh = await window.hub.getProfile(state.user?.username);
       if (fresh) state.profile = fresh;
       renderUser();
+      // Sync achievements + show coin toasts for any unlocked by this session.
+      // VPS already ran sync server-side in session_end.php, this just
+      // surfaces what was awarded.
+      const sync = await window.hub.post('/api/achievements/sync', {});
+      (sync?.newly_unlocked || []).forEach(a => {
+        showToast(`🏆 ${a.name} unlocked! +${a.coins} coins`, 'success');
+      });
     } catch {}
   });
 }
@@ -5860,6 +5877,20 @@ function startActiveSessionChip(serverName) {
             const fresh = await window.hub.getProfile(state.user?.username);
             if (fresh) state.profile = fresh;
             renderUser();
+          } catch {}
+          // Achievement sync after every session. The VPS already ran sync
+          // server-side inside session_end.php, so this call is fast (just
+          // returns "already_unlocked" if there's nothing new). The point of
+          // making the call from here is to surface coin toasts for anything
+          // newly unlocked. Without these toasts, users earn coins silently.
+          try {
+            const sync = await window.hub.post('/api/achievements/sync', {});
+            (sync?.newly_unlocked || []).forEach(a => {
+              showToast(`🏆 ${a.name} unlocked! +${a.coins} coins`, 'success');
+            });
+            if (sync?.newly_unlocked?.length) {
+              invalidateCaches('stats');
+            }
           } catch {}
           // If the Stats tab is currently the active panel, re-render it
           // so totals/heatmap/top-servers reflect the just-ended session.
