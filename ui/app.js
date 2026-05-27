@@ -5812,7 +5812,35 @@ function startWebSessionChip(server) {
     timeEl.textContent = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }, 1000);
 
-  _activeWebSessions.set(server.id, { name: server.name, startedAt, intervalId });
+  // While the web window is open, the reaper on the VPS rolls over the
+  // active session every 5 min and writes a chunk to session_log + updates
+  // playtime + users.total_playtime_minutes. The launcher needs to pick up
+  // those updates so the level badge on the server card, stats page, and
+  // sidebar all reflect playtime as it accrues. Without this refresh,
+  // users keep the game window open for hours and the launcher UI still
+  // shows their pre-session totals, making it look like they're not
+  // earning hours. Reported by Xterbium (05X).
+  const refreshIntervalId = setInterval(async () => {
+    try {
+      const pt = await api.getPlaytime();
+      if (pt && pt.perServer) state.playtime = pt.perServer;
+      updatePlaytimeStatus();
+      await loadServers({ quiet: true });
+      try {
+        const fresh = await window.hub.getProfile(state.user?.username);
+        if (fresh) state.profile = fresh;
+        renderUser();
+      } catch {}
+      invalidateCaches('stats');
+    } catch {}
+  }, 5 * 60 * 1000);
+
+  _activeWebSessions.set(server.id, {
+    name: server.name,
+    startedAt,
+    intervalId,
+    refreshIntervalId,
+  });
 
   // Give the VPS a few seconds to record the session start, then refresh so
   // our own card shows the +1 player count.
@@ -5827,6 +5855,7 @@ if (window.hub?.onWebSessionEnded) {
     const sess = _activeWebSessions.get(serverId);
     if (sess) {
       clearInterval(sess.intervalId);
+      if (sess.refreshIntervalId) clearInterval(sess.refreshIntervalId);
       _activeWebSessions.delete(serverId);
     }
     // Only hide the chip if nothing else is showing in it. JAR sessions
