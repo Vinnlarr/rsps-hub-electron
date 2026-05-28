@@ -773,13 +773,18 @@
     // user clicks HUB STORE and sees a blank panel for a few hundred ms.
     el.innerHTML = `
       <div class="hs-root">
+        <!-- Balance pill is a SIBLING of the header (not a child) so its
+             sticky frame is the whole .hs-root container instead of just
+             the header strip. That lets the pill stay pinned while the
+             user scrolls the entire cosmetic catalog, not just while the
+             header is still on screen. -->
+        <div class="hs-balance">
+          ${coinSvg(22)}
+          <b id="hs-bal-num">${balance.toLocaleString()}</b>
+          <span class="lbl">COINS</span>
+        </div>
         <div class="hs-header">
           <h2>HUB STORE <small>Spend Hub Coins on cosmetics that show up everywhere</small></h2>
-          <div class="hs-balance">
-            ${coinSvg(22)}
-            <b id="hs-bal-num">${balance.toLocaleString()}</b>
-            <span class="lbl">COINS</span>
-          </div>
         </div>
         <div class="hs-empty">Loading store…</div>
       </div>`;
@@ -821,13 +826,18 @@
     const balance = window.state?.coins?.balance ?? 0;
     el.innerHTML = `
       <div class="hs-root">
+        <!-- Balance pill is a SIBLING of the header (not a child) so its
+             sticky frame is the whole .hs-root container instead of just
+             the header strip. That lets the pill stay pinned while the
+             user scrolls the entire cosmetic catalog, not just while the
+             header is still on screen. -->
+        <div class="hs-balance">
+          ${coinSvg(22)}
+          <b id="hs-bal-num">${balance.toLocaleString()}</b>
+          <span class="lbl">COINS</span>
+        </div>
         <div class="hs-header">
           <h2>HUB STORE <small>Spend Hub Coins on cosmetics that show up everywhere</small></h2>
-          <div class="hs-balance">
-            ${coinSvg(22)}
-            <b id="hs-bal-num">${balance.toLocaleString()}</b>
-            <span class="lbl">COINS</span>
-          </div>
         </div>
         <div id="hs-featured-slot">${renderFeatured()}</div>
         <div class="hs-layout">

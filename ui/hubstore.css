@@ -13,25 +13,21 @@
 }
 
 /* ── Root container ── */
-.hs-root { padding: 4px 0 30px; }
+/* Flex column so the sticky balance pill can use align-self:flex-end to
+   right-align itself, and every other child (header, featured slot,
+   sidebar+main row) stays full-width via default align-items:stretch. */
+.hs-root { padding: 4px 0 30px; display: flex; flex-direction: column; }
 
 /* ── Header strip ──
- * Sticky so the coin balance stays visible while the user scrolls deep
- * into the cosmetics list. Background made fully opaque (was 0.88) so
- * tiles don't show through when it's pinned. Slight box-shadow appears
- * to give visual separation from the scrolled content underneath.
- * Xterbium's idea. */
+ * Now only holds the HUB STORE title + tagline. The balance pill was
+ * lifted out into its own sticky element (see .hs-balance below). */
 .hs-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center;
   padding: 14px 18px;
-  background: linear-gradient(180deg, #281e0f, #14100a);
+  background: linear-gradient(180deg, rgba(40,30,15,0.88), rgba(20,14,8,0.9));
   border: 1px solid #6b5228;
   border-radius: 6px;
   margin-bottom: 14px;
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  box-shadow: 0 6px 14px rgba(0,0,0,0.55);
 }
 .hs-header h2 {
   font-family: 'Cinzel', serif;
@@ -47,12 +43,31 @@
   margin-left: 10px;
   letter-spacing: 0.06em;
 }
+/* Coin balance pill.
+ * Xterbium asked for just the coin display to follow the scroll. Rather
+ * than make the whole header strip sticky (crowded), only this pill is
+ * pinned. Lives as a direct child of .hs-root (flex column) so:
+ *   - align-self:flex-end pushes it to the right edge in initial flow
+ *   - position:sticky with .hs-root as the sticky frame keeps it pinned
+ *     for the entire scroll length of the store, not just while the
+ *     header strip is on screen
+ * Background is fully opaque so cosmetic tiles don't show through when
+ * it's pinned over them. */
 .hs-balance {
-  display: flex; align-items: center; gap: 10px;
+  display: inline-flex; align-items: center; gap: 10px;
   padding: 8px 16px;
-  background: linear-gradient(180deg, rgba(60,42,16,0.9), rgba(28,18,8,0.95));
+  background: linear-gradient(180deg, #3c2a10, #1c1208);
   border: 1px solid #c8a840;
   border-radius: 24px;
+  position: sticky;
+  top: 8px;
+  z-index: 20;
+  align-self: flex-end;
+  margin-bottom: -42px; /* negate the pill's height so it overlays the
+                          header strip below it instead of pushing it
+                          down. Matches the visual where the pill sits
+                          in the header's top-right corner initially. */
+  box-shadow: 0 4px 12px rgba(0,0,0,0.6);
 }
 .hs-balance b {
   font-family: 'Cinzel', serif;
