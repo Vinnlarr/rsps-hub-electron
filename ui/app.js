@@ -604,10 +604,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     const pt = await api.getPlaytime();
     if (pt && pt.perServer) {
       state.playtime = pt.perServer; // { "ServerName": minutesPlayed }
-      // Sync local playtime map up to the server so the leaderboard has accurate
-      // per-server history (session_log only started recording recently).
-      if (state.user?.username) {
-        window.hub.post('/api/users/sync-playtime', { per_server: pt.perServer }).catch(() => {});
+
+      // One-time backfill: pre-v1.0.50 playtime exists only in the local
+      // PlaytimeStore file. Push it up to the VPS so the leaderboard,
+      // Stats Top Servers, and other VPS-driven UIs reflect the user's
+      // full history. Gated on a settings flag so it only fires once per
+      // user, ever. Endpoint is idempotent (GREATEST merge) so even if
+      // the flag fails to save, re-runs are safe.
+      if (state.user?.username
+          && state.settings
+          && state.settings.hasReconciledPlaytime !== true
+          && Object.keys(pt.perServer).length > 0) {
+        try {
+          const res = await window.hub.post('/api/playtime/reconcile', { perServer: pt.perServer });
+          if (res && res.success) {
+            await window.hub.post('/api/settings', { hasReconciledPlaytime: true }).catch(() => {});
+            state.settings.hasReconciledPlaytime = true;
+            // Refresh server list + stats now that VPS has merged data
+            try { invalidateCaches('stats'); } catch {}
+            loadServers({ quiet: true }).catch(() => {});
+          }
+        } catch {}
       }
     }
   } catch {}
