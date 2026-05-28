@@ -15,14 +15,23 @@
 /* ── Root container ── */
 .hs-root { padding: 4px 0 30px; }
 
-/* ── Header strip ── */
+/* ── Header strip ──
+ * Sticky so the coin balance stays visible while the user scrolls deep
+ * into the cosmetics list. Background made fully opaque (was 0.88) so
+ * tiles don't show through when it's pinned. Slight box-shadow appears
+ * to give visual separation from the scrolled content underneath.
+ * Xterbium's idea. */
 .hs-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 18px;
-  background: linear-gradient(180deg, rgba(40,30,15,0.88), rgba(20,14,8,0.9));
+  background: linear-gradient(180deg, #281e0f, #14100a);
   border: 1px solid #6b5228;
   border-radius: 6px;
   margin-bottom: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.55);
 }
 .hs-header h2 {
   font-family: 'Cinzel', serif;
