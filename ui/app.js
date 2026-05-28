@@ -1512,7 +1512,19 @@ function getFilteredServers() {
   // the snake_case names here was returning undefined on every server, so
   // every comparator returned 0 and `list.sort` was a no-op (Whiprealgood's
   // bug — Most Reviewed showed servers in API order, not by reviews).
-  if (state.sortOrder === 'rating')    list.sort((a, b) => (+b.avgRating || 0) - (+a.avgRating || 0) || (b.reviewCount || 0) - (a.reviewCount || 0));
+  if (state.sortOrder === 'rating') {
+    // Highest Rated: sort by count of 5-star reviews, not raw avgRating.
+    // avgRating alone makes a server with one 5-star review beat a server
+    // with 50 reviews averaging 4.8. By counting 5-stars we surface
+    // servers that lots of players genuinely rate top. Tiebreak on avg
+    // rating then total review count so within a five-star tier the
+    // better-reviewed server still wins.
+    list.sort((a, b) =>
+      (b.fiveStarCount || 0) - (a.fiveStarCount || 0)
+      || (+b.avgRating || 0) - (+a.avgRating || 0)
+      || (b.reviewCount || 0) - (a.reviewCount || 0)
+    );
+  }
   if (state.sortOrder === 'reviews')   list.sort((a, b) => (b.reviewCount || 0) - (a.reviewCount || 0) || (+b.avgRating || 0) - (+a.avgRating || 0));
   if (state.sortOrder === 'name-asc')  list.sort((a, b) => a.name.localeCompare(b.name));
   if (state.sortOrder === 'name-desc') list.sort((a, b) => b.name.localeCompare(a.name));
