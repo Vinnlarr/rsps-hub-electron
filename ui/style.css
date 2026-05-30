@@ -3199,6 +3199,14 @@ body.is-mac .title-bar { padding-left: 80px; }
   font-family: 'Inter', sans-serif; font-size: 0.85rem; color: #8a7a5a; line-height: 1.6;
   background: #0e0c08; border: 1px solid #2a2010; border-radius: 4px; padding: 12px 14px;
 }
+/* Trailer / video embed (YouTube / Vimeo) on server detail modal.
+   Owner-provided URL in /my-servers.html, rendered as a 16:9 iframe. */
+.sd-trailer-wrap {
+  position: relative; width: 100%; aspect-ratio: 16/9;
+  background: #0e0c08; border: 1px solid #2e2410; border-radius: 4px; overflow: hidden;
+}
+.sd-trailer-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
 .sd-screenshots { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
 .sd-screenshots::-webkit-scrollbar { height: 3px; }
 .sd-screenshots::-webkit-scrollbar-thumb { background: #3a2e14; border-radius: 2px; }

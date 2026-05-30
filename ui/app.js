@@ -4779,6 +4779,29 @@ function showServerDetail(server) {
           </div>
         ` : ''}
 
+        ${(() => {
+          // Trailer / video embed. Owners paste a YouTube or Vimeo URL in
+          // /my-servers.html; we convert to the appropriate embed URL.
+          // Players get a preview of gameplay before installing.
+          const tu = server.trailerUrl || server.trailer_url;
+          if (!tu) return '';
+          let embed = null;
+          let m;
+          if ((m = tu.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]{11})/))) {
+            embed = 'https://www.youtube.com/embed/' + m[1];
+          } else if ((m = tu.match(/vimeo\.com\/(?:video\/)?(\d+)/))) {
+            embed = 'https://player.vimeo.com/video/' + m[1];
+          }
+          if (!embed) return '';
+          return `
+            <div class="sd-section">
+              <h3 class="sd-section-title">TRAILER</h3>
+              <div class="sd-trailer-wrap">
+                <iframe src="${escAttr(embed)}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+              </div>
+            </div>`;
+        })()}
+
         <div class="sd-section">
           <h3 class="sd-section-title">SCREENSHOTS</h3>
           ${shots.length
