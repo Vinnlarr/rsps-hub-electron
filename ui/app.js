@@ -4286,7 +4286,7 @@ async function openDM(el, username) {
           ${!isOwn
             ? `<span class="dm-sender">${renderName(m.sender || '?', m.equipped)}</span>`
             : ''}
-          <div class="dm-bubble">${escHtml(body)}</div>
+          <div class="dm-bubble">${renderChatBody(body)}</div>
         </div>`;
     }).join('');
     msgEl.scrollTop = msgEl.scrollHeight;
@@ -4364,6 +4364,9 @@ async function openDM(el, username) {
     if (e.key === 'Enter' && !_sending) { e.preventDefault(); doSend(); }
   });
   input.focus();
+
+  // GIF picker (no-op if user doesn't own f_gif_support)
+  attachGifPicker(el.querySelector('.dm-input-row'), input);
 }
 
 // ── GROUP CHAT ────────────────────────────────────────────────────────────────
@@ -4376,6 +4379,175 @@ const GC = {
   groups: [], // { id, name, members:[], msgs:[] }
   nextId: 1,
 };
+
+// ── GIF SUPPORT (shared by Hub Chat + Friend DMs) ─────────────────────────
+//
+// Gated behind a Hub Store unlock item (f_gif_support, 1000 coins).
+// Sending: only owners get the GIF picker button.
+// Receiving: everyone sees the embedded GIF so non-owners aren't left out
+// of jokes. Settings toggle 'showInlineGifs' lets users disable rendering
+// entirely if they prefer a quieter chat.
+//
+// Allowlist of image hosts we'll render inline. Anything else stays as a
+// plain link, we don't want to <img> arbitrary URLs because a malicious
+// server can use the request as a tracking beacon.
+//
+// Suffix-matched (any subdomain accepted). Giphy CDNs are sharded across
+// media0.giphy.com through media4.giphy.com (and beyond); Tenor similar.
+// Listing the apex domain catches all of them without enumerating shards.
+const CHAT_IMAGE_HOST_SUFFIXES = [
+  'giphy.com',
+  'tenor.com',
+  'imgur.com',
+  'discordapp.net',
+  'discordapp.com',
+];
+
+function chatUrlIsInlineImage(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const allowed = CHAT_IMAGE_HOST_SUFFIXES.some(s => host === s || host.endsWith('.' + s));
+    if (!allowed) return false;
+    return /\.(gif|png|jpe?g|webp)(\?|$)/i.test(u.pathname);
+  } catch { return false; }
+}
+
+// Render a chat message body to safe HTML, expanding allowed image URLs
+// into inline <img> embeds. Plain text is escaped. Non-image URLs render
+// as themed links. Honors state.settings.showInlineGifs (default on).
+function renderChatBody(rawText) {
+  const showInline = state.settings?.showInlineGifs !== false;
+  const urlPattern = /\bhttps?:\/\/[^\s<>"]+/g;
+  let html = '';
+  let lastIndex = 0;
+  let match;
+  while ((match = urlPattern.exec(rawText)) !== null) {
+    html += escHtml(rawText.slice(lastIndex, match.index));
+    const url = match[0];
+    if (showInline && chatUrlIsInlineImage(url)) {
+      html += `<a href="${escAttr(url)}" class="chat-gif-link" target="_blank" rel="noopener"><img src="${escAttr(url)}" alt="GIF" class="chat-gif" loading="lazy"></a>`;
+    } else {
+      html += `<a href="${escAttr(url)}" class="chat-link" target="_blank" rel="noopener">${escHtml(url)}</a>`;
+    }
+    lastIndex = urlPattern.lastIndex;
+  }
+  html += escHtml(rawText.slice(lastIndex));
+  return html;
+}
+
+// Cached ownership flag. Re-derived from window.HUB_STORE_CATALOG on every
+// call (no negative caching) so a fresh purchase or a delayed catalog load
+// flips the result without needing a launcher restart.
+function ownsGifSupport() {
+  const cat = window.HUB_STORE_CATALOG;
+  if (Array.isArray(cat)) {
+    const item = cat.find(i => i.id === 'f_gif_support');
+    if (item) return !!item.owned;
+  }
+  // Catalog hasn't loaded yet — assume false. refreshChatGifPickers gets
+  // called from hubstore.js when the catalog arrives / after a buy, so the
+  // picker mounts as soon as ownership flips true.
+  return false;
+}
+
+// Walk every chat input row currently mounted in the DOM and (re-)attach the
+// GIF picker. Called from hubstore.js right after the catalog loads and right
+// after a successful purchase, so chat panels opened BEFORE the user owned
+// the unlock get the GIF button without needing to be closed + reopened.
+window.refreshChatGifPickers = function () {
+  document.querySelectorAll('.dm-input-row').forEach(row => {
+    const input = row.querySelector('.dm-input');
+    if (input) attachGifPicker(row, input);
+  });
+};
+
+// Build a Giphy GIF picker that opens above the chat input. Inserts the
+// selected GIF's URL into the input, ready to send. The picker is gated on
+// ownsGifSupport(); non-owners get no button and never see this UI.
+function attachGifPicker(inputRowEl, inputEl) {
+  if (!ownsGifSupport()) return;
+  if (inputRowEl.querySelector('.chat-gif-btn')) return; // already attached
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'chat-gif-btn';
+  btn.title = 'Insert a GIF';
+  btn.textContent = 'GIF';
+  // Sit BEFORE the input so picker has a natural anchor and the layout
+  // doesn't shove SEND off the right edge.
+  inputRowEl.insertBefore(btn, inputEl);
+
+  let panelEl = null;
+  let searchTimer = null;
+
+  function closePanel() {
+    if (panelEl) { panelEl.remove(); panelEl = null; }
+    document.removeEventListener('click', onDocClick, true);
+    document.removeEventListener('keydown', onKey, true);
+  }
+  function onDocClick(e) {
+    if (panelEl && !panelEl.contains(e.target) && e.target !== btn) closePanel();
+  }
+  function onKey(e) { if (e.key === 'Escape') closePanel(); }
+
+  async function search(query) {
+    if (!panelEl) return;
+    const grid = panelEl.querySelector('.chat-gif-grid');
+    grid.innerHTML = '<div class="chat-gif-loading">Loading...</div>';
+    try {
+      const res = await window.hub.get(`/api/chat/gif-search?q=${encodeURIComponent(query)}&limit=20`);
+      const items = res?.results || [];
+      if (!items.length) {
+        grid.innerHTML = '<div class="chat-gif-empty">No results.</div>';
+        return;
+      }
+      grid.innerHTML = items.map(g => `
+        <button type="button" class="chat-gif-tile" data-gif-url="${escAttr(g.gif_url)}" data-gif-preview="${escAttr(g.preview_url)}">
+          <img src="${escAttr(g.preview_url)}" alt="" loading="lazy">
+        </button>
+      `).join('');
+    } catch (e) {
+      grid.innerHTML = '<div class="chat-gif-empty">Search failed. Try again.</div>';
+    }
+  }
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (panelEl) { closePanel(); return; }
+    panelEl = document.createElement('div');
+    panelEl.className = 'chat-gif-panel';
+    panelEl.innerHTML = `
+      <div class="chat-gif-search-row">
+        <input class="chat-gif-search" type="text" placeholder="Search GIFs..." autocomplete="off">
+        <button type="button" class="chat-gif-close" title="Close">✕</button>
+      </div>
+      <div class="chat-gif-grid"></div>
+      <div class="chat-gif-credit">Powered by Tenor</div>
+    `;
+    inputRowEl.parentNode.insertBefore(panelEl, inputRowEl);
+    const searchInput = panelEl.querySelector('.chat-gif-search');
+    panelEl.querySelector('.chat-gif-close').addEventListener('click', closePanel);
+    searchInput.addEventListener('input', () => {
+      if (searchTimer) clearTimeout(searchTimer);
+      const q = searchInput.value.trim();
+      searchTimer = setTimeout(() => search(q || 'trending'), 250);
+    });
+    panelEl.querySelector('.chat-gif-grid').addEventListener('click', e => {
+      const tile = e.target.closest('[data-gif-url]');
+      if (!tile) return;
+      const url = tile.dataset.gifUrl;
+      // Insert URL into chat input. If there's already text, separate with a space.
+      const cur = inputEl.value;
+      inputEl.value = cur && !cur.endsWith(' ') ? cur + ' ' + url : cur + url;
+      inputEl.focus();
+      closePanel();
+    });
+    document.addEventListener('click', onDocClick, true);
+    document.addEventListener('keydown', onKey, true);
+    searchInput.focus();
+    search('trending');
+  });
+}
 
 function renderGroupChat(el) {
   // Group chat as a feature was stripped pre-launch — the only working room
@@ -4471,7 +4643,10 @@ async function openGCRoom(el, roomId, roomName) {
       ? `<button class="hub-msg-delete" data-delete-hub-msg="${m.id}" title="Delete (staff)">🗑</button>`
       : '';
     if (m.id) div.dataset.msgId = m.id;
-    div.innerHTML = `<div class="dm-sender-row">${senderHtml}${titlePill}${deleteBtn}</div><div class="dm-bubble">${escHtml(body)}</div><span class="dm-ts">${ts}</span>`;
+    // renderChatBody expands allowed image URLs (Tenor, Giphy, Imgur,
+    // Discord CDN) into inline <img> embeds, escapes everything else as
+    // plain text. Honors state.settings.showInlineGifs.
+    div.innerHTML = `<div class="dm-sender-row">${senderHtml}${titlePill}${deleteBtn}</div><div class="dm-bubble">${renderChatBody(body)}</div><span class="dm-ts">${ts}</span>`;
     msgEl.appendChild(div);
   }
 
@@ -4556,6 +4731,10 @@ async function openGCRoom(el, roomId, roomName) {
     if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); doSend(); }
   });
   input.focus();
+
+  // GIF picker — shows only if user owns the f_gif_support hub store item.
+  // No-op for non-owners, no flash of un-permitted UI.
+  attachGifPicker(el.querySelector('.dm-input-row'), input);
 
   // Pop-out button — spawns a floating always-on-top chat window
   el.querySelector('#gc-popout')?.addEventListener('click', () => {

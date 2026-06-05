@@ -187,6 +187,13 @@
         catalog = items.map(normaliseItem);
         publishCatalog();
         applyEquippedThemeOnLoad();
+        // Catalog freshly loaded — let any already-open chat panels mount
+        // the GIF picker if the user owns f_gif_support. Without this, a
+        // user who opened Hub Chat before the catalog finished loading
+        // sees no GIF button until they close + reopen the chat.
+        if (typeof window.refreshChatGifPickers === 'function') {
+          window.refreshChatGifPickers();
+        }
         return;
       }
     } catch (e) {
@@ -256,6 +263,7 @@
       borders: 'Avatar Border',
       effects: 'Profile Effect',
       backgrounds: 'Background',
+      features: 'Unlock',
     };
   }
 
@@ -267,6 +275,7 @@
     { id:'borders', ico:'⭕', name:'Avatar Borders',  titleHdr:'AVATAR BORDERS',     titleSub:'Frame your face. From quiet stone to legendary inferno.' },
     { id:'effects', ico:'✨', name:'Profile Effects', titleHdr:'PROFILE EFFECTS',    titleSub:'Animated overlays that play on your profile card. The flex tier.' },
     { id:'themes',  ico:'🎭', name:'Launcher Themes', titleHdr:'LAUNCHER THEMES',    titleSub:'Repaint the entire launcher. Background, sidebars, top bar, accent.' },
+    { id:'features',ico:'🔓', name:'Unlocks',         titleHdr:'FEATURE UNLOCKS',    titleSub:"One-time unlocks that turn on extra launcher abilities. Not cosmetic. Stays on forever." },
   ];
 
   // Tier display order + label
@@ -615,7 +624,15 @@
 
     let costHTML;
     let buttonHTML;
-    if (item.equipped) {
+    // Features-category items are one-time unlocks that auto-apply once
+    // owned (e.g. f_gif_support enables the GIF picker in chat). They have
+    // no equipped state and no UNEQUIP path, so show a static "ACTIVE"
+    // pill instead of the EQUIP button (which would always toast
+    // "ITEM IS NOT EQUIPPABLE").
+    if (item.cat === 'features' && item.owned) {
+      costHTML  = `<div class="hs-tile-cost own">UNLOCKED</div>`;
+      buttonHTML = `<button class="hs-rs-btn locked" disabled>ACTIVE</button>`;
+    } else if (item.equipped) {
       costHTML  = `<div class="hs-tile-cost own">OWNED</div>`;
       buttonHTML = `<button class="hs-rs-btn" data-action="unequip" data-id="${esc(item.id)}">UNEQUIP</button>`;
     } else if (item.owned) {
@@ -1060,7 +1077,17 @@
         btn.textContent = originalLabel;
         return;
       }
-      if (action === 'buy')      { applyBuyResult(result);     toast(`Purchased "${item.name}" for ${item.cost.toLocaleString()} coins.`, 'success'); }
+      if (action === 'buy')      {
+        applyBuyResult(result);
+        toast(`Purchased "${item.name}" for ${item.cost.toLocaleString()} coins.`, 'success');
+        // Features-category items unlock launcher abilities that mount into
+        // already-open UI (e.g. f_gif_support adds the GIF button to any
+        // chat panel that's currently open). Refresh those mount points
+        // immediately so the user doesn't have to close + reopen the chat.
+        if (item.cat === 'features' && typeof window.refreshChatGifPickers === 'function') {
+          window.refreshChatGifPickers();
+        }
+      }
       if (action === 'equip')    { applyEquipResult(result);   toast(`Equipped "${item.name}".`, 'success'); }
       if (action === 'unequip')  { applyUnequipResult(result); toast(`Unequipped "${item.name}".`, 'info'); }
       // Themes need a live repaint of the launcher chrome on equip/unequip.
