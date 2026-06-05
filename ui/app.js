@@ -605,22 +605,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (pt && pt.perServer) {
       state.playtime = pt.perServer; // { "ServerName": minutesPlayed }
 
-      // One-time backfill: pre-v1.0.50 playtime exists only in the local
-      // PlaytimeStore file. Push it up to the VPS so the leaderboard,
-      // Stats Top Servers, and other VPS-driven UIs reflect the user's
-      // full history. Gated on a settings flag so it only fires once per
-      // user, ever. Endpoint is idempotent (GREATEST merge) so even if
-      // the flag fails to save, re-runs are safe.
-      if (state.user?.username
-          && state.settings
-          && state.settings.hasReconciledPlaytime !== true
-          && Object.keys(pt.perServer).length > 0) {
+      // Bidirectional playtime sync — runs every boot now, not just once.
+      //
+      // Upload local PlaytimeStore to VPS (GREATEST merge so VPS can never
+      // go backwards), then merge VPS's full per-server map back DOWN into
+      // the local file. The merge-down catches sessions that committed to
+      // VPS via the reaper rollover while the launcher was offline (laptop
+      // lid closed mid-session, force-quit, network drop). Without this,
+      // server card level badges silently lag reality on long-time users.
+      // Fixes "Lv 1 on a server I've played 48 hours on" reports.
+      //
+      // Endpoint is idempotent on both sides so re-running on every boot
+      // is safe. We then re-fetch local playtime and refresh server cards
+      // so the new levels appear without a manual reload.
+      if (state.user?.username) {
         try {
-          const res = await window.hub.post('/api/playtime/reconcile', { perServer: pt.perServer });
-          if (res && res.success) {
-            await window.hub.post('/api/settings', { hasReconciledPlaytime: true }).catch(() => {});
-            state.settings.hasReconciledPlaytime = true;
-            // Refresh server list + stats now that VPS has merged data
+          const res = await window.hub.post('/api/playtime/reconcile', { perServer: pt.perServer || {} });
+          if (res && res.success && res.merged) {
+            // Java backend already wrote the merged map to local
+            // PlaytimeStore (see ApiServer reconcile handler). Update
+            // renderer state to match so server cards show the right
+            // levels immediately.
+            state.playtime = res.merged;
+            updatePlaytimeStatus();
             try { invalidateCaches('stats'); } catch {}
             loadServers({ quiet: true }).catch(() => {});
           }
