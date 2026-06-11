@@ -4522,7 +4522,7 @@ function attachGifPicker(inputRowEl, inputEl) {
         <button type="button" class="chat-gif-close" title="Close">✕</button>
       </div>
       <div class="chat-gif-grid"></div>
-      <div class="chat-gif-credit">Powered by Tenor</div>
+      <div class="chat-gif-credit">Powered by GIPHY</div>
     `;
     inputRowEl.parentNode.insertBefore(panelEl, inputRowEl);
     const searchInput = panelEl.querySelector('.chat-gif-search');
@@ -4643,10 +4643,34 @@ async function openGCRoom(el, roomId, roomName) {
       ? `<button class="hub-msg-delete" data-delete-hub-msg="${m.id}" title="Delete (staff)">🗑</button>`
       : '';
     if (m.id) div.dataset.msgId = m.id;
-    // renderChatBody expands allowed image URLs (Tenor, Giphy, Imgur,
+    // Discord-style grouping: if the previous message in this room is from
+    // the same sender within 5 minutes, suppress the sender row so it reads
+    // as a continuation. System (Hub) messages never group. Stash username
+    // + timestamp on the div so the next call can compare cheaply.
+    const tsMs = tsRaw ? Date.parse(tsRaw) : Date.now();
+    div.dataset.username = m.username || '';
+    div.dataset.tsMs     = String(tsMs);
+    let grouped = false;
+    if (!isSystem) {
+      const prev = msgEl.lastElementChild;
+      if (prev && prev.classList?.contains('dm-msg')
+          && prev.dataset.username === (m.username || '')
+          && prev.dataset.username !== 'Hub') {
+        const prevTs = Number(prev.dataset.tsMs || 0);
+        if (!prevTs || Math.abs(tsMs - prevTs) < 5 * 60 * 1000) grouped = true;
+      }
+    }
+    if (grouped) div.classList.add('grouped');
+    // renderChatBody expands allowed image URLs (Giphy, Tenor, Imgur,
     // Discord CDN) into inline <img> embeds, escapes everything else as
     // plain text. Honors state.settings.showInlineGifs.
-    div.innerHTML = `<div class="dm-sender-row">${senderHtml}${titlePill}${deleteBtn}</div><div class="dm-bubble">${renderChatBody(body)}</div><span class="dm-ts">${ts}</span>`;
+    const senderRowHtml = grouped
+      // Keep the delete button reachable on grouped messages so staff can
+      // still nuke individual bubbles in a streak. Skip the row entirely
+      // if there's no delete button (clean visual).
+      ? (deleteBtn ? `<div class="dm-sender-row dm-sender-row-tools">${deleteBtn}</div>` : '')
+      : `<div class="dm-sender-row">${senderHtml}${titlePill}${deleteBtn}</div>`;
+    div.innerHTML = `${senderRowHtml}<div class="dm-bubble">${renderChatBody(body)}</div><span class="dm-ts">${ts}</span>`;
     msgEl.appendChild(div);
   }
 
@@ -4974,7 +4998,10 @@ function showServerDetail(server) {
           let embed = null;
           let m;
           if ((m = tu.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]{11})/))) {
-            embed = 'https://www.youtube.com/embed/' + m[1];
+            // ?origin must match the Referer main.js injects on YT requests
+            // (https://therspshub.com). With both consistent, YouTube treats
+            // the file:// embed as a legit therspshub.com embed and plays.
+            embed = 'https://www.youtube.com/embed/' + m[1] + '?origin=https://therspshub.com';
           } else if ((m = tu.match(/vimeo\.com\/(?:video\/)?(\d+)/))) {
             embed = 'https://player.vimeo.com/video/' + m[1];
           }

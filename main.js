@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, session } = require('electron');
 const { spawn, execSync } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
@@ -1011,8 +1011,49 @@ function buildApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// The renderer loads from file://, which sends no Referer. YouTube's embed
+// player rejects referrer-less requests with "Error 153 — Video player
+// configuration error", so server-detail trailers render an empty/broken
+// box. Inject a valid https Referer + Origin on requests to the embed
+// hosts so the player initialises. Scoped to YouTube / Vimeo domains only;
+// every other request (our API, fonts, images) is left untouched.
+function installTrailerReferrerShim() {
+  const EMBED_HOSTS = [
+    'youtube.com', 'youtube-nocookie.com', 'googlevideo.com', 'ytimg.com',
+    'vimeo.com', 'vimeocdn.com', 'akamaized.net',
+  ];
+  const hostMatches = (url) => {
+    try {
+      const h = new URL(url).hostname.toLowerCase();
+      return EMBED_HOSTS.some(s => h === s || h.endsWith('.' + s));
+    } catch { return false; }
+  };
+  const filter = { urls: ['*://*.youtube.com/*', '*://*.youtube-nocookie.com/*',
+                          '*://*.googlevideo.com/*', '*://*.ytimg.com/*',
+                          '*://*.vimeo.com/*', '*://*.vimeocdn.com/*'] };
+  session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, cb) => {
+    if (hostMatches(details.url)) {
+      const headers = details.requestHeaders;
+      // Present our real domain as the embedding host. YouTube validates the
+      // Referer for embeds: no referer => Error 153; a referer of youtube.com
+      // itself => Error 152 ("video unavailable", it thinks YT is framing
+      // itself). A normal external site domain is what it expects, so we use
+      // therspshub.com (must match the ?origin= param app.js puts on the
+      // embed URL). Only set if missing so we never clobber the player's own
+      // internal navigations.
+      if (!headers['Referer'] && !headers['referer']) {
+        headers['Referer'] = 'https://therspshub.com/';
+      }
+      cb({ requestHeaders: headers });
+      return;
+    }
+    cb({ requestHeaders: details.requestHeaders });
+  });
+}
+
 app.whenReady().then(() => {
   buildApplicationMenu();
+  installTrailerReferrerShim();
   startJavaBackend();
   waitForBackend(() => {
     createWindow();

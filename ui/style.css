@@ -2568,6 +2568,19 @@ body.is-mac .title-bar { padding-left: 80px; }
 .dm-sender-row .dm-sender { margin-bottom: 0; }
 .dm-sender-row .eq-title { margin-left: 0; }
 
+/* Grouped messages: same sender as the previous bubble within 5 min, so
+   we hide the sender row and tighten vertical spacing so the streak
+   reads as one continuous thought. Staff delete button still appears
+   (in .dm-sender-row-tools) when applicable. */
+.dm-msg.grouped { margin-top: 2px; }
+.dm-msg.grouped + .dm-msg:not(.grouped) { margin-top: 10px; }
+.dm-sender-row-tools {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 0;
+  margin: 0;
+}
+
 /* Staff inline delete on hub chat messages — subtle until hovered. */
 .hub-msg-delete {
   background: transparent;
@@ -2718,30 +2731,38 @@ body.is-mac .title-bar { padding-left: 80px; }
   font-size: 0.9rem;
 }
 .chat-gif-close:hover { border-color: #c8a840; color: #ffd070; }
+/* Masonry layout (CSS multi-column): each GIF renders FULL at its natural
+   aspect ratio and flows into one of 2 columns, like Discord / Giphy's own
+   picker. No cropping, no letterbox gaps — the column just packs tiles
+   top-to-bottom. break-inside:avoid stops a tile splitting across columns. */
 .chat-gif-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 5px;
+  column-count: 2;
+  column-gap: 5px;
   overflow-y: auto;
   flex: 1;
   min-height: 180px;
 }
 .chat-gif-tile {
   position: relative;
+  display: block;
+  width: 100%;
   background: #0e0c08;
   border: 1px solid #2a2e39;
   border-radius: 3px;
   overflow: hidden;
   cursor: pointer;
   padding: 0;
-  aspect-ratio: 1;
+  margin: 0 0 5px;
+  break-inside: avoid;
   transition: border-color 0.12s;
 }
 .chat-gif-tile:hover { border-color: #c8a840; }
-.chat-gif-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* height:auto so each GIF keeps its true aspect ratio inside the masonry
+   column. No object-fit needed — the tile shrink-wraps the image. */
+.chat-gif-tile img { width: 100%; height: auto; display: block; }
 .chat-gif-loading,
 .chat-gif-empty {
-  grid-column: 1 / -1;
+  column-span: all;
   text-align: center;
   color: #5a4a30;
   font-size: 0.82rem;
