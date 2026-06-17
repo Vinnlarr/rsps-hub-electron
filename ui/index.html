@@ -18,9 +18,9 @@
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
   font-src 'self' https://fonts.gstatic.com data:;
   img-src 'self' data: blob: https:;
-  media-src 'self' https://api.therspshub.com https://therspshub.com blob:;
+  media-src 'self' https://api.therspshub.com https://therspshub.com https://*.r2.dev blob:;
   connect-src 'self' http://localhost:7890 https://api.therspshub.com https://therspshub.com;
-  frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com;
+  frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://rumble.com https://*.rumble.com;
   object-src 'none';
   base-uri 'self';
 ">
@@ -31,6 +31,7 @@
 <link rel="stylesheet" href="leaderboard.css">
 <link rel="stylesheet" href="stats.css">
 <link rel="stylesheet" href="hubstore.css">
+<link rel="stylesheet" href="videos.css">
 <link rel="stylesheet" href="hubstore-fx2.css">
 <link rel="stylesheet" href="hubstore-borders.css">
 <link rel="stylesheet" href="hubstore-namecolors.css">
@@ -56,6 +57,7 @@
   <nav class="nav-tabs">
     <div class="nav-tab" data-tab="news">NEWS</div>
     <div class="nav-tab active" data-tab="store">SERVERS</div>
+    <div class="nav-tab" data-tab="videos">VIDEOS</div>
     <div class="nav-tab" data-tab="library">LIBRARY</div>
     <div class="nav-tab nav-tab-hubstore" data-tab="hubstore">
       <svg class="nav-coin" viewBox="0 0 64 64" aria-hidden="true">
@@ -410,6 +412,7 @@
 <script src="leaderboard.js"></script>
 <script src="stats.js"></script>
 <script src="hubstore.js"></script>
+<script src="videos.js"></script>
 <script src="onboarding.js"></script>
 <script src="force-update.js"></script>
 </body>

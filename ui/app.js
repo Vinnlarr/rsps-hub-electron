@@ -2151,6 +2151,14 @@ async function renderAltContent(tab, el) {
       el.innerHTML = '<p class="loading-msg">Loading Hub Store...</p>';
     }
   }
+
+  else if (tab === 'videos') {
+    if (window.renderVideos) {
+      window.renderVideos(el);
+    } else {
+      el.innerHTML = '<p class="loading-msg">Loading Videos...</p>';
+    }
+  }
 }
 
 // ── THEMED CONFIRM ────────────────────────────────────────────────────────
@@ -4460,6 +4468,11 @@ window.refreshChatGifPickers = function () {
     const input = row.querySelector('.dm-input');
     if (input) attachGifPicker(row, input);
   });
+  // Video comment box reuses the same picker.
+  document.querySelectorAll('.vid-comment-form').forEach(row => {
+    const input = row.querySelector('.vid-comment-input');
+    if (input) attachGifPicker(row, input);
+  });
 };
 
 // Build a Giphy GIF picker that opens above the chat input. Inserts the
@@ -4548,6 +4561,12 @@ function attachGifPicker(inputRowEl, inputEl) {
     search('trending');
   });
 }
+
+// Expose the GIF helpers so other modules (e.g. videos.js comment box) can
+// reuse the exact same picker, ownership gate, and inline-GIF rendering.
+window.ownsGifSupport = ownsGifSupport;
+window.attachGifPicker = attachGifPicker;
+window.renderChatBody = renderChatBody;
 
 function renderGroupChat(el) {
   // Group chat as a feature was stripped pre-launch — the only working room
@@ -5010,7 +5029,7 @@ function showServerDetail(server) {
             <div class="sd-section">
               <h3 class="sd-section-title">TRAILER</h3>
               <div class="sd-trailer-wrap">
-                <iframe src="${escAttr(embed)}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                <iframe src="${escAttr(embed)}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
               </div>
             </div>`;
         })()}

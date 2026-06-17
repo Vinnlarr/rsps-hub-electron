@@ -25,3 +25,6 @@ scripts/*
 *.key
 credentials*
 NEW_CREDENTIALS*
+
+# Local mirror of VPS PHP endpoints (deployed via scp; not part of the app).
+_vps_videos/
