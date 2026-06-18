@@ -20,7 +20,7 @@
   img-src 'self' data: blob: https:;
   media-src 'self' https://api.therspshub.com https://therspshub.com https://*.r2.dev blob:;
   connect-src 'self' http://localhost:7890 https://api.therspshub.com https://therspshub.com;
-  frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://rumble.com https://*.rumble.com;
+  frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://rumble.com https://*.rumble.com https://therspshub.com https://player.kick.com https://*.kick.com https://player.twitch.tv;
   object-src 'none';
   base-uri 'self';
 ">
@@ -244,6 +244,7 @@
           <button class="custom-select-btn" id="custom-sort-btn">Players (High → Low)</button>
           <div class="custom-select-dropdown">
             <div class="custom-select-option selected" data-value="players">Players (High → Low)</div>
+            <div class="custom-select-option" data-value="votes">Most Voted</div>
             <div class="custom-select-option" data-value="rating">Highest Rated</div>
             <div class="custom-select-option" data-value="reviews">Most Reviewed</div>
             <div class="custom-select-option" data-value="recent">Recently Added</div>

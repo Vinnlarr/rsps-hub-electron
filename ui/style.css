@@ -2325,6 +2325,66 @@ body.is-mac .title-bar { padding-left: 80px; }
 .fav-btn:hover { border-color: #c8a840; color: #c8a840; }
 .fav-btn.active { border-color: #c8a840; color: #f0c060; background: linear-gradient(180deg, #2e2808, #1e1a06); }
 
+/* Vote button — sits under the favourite button in the card actions column. */
+/* Favourite star, top-right corner of the card banner. */
+.banner-fav {
+  position: absolute;
+  top: 6px; right: 6px;
+  z-index: 3;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(200,168,64,0.4);
+  border-radius: 6px;
+  color: #c8a840;
+  font-size: 1.05rem; line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.banner-fav:hover { background: rgba(0,0,0,0.72); border-color: #f4d77c; color: #f4d77c; transform: scale(1.08); }
+.banner-fav.active { color: #ffd34d; border-color: #ffd34d; background: rgba(40,30,8,0.72); }
+/* Tooltip is handled by the global data-tip system (music.js) — no custom
+   ::after here, or it shows twice. The data-tip attribute is all that's needed. */
+
+.vote-btn {
+  position: relative;
+  width: 112px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: linear-gradient(180deg, #2a1e0c, #1d1407);
+  border: 1px solid #6b5228;
+  border-radius: 3px;
+  color: #d8a94a;
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.vote-btn .vote-timer { font-size: 0.7rem; }
+/* Tooltip handled by the global data-tip system (music.js) — no custom ::after. */
+.vote-btn:hover { border-color: #ffb03a; color: #ffd070; background: linear-gradient(180deg, #3a2a0e, #241a08); }
+.vote-btn:active { transform: translateY(1px); }
+.vote-btn .vote-count {
+  background: rgba(255, 176, 58, 0.18);
+  color: #ffce7a;
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.vote-btn.voted, .vote-btn:disabled {
+  color: #6fae6f;
+  border-color: #2f4a2f;
+  cursor: default;
+  background: linear-gradient(180deg, #14200f, #0e1609);
+}
+.vote-btn.voted:hover { border-color: #2f4a2f; color: #6fae6f; }
+
 /* ══════════════════════════════
    ALT CONTENT PANEL
 ══════════════════════════════ */
@@ -4442,6 +4502,25 @@ body.is-mac .title-bar { padding-left: 80px; }
 .card-stars-num   { color: #e0c87a; font-weight: 700; font-size: 0.82rem; font-family: 'Cinzel', serif; }
 .card-stars-count { color: #6a5a38; font-size: 0.74rem; }
 
+/* Right-aligned stat group on the tags row: rating + always-visible vote count. */
+.card-tags-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.card-tags-right .card-stars-row { margin-left: 0; padding-left: 0; }
+.card-votes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-family: 'Cinzel', serif;
+  color: #d8a94a;
+}
+
 /* Smart badges in top-left of banner */
 .card-badges {
   position: absolute;
@@ -4813,24 +4892,7 @@ body.is-mac .title-bar { padding-left: 80px; }
 .news-tb-btn svg { display: block; }
 .news-tb-hint { color: #6a5a38; font-size: 0.72rem; margin-left: auto; padding-right: 6px; }
 
-/* Themed tooltip — replaces browser-default white box */
-.news-tb-btn[data-tip] { position: relative; }
-.news-tb-btn[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%; transform: translateX(-50%);
-  background: #14100a; color: #e0c87a;
-  border: 1px solid #3a2e14; border-radius: 3px;
-  padding: 4px 8px; font-size: 0.72rem;
-  white-space: nowrap;
-  opacity: 0; pointer-events: none;
-  transition: opacity 0.15s;
-  z-index: 1100;
-  font-family: 'Inter', sans-serif; font-weight: 500;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-}
-.news-tb-btn[data-tip]:hover::after { opacity: 1; }
+/* Tooltip handled by the global data-tip system (music.js #rh-tooltip). */
 .news-body-area { border-top-left-radius: 0; border-top-right-radius: 0; min-height: 180px; }
 
 /* WYSIWYG editor — looks like the textarea, behaves contentEditable. */

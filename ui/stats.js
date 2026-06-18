@@ -1152,6 +1152,8 @@
 
     // Hours played
     const hoursPlayed = Math.floor((data.totalMinutes || 0) / 60);
+    const totalVotes  = data.totalVotes || 0;
+    const serversTried = data.serversPlayed || (data.topServers || []).length || 0;
 
     const displayName = isSelf
       ? (window.state?.user?.username || data.username || 'Player')
@@ -1406,6 +1408,16 @@
             <div class="sm-hero-stat-icon" style="font-size:1.7rem">🏆</div>
             <div class="sm-hero-stat-num">${earnedAch} / ${totalAch}</div>
             <div class="sm-hero-stat-lbl">Achievements</div>
+          </div>
+          <div class="sm-hero-stat">
+            <div class="sm-hero-stat-icon" style="font-size:1.7rem">🗳️</div>
+            <div class="sm-hero-stat-num">${totalVotes.toLocaleString()}</div>
+            <div class="sm-hero-stat-lbl">Votes Cast</div>
+          </div>
+          <div class="sm-hero-stat">
+            <div class="sm-hero-stat-icon" style="font-size:1.7rem">🎮</div>
+            <div class="sm-hero-stat-num">${serversTried.toLocaleString()}</div>
+            <div class="sm-hero-stat-lbl">Servers Tried</div>
           </div>
         </div>
       </div>

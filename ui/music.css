@@ -840,7 +840,10 @@
   padding: 6px 11px;
   border: 1px solid #6b5228;
   border-radius: 3px;
-  white-space: nowrap;
+  white-space: normal;
+  max-width: 280px;
+  line-height: 1.5;
+  text-align: center;
   opacity: 0;
   transform: translate(-50%, 4px);
   transition: opacity 0.18s ease, transform 0.18s ease;

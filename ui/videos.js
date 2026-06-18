@@ -32,22 +32,34 @@
   let filterCreator = null;   // null = all creators
   let filterShorts  = false;  // true = shorts only
   let sortMode = 'recent';    // 'recent' | 'likes' | 'views' — server re-orders
+  let loadError = false;      // true when the last fetch failed (vs genuinely empty)
   let liveMode = false;       // true = showing the Live viewer instead of the grid
   let liveCreator = null;     // which creator's stream is loaded in Live mode
   let hostEl = null;          // the #alt-content host, for repaints
 
   function isStaff() { return !!(window.state && window.state.user && (window.state.user.isStaff || window.state.user.is_staff)); }
 
+  // Fetch with a few quick retries so a transient server blip (e.g. a backend
+  // restart) doesn't strand the tab on an empty state. Only after all attempts
+  // fail do we flag loadError, which paintGrid turns into a Retry prompt rather
+  // than the misleading "No videos yet" message.
   async function fetchVideos() {
-    try {
-      const data = await window.hub.get('/api/videos/list?limit=50&sort=' + encodeURIComponent(sortMode));
-      videos = (data && Array.isArray(data.videos)) ? data.videos : [];
-      creatorChannels = (data && Array.isArray(data.creators)) ? data.creators : [];
-    } catch (e) {
-      console.warn('[videos] list failed', e);
-      videos = [];
-      creatorChannels = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const data = await window.hub.get('/api/videos/list?limit=50&sort=' + encodeURIComponent(sortMode));
+        videos = (data && Array.isArray(data.videos)) ? data.videos : [];
+        creatorChannels = (data && Array.isArray(data.creators)) ? data.creators : [];
+        loadError = false;
+        return;
+      } catch (e) {
+        console.warn('[videos] list failed (attempt ' + (attempt + 1) + '/3)', e);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      }
     }
+    // All retries failed — keep any videos we already had on screen, but flag
+    // the error so the user sees a Retry option instead of an empty feed.
+    loadError = true;
+    creatorChannels = creatorChannels || [];
   }
 
   function thumbHtml(v) {
@@ -206,26 +218,39 @@
     if (liveBtn) liveBtn.addEventListener('click', () => { liveMode = !liveMode; buildFilters(el); paintGrid(el); });
   }
 
+  // Build the embed URL for a live channel. YouTube embeds directly (the
+  // Referer shim in main.js makes its file:// embed play). Kick and Twitch
+  // reject the launcher's file:// origin, so they route through a tiny wrapper
+  // page served from therspshub.com (a real https origin) which holds their
+  // player. That makes them play reliably without the file:// limitation.
+  function liveEmbedUrl(c) {
+    if (c.platform === 'youtube') {
+      return `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(c.channel_id)}&origin=https://therspshub.com&autoplay=1`;
+    }
+    return `https://therspshub.com/live-embed.php?platform=${encodeURIComponent(c.platform)}&channel=${encodeURIComponent(c.channel_id)}`;
+  }
+  function platformDot(p) { return p === 'kick' ? '🟢' : p === 'twitch' ? '🟣' : '🔴'; }
+
   // The Live viewer: creator tabs + an embed of the picked channel's current
-  // live stream. No live-detection needed — YouTube's live_stream embed plays
-  // the active stream or shows an offline screen.
+  // live stream. No live-detection needed; the platform's embed plays the
+  // active stream or shows an offline screen.
   function renderLive(grid) {
     // Break out of the card-grid layout so the player can fill the page.
     grid.style.display = 'block';
-    const live = creatorChannels.filter(c => c.platform === 'youtube');
+    const live = creatorChannels;   // youtube, kick, twitch all supported now
     if (!live.length) { grid.innerHTML = `<div class="vid-empty">No live channels set up yet.</div>`; return; }
     if (!liveCreator || !live.some(c => c.creator === liveCreator)) liveCreator = live[0].creator;
     const cur = live.find(c => c.creator === liveCreator);
-    const embed = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(cur.channel_id)}&origin=https://therspshub.com&autoplay=1`;
+    const embed = liveEmbedUrl(cur);
     grid.innerHTML = `
       <div class="vid-live">
         <div class="vid-live-tabs">
-          ${live.map(c => `<button class="vid-live-tab${c.creator === liveCreator ? ' active' : ''}" data-live-pick="${esc(c.creator)}">${esc(c.creator)}</button>`).join('')}
+          ${live.map(c => `<button class="vid-live-tab${c.creator === liveCreator ? ' active' : ''}" data-live-pick="${esc(c.creator)}">${platformDot(c.platform)} ${esc(c.creator)}</button>`).join('')}
         </div>
         <div class="vid-live-stage">
           <iframe src="${esc(embed)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
         </div>
-        <div class="vid-live-note">Streams play automatically when a creator goes live. If you see an offline message, they're not streaming right now — try another creator above.</div>
+        <div class="vid-live-note">Streams play automatically when a creator goes live. If you see an offline message, they are not streaming right now, try another creator above.</div>
       </div>`;
     grid.querySelectorAll('[data-live-pick]').forEach(t => t.addEventListener('click', () => {
       liveCreator = t.dataset.livePick; renderLive(grid);
@@ -353,6 +378,12 @@
     grid.style.display = '';  // restore the card-grid layout after Live mode
     const list = applyFilters();
     if (!list.length) {
+      if (loadError && !videos.length) {
+        grid.innerHTML = `<div class="vid-empty">Couldn't reach the server. <button class="vid-retry" id="vid-retry">Retry</button></div>`;
+        const rb = grid.querySelector('#vid-retry');
+        if (rb) rb.addEventListener('click', () => render(hostEl));
+        return;
+      }
       grid.innerHTML = `<div class="vid-empty">${videos.length ? 'No videos match this filter.' : 'No videos yet. Be the first to submit one!'}</div>`;
       return;
     }

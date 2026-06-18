@@ -1,5 +1,11 @@
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu, session } = require('electron');
 const { spawn, execSync } = require('child_process');
+
+// If stdout/stderr is a pipe whose reader goes away (e.g. launched from a
+// parent process that closes the pipe), a console.log write throws EPIPE and
+// would crash the whole main process. Swallow that so the app keeps running.
+process.stdout.on('error', err => { if (err && err.code === 'EPIPE') return; });
+process.stderr.on('error', err => { if (err && err.code === 'EPIPE') return; });
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const http = require('http');

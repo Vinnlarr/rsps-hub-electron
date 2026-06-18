@@ -365,6 +365,7 @@ let state = window.state = {
   activeTag:  'All',
   search:     '',
   sortOrder:  'players',
+  votes:      {},   // { serverId: { month_votes, all_votes } } from /api/vote/standings
   favourites: new Set(),
   profile:    { displayName: 'Player', bio: '', visibility: 'online', avatarPath: null },
   playtime:   {},   // { serverName: minutesPlayed }
@@ -1385,6 +1386,7 @@ async function loadServers(opts = {}) {
   }
   if (!quiet) showLoading(false);
   renderServers();
+  fetchVoteStandings();   // populate vote counts, then re-render badges
 
   // Once per session, after the first successful load, scan every already
   // installed server for a newer JAR on the dev's website and silently
@@ -1394,6 +1396,95 @@ async function loadServers(opts = {}) {
     _jarRefreshDone = true;
     setTimeout(refreshInstalledJars, 1500);   // give the UI a beat first
   }
+}
+
+// ── VOTING ──────────────────────────────────────────────────────────────
+// Per-server vote tallies (this month + all-time) drive the "Most Voted" sort
+// and the count on each card. The 12h cooldown is enforced server-side; we
+// also stash it locally so the button reflects it instantly across re-renders.
+async function fetchVoteStandings() {
+  try {
+    const res = await fetch('https://api.therspshub.com/api/vote/standings.php');
+    if (!res.ok) return;
+    const data = await res.json();
+    state.votes = (data && data.standings) || {};
+    renderServers();
+  } catch (e) { /* keep whatever counts we had */ }
+}
+
+function serverVoteCount(server) {
+  const v = state.votes[server.id] || state.votes[String(server.id)];
+  // All-time raw count for the ranking (more meaningful than the monthly
+  // count while vote volume is low; month_votes is still available to swap in).
+  return v ? (v.all_votes || 0) : 0;
+}
+function voteCooldownEnd(server) {
+  const t = parseInt(localStorage.getItem('voteCd:' + server.id) || '0', 10);
+  return t > Date.now() ? t : 0;
+}
+function setVoteCooldown(server, seconds) {
+  localStorage.setItem('voteCd:' + server.id, String(Date.now() + (seconds || 43200) * 1000));
+}
+function fmtVoteRemaining(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h > 0) return h + 'h ' + m + 'm';
+  if (m > 0) return m + 'm';
+  return '<1m';
+}
+// Tick the vote-cooldown timers every 30s; when a 12h cooldown ends, re-render
+// so the card flips back to a votable state.
+setInterval(() => {
+  let expired = false;
+  document.querySelectorAll('.vote-btn.voted[data-vote]').forEach(btn => {
+    const end = parseInt(localStorage.getItem('voteCd:' + btn.dataset.vote) || '0', 10);
+    const rem = end - Date.now();
+    if (rem <= 0) { expired = true; return; }
+    const txt = fmtVoteRemaining(rem);
+    const t = btn.querySelector('.vote-timer');
+    if (t) t.textContent = txt;
+    btn.setAttribute('data-tip', 'Vote again in ' + txt);
+  });
+  if (expired && typeof renderServers === 'function') renderServers();
+}, 30000);
+
+async function castVote(server, btn) {
+  const token = state.user && state.user.token;
+  if (!token) { showToast('Log in to vote for servers.', 'error'); return; }
+  // Ask for the in-game name so the server can match the vote and hand out the
+  // reward, same as the website flow. Remember the last name entered.
+  const remembered = localStorage.getItem('voteIgn') || (state.user && state.user.username) || '';
+  const entered = await promptThemed('Vote for ' + server.name, 'Your in-game name (so the server can give you your reward)', remembered);
+  if (entered === null) return;                 // cancelled
+  const ign = entered.trim();
+  if (!ign) { showToast('Enter your in-game name to vote.', 'error'); return; }
+  localStorage.setItem('voteIgn', ign);
+  if (btn) { btn.disabled = true; btn.textContent = 'Voting…'; }
+  try {
+    const res = await fetch('https://api.therspshub.com/api/vote/cast.php', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_id: server.id, name: ign }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.success) {
+      setVoteCooldown(server, data.cooldown_seconds);
+      const v = state.votes[server.id] || (state.votes[server.id] = { month_votes: 0, all_votes: 0 });
+      v.month_votes = (v.month_votes || 0) + 1;
+      v.all_votes   = (v.all_votes || 0) + 1;
+      showToast('Vote counted for ' + server.name + '!', 'success');
+    } else if (data.code === 'email_unverified') {
+      showToast('Verify your email address to vote from the launcher. You can also vote on the website with a captcha.', 'info');
+    } else if (res.status === 429) {
+      if (data.cooldown_seconds) setVoteCooldown(server, data.cooldown_seconds);
+      showToast(data.error || 'You already voted for this server recently.', 'info');
+    } else {
+      showToast(data.error || 'Could not record your vote.', 'error');
+    }
+  } catch (e) {
+    showToast('Could not vote (network).', 'error');
+  }
+  renderServers();
 }
 
 // One-shot per launcher session — see loadServers() above.
@@ -1530,6 +1621,7 @@ function getFilteredServers() {
 
   // Sort
   if (state.sortOrder === 'players')   list.sort((a, b) => (b.hubPlayers || 0) - (a.hubPlayers || 0));
+  if (state.sortOrder === 'votes')     list.sort((a, b) => serverVoteCount(b) - serverVoteCount(a) || (b.hubPlayers || 0) - (a.hubPlayers || 0));
   // The Java backend serialises these as camelCase (`reviewCount`,
   // `avgRating`). The PHP endpoint uses snake_case but Java's
   // ServerProfile maps with @SerializedName and re-emits camelCase. Reading
@@ -1636,6 +1728,7 @@ function buildServerCard(server) {
         ${isActive ? '<span class="card-badge b-hot">🔥 ACTIVE</span>' : ''}
       </div>` : ''}
       ${buildLiveBadgeHTML(server)}
+      <button class="banner-fav${isFav ? ' active' : ''}" data-name="${escAttr(server.name)}" data-tip="${isFav ? 'Unfavourite' : 'Favourite'}">${isFav ? '★' : '☆'}</button>
     </div>
     <div class="card-info">
       <div class="card-header">
@@ -1667,13 +1760,19 @@ function buildServerCard(server) {
       <p class="card-desc">${escHtml(truncate(server.description || '', 200))}</p>
       <div class="card-tags">
         ${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}
-        ${server.reviewCount > 0 ? `
-          <span class="card-stars-row">
-            <span class="card-stars">${starsFromRating(server.avgRating)}</span>
-            <span class="card-stars-num">${(+server.avgRating).toFixed(1)}</span>
-            <span class="card-stars-count">· ${server.reviewCount}</span>
-          </span>
-        ` : ''}
+        <span class="card-tags-right">
+          ${server.reviewCount > 0 ? `
+            <span class="card-stars-row">
+              <span class="card-stars">${starsFromRating(server.avgRating)}</span>
+              <span class="card-stars-num">${(+server.avgRating).toFixed(1)}</span>
+              <span class="card-stars-count">· ${server.reviewCount}</span>
+            </span>
+          ` : ''}
+          ${(() => {
+            const vc = serverVoteCount(server);
+            return vc > 0 ? `<span class="card-votes" data-tip="${vc} all-time vote${vc === 1 ? '' : 's'}">🗳 ${vc.toLocaleString()}</span>` : '';
+          })()}
+        </span>
       </div>
     </div>
     <div class="card-actions">
@@ -1686,9 +1785,16 @@ function buildServerCard(server) {
              ${isDownloaded ? 'PLAY' : 'INSTALL'}
            </button>`
       }
-      <button class="fav-btn ${isFav ? 'active' : ''}" data-name="${escAttr(server.name)}">
-        ${isFav ? '★ Favourited' : '☆ Favourite'}
-      </button>
+      ${(() => {
+        const vc    = serverVoteCount(server);
+        const cdEnd = voteCooldownEnd(server);
+        const onCd  = cdEnd > Date.now();
+        const rem   = onCd ? fmtVoteRemaining(cdEnd - Date.now()) : '';
+        return `<button class="vote-btn ${onCd ? 'voted' : ''}" data-vote="${server.id}" ${onCd ? 'disabled' : ''}
+                  data-tip="${onCd ? 'Vote again in ' + rem : 'Cast your vote'}">
+                  ${onCd ? `<span class="vote-timer">${rem}</span>` : `Vote${vc > 0 ? ` <span class="vote-count">${vc}</span>` : ''}`}
+                </button>`;
+      })()}
     </div>
   `;
 
@@ -1749,8 +1855,9 @@ function buildServerCard(server) {
     }
   });
 
-  // Favourite toggle
-  card.querySelector('.fav-btn').addEventListener('click', async e => {
+  // Favourite toggle (star on the banner)
+  const favEl = card.querySelector('.banner-fav');
+  if (favEl) favEl.addEventListener('click', async e => {
     e.stopPropagation();
     try {
       await api.toggleFavourite(server.name);
@@ -1759,6 +1866,12 @@ function buildServerCard(server) {
       renderServers();
     } catch (err) { console.error(err); }
   });
+
+  // Vote
+  const voteBtn = card.querySelector('.vote-btn');
+  if (voteBtn && !voteBtn.disabled) {
+    voteBtn.addEventListener('click', e => { e.stopPropagation(); castVote(server, voteBtn); });
+  }
 
   return card;
 }
@@ -7419,6 +7532,62 @@ curl_close($ch);</pre>
       </div>
     </div>` : ''}
 
+    ${s.apiKey ? `
+    <div class="dp-form-section">
+      <div class="dp-form-section-hdr">🗳️ Vote Rewards API</div>
+      <div class="dp-field">
+        <label class="dp-label">Your vote link <span class="dp-hint">— put this on a "Vote" button in-game</span></label>
+        <div class="dp-img-row">
+          <input class="dp-input" id="dp-votelink" type="text" readonly value="https://therspshub.com/vote.php?s=${s.id}&name=PLAYER_NAME" style="font-family:monospace;font-size:11px">
+          <button class="dp-file-btn" id="dp-votelink-copy" title="Copy link">📋</button>
+        </div>
+        <div class="dp-size-hint">Swap <b>PLAYER_NAME</b> for the player's in-game name. They vote on the Hub (once per 12h), and votes rank you in the launcher's <b>Most Voted</b> sort. To give them an in-game reward, use the two calls below with the same API key.</div>
+      </div>
+      <div class="dp-field">
+        <label class="dp-label">1. Check for an unclaimed vote <span class="dp-hint">(poll when the player clicks Vote in-game)</span></label>
+        <pre class="dp-snippet">curl "https://api.therspshub.com/api/vote/check.php?name=PLAYER_NAME" \\
+  -H "X-Server-Key: ${escHtml(s.apiKey)}" \\
+  -H "X-Server-Name: ${escHtml(s.name)}"
+# -> {"has_unclaimed_vote":true,"vote_id":123,"voted_at":"..."}</pre>
+      </div>
+      <div class="dp-field">
+        <label class="dp-label">2. Give the reward, then mark it claimed <span class="dp-hint">(so it is never rewarded twice)</span></label>
+        <pre class="dp-snippet">curl -X POST "https://api.therspshub.com/api/vote/claim.php" \\
+  -H "X-Server-Key: ${escHtml(s.apiKey)}" \\
+  -H "X-Server-Name: ${escHtml(s.name)}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"PLAYER_NAME"}'
+# -> {"success":true,"claimed":1}</pre>
+      </div>
+      <div class="dp-field">
+        <label class="dp-label">Example: Java OkHttp <span class="dp-hint">(drop into your ::vote command)</span></label>
+        <pre class="dp-snippet">OkHttpClient http = new OkHttpClient();
+String player = c.getUsername();
+
+Request check = new Request.Builder()
+    .url("https://api.therspshub.com/api/vote/check.php?name=" + player)
+    .header("X-Server-Key", "${escHtml(s.apiKey)}")
+    .header("X-Server-Name", "${escHtml(s.name)}")
+    .build();
+
+try (Response res = http.newCall(check).execute()) {
+    if (res.body().string().contains("\\"has_unclaimed_vote\\":true")) {
+        giveVoteReward(c); // your reward (vote points, mbox, etc.)
+
+        RequestBody body = RequestBody.create(
+            "{\\"name\\":\\"" + player + "\\"}", MediaType.get("application/json"));
+        http.newCall(new Request.Builder()
+            .url("https://api.therspshub.com/api/vote/claim.php")
+            .header("X-Server-Key", "${escHtml(s.apiKey)}")
+            .header("X-Server-Name", "${escHtml(s.name)}")
+            .post(body).build()).execute().close();
+    } else {
+        c.sendMessage("Vote at therspshub.com first, then ::vote again.");
+    }
+}</pre>
+      </div>
+    </div>` : ''}
+
     <div class="dp-form-section">
       <div class="dp-form-section-hdr">🏷 Tags</div>
       <div class="dp-tags-grid">
@@ -7593,6 +7762,10 @@ curl_close($ch);</pre>
   el.querySelector('#dp-apikey-copy')?.addEventListener('click', () => {
     const inp = el.querySelector('#dp-apikey');
     if (inp?.value) copyToClipboard(inp.value, el.querySelector('#dp-apikey-copy'));
+  });
+  el.querySelector('#dp-votelink-copy')?.addEventListener('click', () => {
+    const inp = el.querySelector('#dp-votelink');
+    if (inp?.value) copyToClipboard(inp.value, el.querySelector('#dp-votelink-copy'));
   });
   // Click any snippet block to copy its full contents.
   el.querySelectorAll('.dp-snippet').forEach(pre => {

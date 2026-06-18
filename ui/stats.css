@@ -30,37 +30,8 @@
   box-shadow: inset 0 1px 0 rgba(240,192,96,0.15);
 }
 
-/* ── Palette-matched tooltip for achievements (data-tip) ─ */
+/* Achievement tooltip handled by the global data-tip system (music.js). */
 .sd-badge { position: relative; }
-.sd-badge[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  background: linear-gradient(180deg, #1a1408 0%, #0e0a06 100%);
-  border: 1px solid #6b5228;
-  color: #e0c87a;
-  font-family: 'Cinzel', serif;
-  font-size: 0.78rem;
-  font-style: normal;
-  letter-spacing: 0.3px;
-  padding: 7px 11px;
-  border-radius: 3px;
-  max-width: 280px;
-  width: max-content;
-  white-space: normal;
-  line-height: 1.4;
-  pointer-events: none;
-  opacity: 0;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(240,192,96,0.15);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-  z-index: 50000;
-}
-.sd-badge[data-tip]:hover::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
 
 /* ── Hub-wide achievement badges ──────────────────────── */
 /* Achievement progress hero — replaces the tiny "4 / 112 unlocked" subhead
@@ -369,33 +340,8 @@
 }
 /* Palette-matched hover tooltip for heatmap cells (data-tip instead of
    native title= which renders as an OS-white box). */
+/* Heatmap-cell tooltip handled by the global data-tip system (music.js). */
 .sd-cell[data-tip] { position: relative; }
-.sd-cell[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%) translateY(3px);
-  background: linear-gradient(180deg, #1a1408 0%, #0e0a06 100%);
-  border: 1px solid #6b5228;
-  color: #e0c87a;
-  font-family: 'Cinzel', serif;
-  font-size: 0.74rem;
-  letter-spacing: 0.3px;
-  padding: 5px 9px;
-  border-radius: 3px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.75), inset 0 1px 0 rgba(240,192,96,0.12);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-  z-index: 50000;
-}
-.sd-cell[data-tip]:hover::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0) scale(0.72);
-  transform-origin: bottom center;
-}
 .sd-cell.sd-l0 { background: #1a1408; }
 .sd-cell.sd-l1 { background: #3a2a10; border-color: rgba(200,168,64,0.15); }
 .sd-cell.sd-l2 { background: #5a4418; border-color: rgba(200,168,64,0.3); }
@@ -970,18 +916,19 @@
    like 992,000 doesn't crowd long usernames or trigger ellipsis on the
    name itself. */
 .sm-hero-stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  flex-shrink: 0;
   margin-left: auto;
+  width: 410px;
 }
 .sm-hero-stat {
   background: #2a2418;
   border: 1px solid #3a2e14;
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 12px 10px;
   text-align: center;
-  min-width: 92px;
+  min-width: 0;
 }
 .sm-hero-stat-icon {
   height: 28px; margin-bottom: 3px;
@@ -1006,7 +953,7 @@
    even when a 6-letter title sits beside it. */
 .sm-hero-info {
   flex: 1;
-  min-width: 0;
+  min-width: 210px;
   overflow: visible;
 }
 
