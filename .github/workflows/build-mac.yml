@@ -52,40 +52,48 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install
 
-      - name: Ensure macOS JRE is present
-        # The bundled mac JRE lives at java-backend-mac/jre. We expect it to
-        # already be committed. If it's not, download it from Adoptium.
-        run: |
-          if [ ! -x "java-backend-mac/jre/bin/java" ]; then
-            echo "Mac JRE missing, downloading Temurin 17..."
-            mkdir -p java-backend-mac
-            curl -L 'https://api.adoptium.net/v3/binary/latest/17/ga/mac/x64/jre/hotspot/normal/eclipse' -o /tmp/jre.tar.gz
-            tar -xzf /tmp/jre.tar.gz -C java-backend-mac
-            mv java-backend-mac/jdk-17*-jre/Contents/Home java-backend-mac/jre
-            rm -rf java-backend-mac/jdk-17*-jre /tmp/jre.tar.gz
-          fi
-          ls -la java-backend-mac/jre/bin/java
-
       - name: Make scripts executable
         # tar preserves +x but git checkout sometimes doesn't, so be explicit
         run: |
           chmod +x java-backend/bin/RSPSHub || true
-          chmod +x java-backend-mac/jre/bin/* || true
-          chmod +x java-backend-mac/jre/lib/jspawnhelper || true
           chmod +x java-source/gradlew || true
 
       - name: Build Java jar (prebuild hook)
-        # prebuild-jar.js runs gradle in the sibling repo. Running it as a
-        # separate step makes failures easier to read in the Actions log.
+        # Arch-independent: Java bytecode is identical for x64 and arm64, so we
+        # build the jar once and reuse it for both DMG builds below. Each build
+        # then bundles its OWN arch-matching JRE so the app runs native, not
+        # under Rosetta.
         env:
           RSPS_HUB_JAVA_SRC: ${{ github.workspace }}/java-source
         run: node scripts/prebuild-jar.js
 
-      - name: Build macOS DMG (unsigned, x64)
+      - name: Build x64 DMG (unsigned)
         env:
-          # electron-builder needs these set even when not signing
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac dmg --x64 --publish=never
+        run: |
+          echo "Staging x64 JRE..."
+          rm -rf java-backend-mac/jre && mkdir -p java-backend-mac
+          curl -L 'https://api.adoptium.net/v3/binary/latest/17/ga/mac/x64/jre/hotspot/normal/eclipse' -o /tmp/jre-x64.tar.gz
+          tar -xzf /tmp/jre-x64.tar.gz -C java-backend-mac
+          mv java-backend-mac/jdk-17*-jre/Contents/Home java-backend-mac/jre
+          rm -rf java-backend-mac/jdk-17*-jre /tmp/jre-x64.tar.gz
+          chmod +x java-backend-mac/jre/bin/* || true
+          chmod +x java-backend-mac/jre/lib/jspawnhelper || true
+          npx electron-builder --mac dmg --x64 --publish=never
+
+      - name: Build arm64 DMG (unsigned, Apple Silicon)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          echo "Staging arm64 (Apple Silicon) JRE..."
+          rm -rf java-backend-mac/jre && mkdir -p java-backend-mac
+          curl -L 'https://api.adoptium.net/v3/binary/latest/17/ga/mac/aarch64/jre/hotspot/normal/eclipse' -o /tmp/jre-arm64.tar.gz
+          tar -xzf /tmp/jre-arm64.tar.gz -C java-backend-mac
+          mv java-backend-mac/jdk-17*-jre/Contents/Home java-backend-mac/jre
+          rm -rf java-backend-mac/jdk-17*-jre /tmp/jre-arm64.tar.gz
+          chmod +x java-backend-mac/jre/bin/* || true
+          chmod +x java-backend-mac/jre/lib/jspawnhelper || true
+          npx electron-builder --mac dmg --arm64 --publish=never
 
       - name: List build output
         run: ls -la dist/ | head -20
