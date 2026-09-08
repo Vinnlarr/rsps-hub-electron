@@ -568,9 +568,19 @@
   font-size: 0.95rem;
 }
 .vid-player-close:hover { border-color: #c8a840; color: #ffd070; }
-.vid-player-frame { aspect-ratio: 16 / 9; background: #000; }
+.vid-player-frame { aspect-ratio: 16 / 9; background: #000; position: relative; }
 .vid-player-frame iframe,
 .vid-player-frame video { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+/* Auto-backup banner — overlays the top of the player without disturbing 16:9. */
+.vid-backup-note {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 2;
+  padding: 7px 12px; font-size: 0.8rem; font-weight: 600; text-align: center;
+  color: #ffd070; background: rgba(20, 16, 8, 0.82);
+  border-bottom: 1px solid var(--accent, #c8a840);
+  backdrop-filter: blur(3px); pointer-events: none;
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+.vid-backup-note.hide { opacity: 0; transform: translateY(-100%); }
 .vid-player-info { padding: 12px 16px 8px; }
 .vid-player-title { font-weight: 600; color: #ece3d0; font-size: 1rem; }
 .vid-player-sub { color: #8a7a5a; font-size: 0.82rem; margin-top: 4px; }
@@ -624,6 +634,23 @@
   cursor: pointer;
 }
 .vid-backup-btn:hover { border-color: #c8a840; color: #ffd070; }
+
+/* Creator dashboard: stats banner shown when viewing your own videos. */
+.vid-chip-mine { border-color: var(--accent, #c8a840) !important; }
+.vid-mystats { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 6px; }
+.vid-mystats .vms-tile { background: #14100a; border: 1px solid #2a2e39; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; }
+.vid-mystats .vms-n { font-family: 'Cinzel', serif; font-size: 1.5rem; font-weight: 900; color: var(--accent-hot, #ffd070); }
+.vid-mystats .vms-l { font-size: 0.72rem; color: #8a7a5a; text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+@media (max-width: 640px) { .vid-mystats { grid-template-columns: repeat(2, 1fr); } }
+
+/* Play-now button in the video player: jump into the tagged server. */
+.vid-playnow-btn {
+  background: linear-gradient(180deg, var(--accent-hot, #ffd070), var(--accent, #c8a840));
+  color: #241a08; font-weight: 800; border: 0; border-radius: 6px;
+  padding: 10px 18px; font-size: 0.9rem; cursor: pointer; letter-spacing: .3px;
+  box-shadow: 0 4px 14px rgba(200,168,64,0.3); transition: transform .12s;
+}
+.vid-playnow-btn:hover { transform: translateY(-1px); }
 
 /* ── SUBMIT MODAL ──────────────────────────────────────────────────── */
 .vid-modal-overlay {
@@ -684,6 +711,7 @@
   box-sizing: border-box;
 }
 .vid-field textarea { min-height: 76px; resize: vertical; }
+.vid-field-hint { font-size: 0.78rem; color: #8a7a5a; margin-top: 5px; }
 .vid-field input:focus,
 .vid-field textarea:focus { border-color: #c8a840; }
 

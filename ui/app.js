@@ -361,7 +361,7 @@ async function logoutCleanup() {
 let state = window.state = {
   servers:    [],
   user:       null,
-  activeTab:  'store',
+  activeTab:  'home',
   activeTag:  'All',
   search:     '',
   sortOrder:  'players',
@@ -542,6 +542,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       startRoomUnreadPolling();
       startAnnouncementPolling();
       startNewsNotificationPolling();
+      startNewVideoPolling();
       startPlaytimeRefresh();
       // Prefetch tab data so Stats/Friends/Chat open instantly from cache.
       prefetchTabs();
@@ -647,6 +648,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (window.splashDone) window.splashDone();
   // Show auth screen if not logged in after splash
   if (!state.user) showAuthScreen();
+  // Land on the Home dashboard once booted and signed in.
+  else { try { setActiveNavTab('home'); } catch (_) {} }
 
   // Wire the force-update modal so any 426 from the hub API triggers
   // it. Has to be initialised AFTER preload's window.hub is available,
@@ -2136,6 +2139,233 @@ function setupSidebarTabs() {
 
 // ── ALT CONTENT (Library / News / panel content) ─────────────────────────────
 
+// ── Home dashboard effects ──
+function homeGreeting() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12)  return 'Good morning';
+  if (h >= 12 && h < 17) return 'Good afternoon';
+  if (h >= 17 && h < 22) return 'Good evening';
+  return 'Burning the midnight oil';
+}
+function homeReducedMotion() {
+  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
+}
+function homeCountUp(node, to, dur) {
+  if (!node) return; to = to | 0;
+  if (to <= 0 || homeReducedMotion()) { node.textContent = to; return; }
+  const start = performance.now();
+  (function step(t) {
+    const p = Math.min(1, (t - start) / dur);
+    node.textContent = Math.round((1 - Math.pow(1 - p, 3)) * to);
+    if (p < 1) requestAnimationFrame(step);
+  })(start);
+}
+// Drifting gold embers behind the home hero. Auto-stops when the canvas leaves
+// the DOM (tab switch), so it never leaks a running animation loop.
+function startHomeEmbers(canvas) {
+  if (!canvas || !canvas.getContext || homeReducedMotion()) return;
+  const ctx = canvas.getContext('2d');
+  const cs = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c8a840';
+  const m = /^#?([0-9a-f]{6})$/i.exec(cs);
+  const rgb = m ? [parseInt(m[1].slice(0,2),16), parseInt(m[1].slice(2,4),16), parseInt(m[1].slice(4,6),16)] : [200,168,64];
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0, raf = 0, parts = [];
+  function resize() { const r = canvas.getBoundingClientRect(); W = canvas.width = Math.max(1, r.width * dpr); H = canvas.height = Math.max(1, r.height * dpr); }
+  function spawn(seed) { return { x: Math.random()*W, y: seed ? Math.random()*H : H + Math.random()*40*dpr, r: (1+Math.random()*2.2)*dpr, s: (0.15+Math.random()*0.55)*dpr, drift: (Math.random()-0.5)*0.4*dpr, life: Math.random()*6.28, flick: 0.4+Math.random()*0.6 }; }
+  resize();
+  for (let i=0;i<48;i++) parts.push(spawn(true));
+  function frame() {
+    if (!document.body.contains(canvas)) { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); return; }
+    ctx.clearRect(0,0,W,H);
+    for (let i=0;i<parts.length;i++) {
+      const p = parts[i]; p.y -= p.s; p.x += p.drift; p.life += 0.03;
+      if (p.y < -12*dpr) { parts[i] = spawn(false); continue; }
+      const a = (0.10 + 0.10 * Math.sin(p.life)) * p.flick;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283);
+      ctx.fillStyle = 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+','+a+')';
+      ctx.shadowColor = 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.55)'; ctx.shadowBlur = 8*dpr;
+      ctx.fill();
+    }
+    raf = requestAnimationFrame(frame);
+  }
+  window.addEventListener('resize', resize);
+  raf = requestAnimationFrame(frame);
+}
+
+// Subtle 3D tilt toward the cursor for a tactile, premium feel.
+function attachTilt(node, max) {
+  if (!node || homeReducedMotion()) return;
+  max = max || 8;
+  node.addEventListener('mousemove', (e) => {
+    const r = node.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5;
+    const py = (e.clientY - r.top) / r.height - 0.5;
+    node.style.transform = 'perspective(800px) rotateY(' + (px * max).toFixed(2) + 'deg) rotateX(' + (-py * max).toFixed(2) + 'deg) translateY(-2px)';
+  });
+  node.addEventListener('mouseleave', () => { node.style.transform = ''; });
+}
+
+// Living home dashboard: greeting + live pulse, jump-back-in, friends online,
+// recent activity, and quick access to your servers.
+async function renderHome(el) {
+  const u = state.user || {};
+  const name = state.profile?.displayName || u.username || 'Adventurer';
+  const stats = window.DATA_CACHE?.stats?.data || {};
+  const streak = window.state?.streak?.current || stats.loginStreak || stats.streak || 0;
+  // Current user's equipped cosmetics (name colour/effect), same source the
+  // Stats page uses: /api/stats/me -> .equipped. Cache first, fetch as fallback.
+  let homeEquipped = stats.equipped || state.equipped || null;
+  if (homeEquipped) state.equipped = homeEquipped;
+  const pt = state.playtime || {};
+  let topName = null, topMin = 0;
+  for (const n in pt) { if (pt[n] > topMin) { topMin = pt[n]; topName = n; } }
+  const jump = topName ? (state.servers || []).find(s => s.name === topName) : null;
+  const favs = (state.servers || []).filter(s => state.favourites?.has?.(s.name)).slice(0, 8);
+  const jLvl  = jump ? calcLevel(topMin) : 0;
+  const jProg = jump ? calcXpProgress(topMin) : 0;
+  const jRank = jump ? getRankName(jLvl) : '';
+  const jArt  = jump ? (jump.cardBannerUrl || jump.bannerUrl || '') : '';
+
+  el.innerHTML = `
+    <div class="home-wrap">
+      <canvas class="home-fx" id="home-fx" aria-hidden="true"></canvas>
+      <div class="home-hero">
+        <div class="home-hero-l">
+          <div class="home-eyebrow">${escHtml(homeGreeting())}</div>
+          <h1 class="home-title" id="home-name">${renderName(name, homeEquipped)}</h1>
+          <div class="home-sub">${streak > 0 ? ('🔥 ' + streak + ' day streak, keep it going') : 'Pick a server and dive in.'}</div>
+        </div>
+        <div class="home-live" id="home-live"><span class="hl-dot"></span> loading the Hub...</div>
+      </div>
+
+      <div class="home-ticker" id="home-ticker" hidden></div>
+
+      ${jump ? `
+      <div class="home-section home-jump-sec">
+        <h2>Jump back in</h2>
+        <button class="home-jump tilt" data-home-play="${escAttr(jump.name)}"${jArt ? ` style="background-image:linear-gradient(90deg,rgba(9,7,4,.93),rgba(9,7,4,.5) 70%,rgba(9,7,4,.2)),url('${escAttr(jArt)}')"` : ''}>
+          <div class="hj-info">
+            <div class="hj-name">${escHtml(jump.name)}</div>
+            <div class="hj-lvlrow"><span class="hj-lvl">Lvl ${jLvl}</span><span class="hj-rank">${escHtml(jRank)}</span><span class="hj-hrs">${Math.max(1, Math.round(topMin / 60))}h played</span></div>
+            <div class="hj-xp"><div class="hj-xp-fill" style="width:${Math.round(jProg * 100)}%"></div></div>
+            <div class="hj-xp-label">${jLvl >= 99 ? 'Maxed on this server' : (Math.round(jProg * 100) + '% to level ' + (jLvl + 1))}</div>
+          </div>
+          <span class="hj-play">&#9654; PLAY</span>
+        </button>
+      </div>` : ''}
+
+      <div class="home-cols">
+        <div class="home-section"><h2>Friends online</h2><div id="home-friends"><p class="loading-msg">Loading...</p></div></div>
+        <div class="home-section"><h2>Recent activity</h2><div id="home-activity"><p class="loading-msg">Loading...</p></div></div>
+      </div>
+
+      ${favs.length ? `<div class="home-section"><h2>Your servers</h2><div class="home-favs">${favs.map(s => `<button class="home-fav" data-home-open="${escAttr(s.name)}">${escHtml(s.name)}</button>`).join('')}</div></div>` : ''}
+
+      <div class="home-section" id="home-vids-sec" hidden>
+        <h2>Latest videos</h2>
+        <div class="home-vids" id="home-vids"></div>
+      </div>
+
+      <div class="home-section"><button class="home-browse" data-home-browse>Browse all servers &#8594;</button></div>
+    </div>`;
+
+  el.querySelector('[data-home-browse]')?.addEventListener('click', () => setActiveNavTab('store'));
+  el.querySelectorAll('[data-home-open]').forEach(b => b.addEventListener('click', () => {
+    const s = (state.servers || []).find(x => x.name === b.dataset.homeOpen); if (s) showServerDetail(s);
+  }));
+  el.querySelector('[data-home-play]')?.addEventListener('click', () => { if (jump) joinFriendServer(jump.id, jump.name); });
+
+  // "Latest videos" strip — newest community videos, opens in the player.
+  (async () => {
+    let vids = [];
+    try {
+      const d = await fetch('https://api.therspshub.com/api/videos/list.php?limit=10&sort=recent', { cache: 'no-store' }).then(r => r.json());
+      vids = (d && Array.isArray(d.videos)) ? d.videos : [];
+    } catch (_) {}
+    const sec = el.querySelector('#home-vids-sec'), host = el.querySelector('#home-vids');
+    if (!host || !vids.length) return;
+    host.innerHTML = vids.slice(0, 10).map((v, i) => `
+      <button class="home-vid" data-hv="${i}">
+        <span class="hv-thumb"${v.thumb ? ` style="background-image:url('${escAttr(v.thumb)}')"` : ''}><span class="hv-pl">&#9654;</span></span>
+        <span class="hv-t">${escHtml(v.title || ('Video by ' + v.submitter))}</span>
+        <span class="hv-m">${escHtml(v.submitter)} &bull; ${(v.views || 0)} views</span>
+      </button>`).join('');
+    host.querySelectorAll('[data-hv]').forEach(b => b.addEventListener('click', () => {
+      const v = vids[+b.dataset.hv];
+      if (v && typeof window.__hubPlayVideo === 'function') window.__hubPlayVideo(v);
+      else setActiveNavTab('videos');
+    }));
+    if (sec) sec.hidden = false;
+  })();
+
+  (async () => { try { const r = await fetch('https://api.therspshub.com/api/activity/live.php', { cache: 'no-store' });
+    if (r.ok) { const d = await r.json(); const le = el.querySelector('#home-live');
+      if (le) { le.innerHTML = '<span class="hl-dot"></span> <b id="hl-on">0</b> online, <b id="hl-ig">0</b> in game right now';
+        homeCountUp(el.querySelector('#hl-on'), d.online || 0, 900);
+        homeCountUp(el.querySelector('#hl-ig'), d.in_game || 0, 900); } } } catch (_) {} })();
+
+  // If equipped cosmetics weren't cached yet, fetch and re-skin the name.
+  if (!homeEquipped) { (async () => {
+    try { const d = await window.hub.get('/api/stats/me');
+      if (d && d.equipped) { state.equipped = d.equipped;
+        const ne = el.querySelector('#home-name'); if (ne) ne.innerHTML = renderName(name, d.equipped); }
+    } catch (_) {}
+  })(); }
+
+  // "Playing now" ticker: servers with players in game right now, scrolling.
+  (function () {
+    const tk = el.querySelector('#home-ticker'); if (!tk) return;
+    const active = (state.servers || []).filter(s => (s.hubPlayers || 0) > 0)
+      .sort((a, b) => (b.hubPlayers || 0) - (a.hubPlayers || 0));
+    if (!active.length) { tk.hidden = true; return; }
+    const items = active.map(s => `<span class="tk-item"><span class="tk-dot"></span>${escHtml(s.name)} <b>${s.hubPlayers}</b></span>`).join('');
+    tk.innerHTML = `<div class="tk-track">${items}${items}</div>`;
+    tk.hidden = false;
+    tk.querySelectorAll('.tk-item').forEach(it => it.addEventListener('click', () => {}));
+  })();
+
+  // Effects: drifting embers + subtle parallax. (3D tilt removed by request.)
+  // Animate the XP bar filling from 0 to its level.
+  if (!homeReducedMotion()) requestAnimationFrame(() => {
+    const f = el.querySelector('.hj-xp-fill'); if (!f) return;
+    const w = f.style.width; f.style.width = '0%';
+    requestAnimationFrame(() => { f.style.width = w; });
+  });
+  startHomeEmbers(el.querySelector('#home-fx'));
+  if (!homeReducedMotion()) {
+    const wrap = el.querySelector('.home-wrap'); const heroL = el.querySelector('.home-hero-l');
+    wrap?.addEventListener('mousemove', (e) => {
+      const r = wrap.getBoundingClientRect();
+      const dx = ((e.clientX - r.left) / r.width - 0.5) * 10;
+      const dy = ((e.clientY - r.top) / r.height - 0.5) * 6;
+      if (heroL) heroL.style.transform = 'translate(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px)';
+    });
+    wrap?.addEventListener('mouseleave', () => { if (heroL) heroL.style.transform = ''; });
+  }
+
+  (async () => { let fr = []; try { const d = await api.getFriends(); fr = (d?.friends || []).filter(f => f.online); } catch (_) {}
+    const host = el.querySelector('#home-friends'); if (!host) return;
+    if (!fr.length) { host.innerHTML = '<p class="empty-msg">No friends online right now.</p>'; return; }
+    fr.sort((a, b) => (b.playingServer ? 1 : 0) - (a.playingServer ? 1 : 0));
+    host.innerHTML = fr.slice(0, 6).map(f => `<div class="home-friend">
+        <span class="hf-dot"></span><span class="hf-name">${escHtml(f.username)}</span>
+        <span class="hf-status">${f.playingServer ? ('Playing ' + escHtml(f.playingServer)) : 'Online'}</span>
+        ${f.playingServer ? `<button class="hf-join" data-hf-join="${escAttr(f.playingServerId || '')}" data-hf-name="${escAttr(f.playingServer)}">Join</button>` : ''}
+      </div>`).join('');
+    host.querySelectorAll('[data-hf-join]').forEach(b => b.addEventListener('click', () => joinFriendServer(b.dataset.hfJoin, b.dataset.hfName)));
+  })();
+
+  (async () => { let feed = []; try { const d = await window.hub.get('/api/activity/feed'); feed = (d?.feed || []).filter(a => !ACTIVITY_HIDE.has(a.action)); } catch (_) {}
+    const host = el.querySelector('#home-activity'); if (!host) return;
+    if (!feed.length) { host.innerHTML = '<p class="empty-msg">Nothing yet. Go play something.</p>'; return; }
+    const me = state.user?.username;
+    host.innerHTML = feed.slice(0, 6).map(a => `<div class="home-act">
+        <span class="ha-i">${ACTIVITY_ICONS[a.action] || '⚡'}</span>
+        <span class="ha-txt">${a.username === me ? 'You' : escHtml(a.username)} ${activityVerb(a)} <span class="ha-t">${escHtml(timeAgoShort(a.created_at))}</span></span>
+      </div>`).join('');
+  })();
+}
+
 async function renderAltContent(tab, el) {
   if (!el) el = document.getElementById('alt-content');
   if (!el) return;
@@ -2160,7 +2390,11 @@ async function renderAltContent(tab, el) {
     window._hsFeatTimer = null;
   }
 
-  if (tab === 'stats') {
+  if (tab === 'home') {
+    renderHome(el);
+  }
+
+  else if (tab === 'stats') {
     if (window.renderStats) {
       window.renderStats(el);
     } else {
@@ -5612,6 +5846,11 @@ function showServerDetail(server) {
             : `<div class="sd-empty-section">No screenshots yet — the server owner hasn't uploaded any.</div>`}
         </div>
 
+        <div class="sd-section" id="sd-videos-section" hidden>
+          <h3 class="sd-section-title">VIDEOS</h3>
+          <div class="home-vids" id="sd-videos-host"></div>
+        </div>
+
         <div class="sd-section">
           <h3 class="sd-section-title">CHANGELOG</h3>
           ${server.changelog
@@ -5839,6 +6078,7 @@ function showServerDetail(server) {
   // ── Reviews wiring ──────────────────────────────────────────────────────
   // Skip loading reviews for pending submissions — section isn't rendered.
   if (server.approved !== false && server.approved !== 0) loadServerReviews(server, overlay);
+  loadServerVideos(server, overlay);
 
   document.body.appendChild(overlay);
   // Animate in
@@ -5846,6 +6086,31 @@ function showServerDetail(server) {
 }
 
 // Render the reviews section (write box + list) for the given server.
+// Creator videos tagged to this server -> a VIDEOS strip in the detail modal.
+async function loadServerVideos(server, overlay) {
+  const sec  = overlay.querySelector('#sd-videos-section');
+  const host = overlay.querySelector('#sd-videos-host');
+  if (!sec || !host || !server.id) return;
+  let vids = [];
+  try {
+    const d = await fetch('https://api.therspshub.com/api/videos/list.php?limit=100&sort=recent', { cache: 'no-store' }).then(r => r.json());
+    vids = ((d && d.videos) || []).filter(v => String(v.server_id) === String(server.id));
+  } catch (_) {}
+  if (!vids.length) return;
+  vids = vids.slice(0, 12);
+  host.innerHTML = vids.map((v, i) => `
+    <button class="home-vid" data-sv="${i}">
+      <span class="hv-thumb"${v.thumb ? ` style="background-image:url('${escAttr(v.thumb)}')"` : ''}><span class="hv-pl">&#9654;</span></span>
+      <span class="hv-t">${escHtml(v.title || ('Video by ' + v.submitter))}</span>
+      <span class="hv-m">${escHtml(v.submitter)} &bull; ${(v.views || 0)} views</span>
+    </button>`).join('');
+  host.querySelectorAll('[data-sv]').forEach(b => b.addEventListener('click', () => {
+    const v = vids[+b.dataset.sv];
+    if (v && typeof window.__hubPlayVideo === 'function') window.__hubPlayVideo(v);
+  }));
+  sec.hidden = false;
+}
+
 async function loadServerReviews(server, overlay) {
   const host = overlay.querySelector('.sd-reviews-host');
   if (!host || !server.id) return;
@@ -6315,6 +6580,7 @@ function setupAuthForms() {
     closeAllDropdowns();
     startHeartbeat(); startMessagePolling(); startFriendRequestPolling(); startHubActivityPolling();
     startFriendOnlinePolling(); startRoomUnreadPolling(); startAnnouncementPolling(); startNewsNotificationPolling();
+    startNewVideoPolling();
     startPlaytimeRefresh();
     // Kick off background prefetch for expensive tab data so the first
     // click on Stats / Friends / Chat renders instantly from cache.
@@ -6757,6 +7023,8 @@ const NOTIF_ICONS = {
   'reaction':       '❤️',
   'reply':          '💬',
   'pin':            '📌',
+  'new-video':      '🎬',
+  'video_comment':  '💬',
 };
 
 function pushNotif(type, title, msg) {
@@ -6869,6 +7137,19 @@ function renderNotifDropdown() {
       document.querySelector('.rs-tab[data-panel="friends"]')?.click();
     });
   });
+  // New-video and video-comment notifications jump to the Videos tab.
+  list.querySelectorAll('[data-notif-type="new-video"], [data-notif-type="video_comment"]').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = item.dataset.notifId;
+      const stored = NOTIF_STORE.find(n => String(n.id) === id);
+      if (stored) stored.read = true;
+      updateNotifBadge();
+      item.classList.remove('notif-unread');
+      closeAllDropdowns();
+      if (typeof setActiveNavTab === 'function') setActiveNavTab('videos');
+    });
+  });
 }
 
 // Seed mock notifications for testing
@@ -6900,6 +7181,7 @@ function _newsNotifLabel(n) {
              : n.type === 'reaction' ? 'reacted to your post'
              : n.type === 'reply'    ? 'replied to your post'
              : n.type === 'pin'      ? 'pinned your post'
+             : n.type === 'video_comment' ? 'commented on your video'
              : 'has news for you';
   return { title: `${n.from_username} ${verb}`, msg: n.preview || n.post_title || '' };
 }
@@ -7008,6 +7290,47 @@ function startFriendOnlinePolling() {
   };
   setTimeout(poll, 8_000);
   setInterval(poll, 60_000);
+}
+
+// ── NEW VIDEO POLLING ─────────────────────────────────────────────────────────
+// Notifies when a creator posts a new video ("<creator> posted: <title>").
+// Seeds silently on a first-ever run (no history) so the backlog doesn't flood
+// the bell; a persisted lastSeenVideoId means videos posted while you were away
+// still notify on next launch. Skips your own uploads. Gated by notifNewVideo.
+let _newVideoInit = false;
+function startNewVideoPolling() {
+  const poll = async () => {
+    if (!state.user?.username) return;
+    if (state.settings?.notifNewVideo === false) return;
+    try {
+      const data = await fetch('https://api.therspshub.com/api/videos/list.php?limit=15&sort=recent')
+        .then(r => r.json()).catch(() => null);
+      const vids = (data?.videos || []).filter(v => v && v.id);
+      if (!vids.length) return;
+      const maxId = Math.max(...vids.map(v => Number(v.id)));
+      const me = (state.user.username || '').toLowerCase();
+      const lastSeen = Number(getUiPrefs().lastSeenVideoId || 0);
+      if (!_newVideoInit && !lastSeen) {
+        // First ever run, no history — seed silently, don't spam the backlog.
+        setUiPref('lastSeenVideoId', maxId);
+        _newVideoInit = true;
+        return;
+      }
+      // Oldest-to-newest so the most recent ends up on top of the bell. Cap the
+      // count so a long absence can't unleash a flood of toasts.
+      const fresh = vids
+        .filter(v => Number(v.id) > lastSeen && String(v.submitter || '').toLowerCase() !== me)
+        .sort((a, b) => Number(a.id) - Number(b.id))
+        .slice(-5);
+      for (const v of fresh) {
+        pushNotif('new-video', v.submitter || 'New video', `${v.submitter} posted: ${v.title || 'a new video'}`);
+      }
+      if (maxId > lastSeen) setUiPref('lastSeenVideoId', maxId);
+      _newVideoInit = true;
+    } catch {}
+  };
+  setTimeout(poll, 12_000);
+  setInterval(poll, 120_000);
 }
 
 // ── ANNOUNCEMENT POLLING ──────────────────────────────────────────────────────
@@ -8736,6 +9059,7 @@ function buildSettingsHTML(s) {
       ['set-nf-su',     'notifServerUpdates',  'Server Updates',   'When a server you play pushes an update'],
       ['set-nf-streak', 'notifStreakReminder',  'Streak Reminders', 'Remind you to play before your daily streak resets'],
       ['set-nf-sys',    'notifSystem',         'System Messages',  'Hub announcements and important updates'],
+      ['set-nf-nv',     'notifNewVideo',       'New Videos',       'When a creator posts a new video'],
     ].map(([id, key, lbl, sub]) => `
       <div class="set-row set-between">
         <div>
@@ -8827,17 +9151,6 @@ function buildSettingsHTML(s) {
       <div class="set-row set-between">
         <div id="set-pw-msg" class="set-sub" style="color:#888"></div>
         <button class="set-browse-btn" id="set-pw-submit">Change Password</button>
-      </div>
-    </div>
-    <div class="set-row set-col" style="margin-top:8px">
-      <div class="set-label">Refer a Friend
-        <span id="set-ref-count" class="set-sub" style="margin-left:8px;font-size:11px;color:#888">…</span>
-      </div>
-      <div class="set-sub" style="margin-bottom:6px">Share your code. When a friend signs up using it, you BOTH get <b>500 hub coins</b> after their first login.</div>
-      <div class="set-row set-between" style="gap:8px">
-        <input class="set-input" id="set-ref-code" type="text" readonly style="flex:1;text-transform:uppercase;letter-spacing:2px;font-family:monospace;background:#1a1610">
-        <button class="set-browse-btn" id="set-ref-copy">Copy Code</button>
-        <button class="set-browse-btn" id="set-ref-copy-link">Copy Link</button>
       </div>
     </div>
     <div class="set-row set-col" style="margin-top:8px">
@@ -8941,6 +9254,7 @@ function bindSettingsEvents(el, initial) {
     'set-nf-su':     'notifServerUpdates',
     'set-nf-streak': 'notifStreakReminder',
     'set-nf-sys':    'notifSystem',
+    'set-nf-nv':     'notifNewVideo',
   };
   Object.entries(notifMap).forEach(([id, key]) => {
     el.querySelector(`#${id}`)?.addEventListener('change', e => save(key, e.target.checked));
@@ -8957,48 +9271,6 @@ function bindSettingsEvents(el, initial) {
       btn.textContent = shown ? '👁' : '🙈';
       btn.setAttribute('aria-label', shown ? 'Show password' : 'Hide password');
     });
-  });
-
-  // Referral code: load + copy button
-  (async () => {
-    const codeEl  = el.querySelector('#set-ref-code');
-    const cntEl   = el.querySelector('#set-ref-count');
-    if (!codeEl) return;
-    let res = null;
-    for (let i = 0; i < 3; i++) {
-      try {
-        const r = await window.hub.get('/api/referrals/me');
-        if (r && r.code) { res = r; break; }
-      } catch {}
-      await new Promise(r => setTimeout(r, 500 * (i + 1)));
-    }
-    if (res?.code) {
-      codeEl.value = res.code;
-      if (cntEl) cntEl.textContent = `${res.paid || 0} paid · ${res.total || 0} total`;
-    } else if (cntEl) {
-      cntEl.textContent = 'failed to load';
-    }
-  })();
-  el.querySelector('#set-ref-copy')?.addEventListener('click', () => {
-    const codeEl = el.querySelector('#set-ref-code');
-    if (!codeEl?.value) return;
-    navigator.clipboard.writeText(codeEl.value).then(() => {
-      const btn = el.querySelector('#set-ref-copy');
-      const orig = btn.textContent;
-      btn.textContent = 'Copied!';
-      setTimeout(() => { btn.textContent = orig; }, 1500);
-    }).catch(() => showToast('Could not copy. Select the code manually.', 'error'));
-  });
-  el.querySelector('#set-ref-copy-link')?.addEventListener('click', () => {
-    const code = el.querySelector('#set-ref-code')?.value;
-    if (!code) return;
-    const link = `https://therspshub.com/register.html?ref=${encodeURIComponent(code)}`;
-    navigator.clipboard.writeText(link).then(() => {
-      const btn = el.querySelector('#set-ref-copy-link');
-      const orig = btn.textContent;
-      btn.textContent = 'Copied!';
-      setTimeout(() => { btn.textContent = orig; }, 1500);
-    }).catch(() => showToast('Could not copy link.', 'error'));
   });
 
   // Discord link status + actions

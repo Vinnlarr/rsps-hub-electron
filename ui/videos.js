@@ -103,7 +103,7 @@
       ${manageBtns}
       ${thumbHtml(v)}
       <div class="vid-meta">
-        <div class="vid-title" title="${esc(v.title || v.source_url)}">${esc(v.title || v.source_url)}</div>
+        <div class="vid-title" title="${esc(v.title || ('Video by ' + v.submitter))}">${esc(v.title || ('Video by ' + v.submitter))}</div>
         <div class="vid-sub">${esc(v.submitter)}${server ? ' &bull; ' : ''}${server}</div>
         <div class="vid-sub vid-time">${timeAgo(v.created_at)}</div>
         <div class="vid-stats">
@@ -189,6 +189,8 @@
     const chip = (label, active, attrs, extra) =>
       `<button class="vid-chip${active ? ' active' : ''}${extra ? ' ' + extra : ''}" ${attrs}>${esc(label)}</button>`;
     let html = chip('All Creators', !filterCreator && !liveMode, 'data-creator=""');
+    const _me = myName();
+    if (_me) html += chip('📊 My Videos', !liveMode && filterCreator && filterCreator.toLowerCase() === _me.toLowerCase(), `data-creator="${esc(_me)}"`, 'vid-chip-mine');
     creators.forEach(c => { html += chip(c, !liveMode && filterCreator === c, `data-creator="${esc(c)}"`); });
     html += `<span class="vid-chip-sep"></span>` + chip('▶ Shorts', !liveMode && filterShorts, 'data-shorts="1"', 'vid-chip-shorts');
     if (creatorChannels.length) html += chip('🔴 Live', liveMode, 'data-live-mode="1"', 'vid-chip-live');
@@ -387,7 +389,21 @@
       grid.innerHTML = `<div class="vid-empty">${videos.length ? 'No videos match this filter.' : 'No videos yet. Be the first to submit one!'}</div>`;
       return;
     }
-    grid.innerHTML = list.map(cardHtml).join('');
+    // Creator dashboard: a stats banner when you're viewing your own videos.
+    const _me = myName();
+    let statsBanner = '';
+    if (_me && filterCreator && filterCreator.toLowerCase() === _me.toLowerCase()) {
+      const tv = list.reduce((a, v) => a + (v.views || 0), 0);
+      const tl = list.reduce((a, v) => a + (v.likes || 0), 0);
+      const tc = list.reduce((a, v) => a + (v.comment_count || 0), 0);
+      statsBanner = `<div class="vid-mystats">
+        <div class="vms-tile"><span class="vms-n">${list.length}</span><span class="vms-l">Videos</span></div>
+        <div class="vms-tile"><span class="vms-n">${tv.toLocaleString()}</span><span class="vms-l">Views</span></div>
+        <div class="vms-tile"><span class="vms-n">${tl.toLocaleString()}</span><span class="vms-l">Likes</span></div>
+        <div class="vms-tile"><span class="vms-n">${tc.toLocaleString()}</span><span class="vms-l">Comments</span></div>
+      </div>`;
+    }
+    grid.innerHTML = statsBanner + list.map(cardHtml).join('');
     grid.querySelectorAll('.vid-card').forEach(card => {
       card.addEventListener('click', () => {
         const v = videos.find(x => String(x.id) === card.dataset.id);
@@ -501,7 +517,7 @@
         <button class="vid-player-close" title="Close">&#10005;</button>
         <div class="vid-player-frame" id="vid-pframe"></div>
         <div class="vid-player-info">
-          <div class="vid-player-title">${esc(v.title || '')}</div>
+          <div class="vid-player-title">${esc(v.title || ('Video by ' + v.submitter))}</div>
           <div class="vid-player-sub">${esc(v.submitter)}${v.server_name ? ' &bull; ' + esc(v.server_name) : ''}</div>
           <div class="vid-player-stats">
             <button class="vid-like vid-like-lg${v.liked ? ' liked' : ''}" data-like="${v.id}" title="Like">
@@ -534,6 +550,19 @@
     const frame   = ov.querySelector('#vid-pframe');
     const actions = ov.querySelector('#vid-pactions');
 
+    // Play-now: if this video is tagged to a server, let the viewer jump
+    // straight into it (reuses the normal launch/install path).
+    if (v.server_id && v.server_name) {
+      const playBtn = document.createElement('button');
+      playBtn.className = 'vid-playnow-btn';
+      playBtn.innerHTML = '▶ Play ' + esc(v.server_name) + ' now';
+      playBtn.addEventListener('click', () => {
+        if (typeof window.joinFriendServer === 'function') window.joinFriendServer(v.server_id, v.server_name);
+        else if (window.showToast) window.showToast('Open the Servers tab to play ' + v.server_name, 'info');
+      });
+      actions.appendChild(playBtn);
+    }
+
     const showEmbed = () => {
       // YouTube needs the ?origin param (must match the Referer main.js injects)
       // for the file:// embed to play. Rumble embeds as-is.
@@ -543,20 +572,58 @@
       }
       frame.innerHTML = `<iframe src="${esc(src)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
     };
-    const showBackup = () => {
-      frame.innerHTML = `<video src="${esc(v.fallback_url)}" controls autoplay playsinline></video>`;
+    const showBackup = (auto) => {
+      frame.innerHTML =
+        (auto ? `<div class="vid-backup-note">&#9888; Original removed from YouTube. Playing the Hub backup.</div>` : '') +
+        `<video src="${esc(v.fallback_url)}" controls autoplay playsinline></video>`;
+      // The "playing the Hub backup" banner has said its piece — fade it out
+      // after 5s so it doesn't sit over the video forever.
+      if (auto) {
+        const note = frame.querySelector('.vid-backup-note');
+        if (note) setTimeout(() => {
+          note.classList.add('hide');
+          setTimeout(() => { if (note.parentNode) note.remove(); }, 600);
+        }, 5000);
+      }
     };
+
+    // The 11-char YouTube id, pulled back out of the embed URL for a liveness
+    // probe. Only YouTube is probed (Rumble thumbs live elsewhere).
+    const ytId = (v.platform === 'youtube' && v.embed)
+      ? (v.embed.match(/\/embed\/([A-Za-z0-9_-]{11})/) || [])[1] : null;
+
+    // Is a YouTube video still up? A removed / private video's thumbnail either
+    // 404s or comes back as the tiny 120×90 grey placeholder; a live video
+    // (public OR unlisted — what our creators post) returns a full-size image.
+    // Cache-busted so a thumb cached while the video was alive can't hide a
+    // later takedown. Assume alive if the probe stalls — never false-swap.
+    const probeYouTubeAlive = (id) => new Promise((resolve) => {
+      if (!id) { resolve(true); return; }
+      const img = new Image();
+      let settled = false;
+      const done = (alive) => { if (settled) return; settled = true; img.onload = img.onerror = null; resolve(alive); };
+      img.onload  = () => done(!(img.naturalWidth && img.naturalWidth <= 120));
+      img.onerror = () => done(false);
+      img.src = 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg?cb=' + Date.now();
+      setTimeout(() => done(true), 4000);
+    });
 
     if (canEmbed) {
       showEmbed();
       if (v.fallback_url) {
-        // The original may have been pulled from YouTube — let the viewer
-        // fall back to the Hub-hosted backup copy with one click.
+        let swapped = false;
+        // Manual safety net — also covers the rarer "embedding disabled" case,
+        // where the thumbnail still loads but the embed itself refuses to play.
         const btn = document.createElement('button');
         btn.className = 'vid-backup-btn';
         btn.textContent = 'Not playing? Watch the Hub backup';
-        btn.addEventListener('click', () => { showBackup(); btn.remove(); });
+        btn.addEventListener('click', () => { swapped = true; showBackup(false); btn.remove(); });
         actions.appendChild(btn);
+        // Auto-swap: if the YouTube original has been taken down, quietly switch
+        // to the Hub backup so the viewer never hits a dead player.
+        if (ytId) probeYouTubeAlive(ytId).then((alive) => {
+          if (!alive && !swapped) { swapped = true; showBackup(true); btn.remove(); }
+        });
       }
     } else {
       // Twitch / Kick can't embed from file:// — but we have a backup copy.
@@ -678,8 +745,9 @@
           <input id="vid-url" type="text" placeholder="youtube.com/watch?v=… · twitch.tv/videos/… · rumble.com/v…">
         </label>
         <label class="vid-field">
-          <span>Title <em>(optional, auto-detected for YouTube &amp; Rumble)</em></span>
-          <input id="vid-title" type="text" maxlength="200" placeholder="Leave blank to auto-detect">
+          <span>Title</span>
+          <input id="vid-title" type="text" maxlength="200" placeholder="Give your video a title">
+          <div class="vid-field-hint">Leave blank and it'll be titled &ldquo;Video by ${esc(myName() || 'you')}&rdquo;.</div>
         </label>
         <label class="vid-field">
           <span>Description <em>(optional)</em></span>
@@ -865,4 +933,7 @@
   }
 
   window.renderVideos = render;
+  // Exposed so other views (e.g. the Home "Latest videos" strip) can open a
+  // video in the same player. Pass a video object shaped like /api/videos/list.
+  window.__hubPlayVideo = playVideo;
 })();
