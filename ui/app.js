@@ -538,6 +538,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       startMessagePolling();
       startFriendRequestPolling();
       startFriendOnlinePolling();
+      startHubActivityPolling();
+      startRoomUnreadPolling();
       startAnnouncementPolling();
       startNewsNotificationPolling();
       startPlaytimeRefresh();
@@ -714,6 +716,16 @@ function setupWindowControls() {
   acctDropdown?.addEventListener('click',  e => e.stopPropagation());
 
   document.addEventListener('click', closeAllDropdowns);
+
+  // Global delegation: a shared-server card in chat opens that server's detail.
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-open-server]');
+    if (!el) return;
+    e.stopPropagation();
+    const s = (state.servers || []).find(x => String(x.id) === el.dataset.openServer);
+    if (s) showServerDetail(s);
+    else showToast('That server is no longer listed.', 'info');
+  });
 
   // Global delegation: any element with [data-open-profile="username"] opens
   // that user's public profile modal. Used by reviews, news, leaderboard, friends.
@@ -1668,7 +1680,10 @@ function renderServers() {
   const list = getFilteredServers();
 
   if (list.length === 0) {
-    grid.innerHTML = '<p class="empty-msg">No servers found.</p>';
+    grid.innerHTML = state.search
+      ? `<p class="empty-msg">No servers match "${escHtml(state.search)}". Clear the search to see all servers.</p>`
+      : '<p class="empty-msg">No servers found.</p>';
+    renderLiveActivity();
     return;
   }
 
@@ -1677,6 +1692,52 @@ function renderServers() {
   });
 
   renderFavSidebar();
+  renderLiveActivity();
+}
+
+// Hub-wide live activity strip: how many players are in-game right now and
+// which servers they're in. Hub-wide online + in-game counts come from
+// /api/activity/live.php (cached in _hubActivity); the per-server chips come
+// from state.servers (active_sessions).
+let _hubActivity = null; // { online, in_game }
+
+async function refreshHubActivity() {
+  try {
+    const r = await fetch('https://api.therspshub.com/api/activity/live.php', { cache: 'no-store' });
+    if (r.ok) { _hubActivity = await r.json(); renderLiveActivity(); }
+  } catch (_) {}
+}
+
+function startHubActivityPolling() {
+  refreshHubActivity();
+  setInterval(refreshHubActivity, 60_000);
+}
+
+function renderLiveActivity() {
+  const el = document.getElementById('live-activity');
+  if (!el) return;
+  const active = (state.servers || [])
+    .filter(s => (s.hubPlayers || 0) > 0)
+    .sort((a, b) => (b.hubPlayers || 0) - (a.hubPlayers || 0));
+  const chipTotal = active.reduce((n, s) => n + (s.hubPlayers || 0), 0);
+  const online = _hubActivity?.online ?? 0;
+  const inGame = _hubActivity?.in_game ?? chipTotal;
+  if (online <= 0 && inGame <= 0 && chipTotal <= 0) { el.hidden = true; el.innerHTML = ''; return; }
+  const chips = active.slice(0, 4).map(s =>
+    `<button class="la-chip" data-la-server="${escAttr(s.name)}">${escHtml(s.name)} <b>${s.hubPlayers}</b></button>`
+  ).join('');
+  el.innerHTML =
+    '<span class="la-pulse"></span>' +
+    `<span class="la-count"><b>${online}</b> online</span>` +
+    (inGame > 0 ? `<span class="la-sep">·</span><span class="la-count"><b>${inGame}</b> in-game now</span>` : '') +
+    (chips ? `<span class="la-sep">·</span><span class="la-chips">${chips}</span>` : '');
+  el.hidden = false;
+  el.querySelectorAll('[data-la-server]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const srv = (state.servers || []).find(s => s.name === btn.dataset.laServer);
+      if (srv) showServerDetail(srv);
+    });
+  });
 }
 
 function buildServerCard(server) {
@@ -1775,6 +1836,12 @@ function buildServerCard(server) {
         </span>
       </div>
     </div>
+    ${(() => {
+      const fh = (state.friendsPlayingByServer || {})[server.name] || [];
+      return fh.length
+        ? `<div class="card-friends-here" title="${escAttr(fh.join(', '))}">👥 ${fh.length} friend${fh.length !== 1 ? 's' : ''} playing here</div>`
+        : '';
+    })()}
     <div class="card-actions">
       <span class="player-count">${buildPlayerCountHTML(server, players)}</span>
       ${server.launchType === 'web'
@@ -1993,6 +2060,7 @@ function setActiveNavTab(tab) {
   const serverGrid    = document.getElementById('server-grid');
   const altContent    = document.getElementById('alt-content');
 
+  const liveAct = document.getElementById('live-activity');
   if (tab === 'store') {
     if (searchSection) searchSection.style.display = '';
     if (serverGrid)    serverGrid.style.display     = '';
@@ -2001,6 +2069,7 @@ function setActiveNavTab(tab) {
   } else {
     if (searchSection) searchSection.style.display = 'none';
     if (serverGrid)    serverGrid.style.display     = 'none';
+    if (liveAct)       liveAct.hidden               = true;
     if (altContent) {
       altContent.style.display = '';
       renderAltContent(tab);
@@ -2010,7 +2079,7 @@ function setActiveNavTab(tab) {
 
 // ── SIDEBAR SLIDE-OUT PANELS ──────────────────────────────────────────────────
 
-const PANEL_TITLES = { friends: 'Friends', chat: 'Friends Chat', groupchat: 'Hub Chat', stats: 'Stats', leaderboard: 'Leaderboard', achievements: 'Achievements', music: 'Music', settings: 'Settings' };
+const PANEL_TITLES = { friends: 'Friends', chat: 'Friends Chat', groupchat: 'Hub Chat', activity: 'Activity', stats: 'Stats', leaderboard: 'Leaderboard', achievements: 'Achievements', music: 'Music', settings: 'Settings' };
 
 function setupSidebarTabs() {
   const panel     = document.getElementById('slide-panel');
@@ -2219,6 +2288,10 @@ async function renderAltContent(tab, el) {
 
   else if (tab === 'groupchat') {
     renderGroupChat(el);
+  }
+
+  else if (tab === 'activity') {
+    renderActivityFeed(el);
   }
 
   else if (tab === 'achievements') {
@@ -4048,8 +4121,10 @@ function buildStatsHTML(data) {
 // ── FRIENDS PANEL ─────────────────────────────────────────────────────────────
 
 function buildFriendsHTML({ friends = [], requests = [] }) {
-  const online  = friends.filter(f =>  f.online);
+  const online  = friends.filter(f =>  f.online)
+    .sort((a, b) => (b.playingServer ? 1 : 0) - (a.playingServer ? 1 : 0));
   const offline = friends.filter(f => !f.online);
+  const inviteCollapsed = !!getUiPrefs().inviteBannerCollapsed;
 
   const requestsHTML = requests.length ? `
     <div class="section-header friend-req-header">FRIEND REQUESTS — ${requests.length}</div>
@@ -4069,30 +4144,65 @@ function buildFriendsHTML({ friends = [], requests = [] }) {
   ` : '';
 
   return `
-    <div class="alt-header"><h2>FRIENDS</h2><p>${friends.length} friend${friends.length !== 1 ? 's' : ''}</p></div>
+    <div class="alt-header"><h2>FRIENDS</h2><p>${online.length} online · ${friends.length} friend${friends.length !== 1 ? 's' : ''}</p></div>
     <div class="add-friend-row">
       <input id="add-friend-input" class="search-input" type="text" placeholder="Add friend by username...">
       <button class="action-btn play-btn" id="send-req-btn" style="min-width:120px;height:34px;font-size:0.72rem">SEND REQUEST</button>
     </div>
+    <div class="invite-banner${inviteCollapsed ? ' collapsed' : ''}" id="invite-banner">
+      <div class="invite-banner-head">
+        <div class="invite-banner-title">🎁 Invite a friend, you both get 500 coins</div>
+        <button class="invite-collapse-btn" id="invite-collapse" title="Minimise" aria-label="Minimise invite banner">▾</button>
+      </div>
+      <div class="invite-banner-body">
+        <div class="invite-banner-sub">Share your code or link. You each get 500 hub coins when they sign up.</div>
+        <div class="invite-banner-actions">
+          <code class="invite-code" id="invite-code" title="Your referral code">………</code>
+          <button class="invite-mini-btn" id="invite-copy-code">Copy code</button>
+          <button class="invite-mini-btn invite-mini-primary" id="invite-copy-link">Copy invite link</button>
+        </div>
+      </div>
+    </div>
     ${requestsHTML}
     ${online.length  ? `<div class="section-header">ONLINE — ${online.length}</div>`  + online.map(friendRowHTML).join('') : ''}
     ${offline.length ? `<div class="section-header">OFFLINE — ${offline.length}</div>` + offline.map(friendRowHTML).join('') : ''}
-    ${friends.length === 0 && !requestsHTML ? '<p class="empty-msg">No friends yet. Send someone a request!</p>' : ''}
+    ${friends.length === 0 && !requestsHTML ? '<p class="empty-msg">No friends yet. Add someone by username above, or share your invite code to bring a friend to the Hub.</p>' : ''}
   `;
 }
 
+// Short relative time for a datetime string, e.g. "2h ago".
+function timeAgoShort(dt) {
+  if (!dt) return '';
+  const t = new Date(String(dt).replace(' ', 'T') + 'Z').getTime();
+  if (isNaN(t)) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+  const d = Math.floor(h / 24); if (d < 30) return d + 'd ago';
+  const mo = Math.floor(d / 30); if (mo < 12) return mo + 'mo ago';
+  return Math.floor(mo / 12) + 'y ago';
+}
+
 function friendRowHTML(f) {
-  const statusText = f.online
-    ? (f.playingServer ? `Playing ${f.playingServer}` : 'Online')
-    : (f.statusMessage ? f.statusMessage : 'Offline');
+  const playing = f.online && f.playingServer;
+  let statusText;
+  if (f.online) statusText = playing ? `Playing ${f.playingServer}` : 'Online';
+  else if (f.statusMessage) statusText = f.statusMessage;
+  else if (f.lastSeen) statusText = 'Last seen ' + timeAgoShort(f.lastSeen);
+  else statusText = 'Offline';
+  const statusAttrs = playing
+    ? `class="friend-status friend-status-join" data-server-id="${escAttr(f.playingServerId || '')}" data-server-name="${escAttr(f.playingServer)}" title="Join ${escAttr(f.playingServer)}"`
+    : 'class="friend-status"';
   return `
     <div class="friend-row" data-username="${f.username}">
       <div class="friend-avatar ${f.online ? 'online' : ''}">${avatarInnerHTML(f.username, { hasAvatar: !!f.hasAvatar })}</div>
       <div class="friend-info">
         <span class="friend-name lb-clickable" data-open-profile="${escAttr(f.username)}">${renderName(f.username, f.equipped)}</span>
-        <span class="friend-status">${statusText}</span>
+        <span ${statusAttrs}>${escHtml(statusText)}</span>
       </div>
       <div class="friend-actions">
+        ${f.playingServer ? `<button class="friend-btn friend-join-btn" data-server-id="${escAttr(f.playingServerId || '')}" data-server-name="${escAttr(f.playingServer)}" title="Join ${escAttr(f.playingServer)}">▶ Join</button>` : ''}
         <button class="friend-btn friend-msg-btn" data-username="${f.username}">💬</button>
         <button class="friend-btn friend-remove-btn" data-username="${f.username}">✕</button>
       </div>
@@ -4100,7 +4210,75 @@ function friendRowHTML(f) {
   `;
 }
 
+// Launch the server a friend is currently playing so you land in-game together.
+// Reuses the same launch paths as the server cards: web servers open their
+// BrowserWindow, installed JARs play directly, and anything not installed yet
+// routes to the server detail so the user can install then play.
+async function joinFriendServer(serverId, serverName) {
+  const servers = state.servers || [];
+  let server = serverId ? servers.find(s => String(s.id) === String(serverId)) : null;
+  if (!server && serverName) server = servers.find(s => s.name === serverName);
+  if (!server) {
+    showToast(`${serverName || 'That server'} isn't in your list yet.`, 'error');
+    return;
+  }
+  try {
+    if (server.launchType === 'web') {
+      await launchWebServer(server);
+    } else if (server.downloaded) {
+      await api.play(server.name);
+      startActiveSessionChip(server.name);
+      if (state.settings?.minimizeOnLaunch) window.hub.minimize();
+    } else {
+      // Not installed — open its detail so they can install and then play.
+      showToast(`Install ${server.name} to join`, 'info');
+      showServerDetail(server);
+      return;
+    }
+    showToast(`Joining ${server.name}…`, 'success');
+  } catch {
+    showToast(`Couldn't join ${server.name}.`, 'error');
+  }
+}
+
 function bindFriendsEvents(el) {
+  // Invite banner: load the referral code, wire Copy code + Copy invite link.
+  (async () => {
+    const codeEl = el.querySelector('#invite-code');
+    if (!codeEl) return;
+    let code = null;
+    for (let i = 0; i < 3 && !code; i++) {
+      try { const r = await window.hub.get('/api/referrals/me'); if (r?.code) code = r.code; } catch {}
+      if (!code) await new Promise(res => setTimeout(res, 400 * (i + 1)));
+    }
+    codeEl.textContent = code || 'unavailable';
+    if (code) codeEl.dataset.code = code;
+  })();
+  const inviteLink = code => `https://therspshub.com/register.html?ref=${encodeURIComponent(code)}`;
+  const flashBtn = (btn, txt) => { if (!btn) return; const o = btn.textContent; btn.textContent = txt; setTimeout(() => { btn.textContent = o; }, 1500); };
+  el.querySelector('#invite-copy-code')?.addEventListener('click', () => {
+    const code = el.querySelector('#invite-code')?.dataset.code;
+    if (!code) { showToast('Code still loading…', 'error'); return; }
+    navigator.clipboard.writeText(code)
+      .then(() => flashBtn(el.querySelector('#invite-copy-code'), 'Copied!'))
+      .catch(() => showToast('Could not copy', 'error'));
+  });
+  el.querySelector('#invite-copy-link')?.addEventListener('click', () => {
+    const code = el.querySelector('#invite-code')?.dataset.code;
+    if (!code) { showToast('Code still loading…', 'error'); return; }
+    navigator.clipboard.writeText(inviteLink(code))
+      .then(() => flashBtn(el.querySelector('#invite-copy-link'), 'Link copied!'))
+      .catch(() => showToast('Could not copy', 'error'));
+  });
+  // Minimise / expand the invite banner; remembered per account across restarts.
+  el.querySelector('#invite-collapse')?.addEventListener('click', (e) => {
+    const banner = el.querySelector('#invite-banner');
+    if (!banner) return;
+    const collapsed = banner.classList.toggle('collapsed');
+    e.currentTarget.title = collapsed ? 'Expand' : 'Minimise';
+    setUiPref('inviteBannerCollapsed', collapsed);
+  });
+
   // Send friend request
   el.querySelector('#send-req-btn')?.addEventListener('click', async () => {
     const input = el.querySelector('#add-friend-input');
@@ -4175,6 +4353,27 @@ function bindFriendsEvents(el) {
   });
 
   // Message button → open DM
+  // Clicking a friend's "Playing X" status also joins that server
+  el.querySelectorAll('.friend-status-join').forEach(s => {
+    s.addEventListener('click', () => joinFriendServer(s.dataset.serverId, s.dataset.serverName));
+  });
+
+  // Join a friend in the server they're currently playing
+  el.querySelectorAll('.friend-join-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = '…';
+      try {
+        await joinFriendServer(btn.dataset.serverId, btn.dataset.serverName);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+  });
+
   el.querySelectorAll('.friend-msg-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const username = btn.dataset.username;
@@ -4448,7 +4647,7 @@ async function openDM(el, username) {
     if (msgEl.querySelector('.empty-msg')) msgEl.innerHTML = '';
     const div = document.createElement('div');
     div.className = 'dm-msg own';
-    div.innerHTML = `<div class="dm-bubble">${escHtml(content)}</div>`;
+    div.innerHTML = `<div class="dm-bubble">${renderChatBody(content)}</div>`;
     msgEl.appendChild(div);
     msgEl.scrollTop = msgEl.scrollHeight;
     // Await the send so the re-enable happens only AFTER the message is
@@ -4537,14 +4736,95 @@ function chatUrlIsInlineImage(url) {
 // Render a chat message body to safe HTML, expanding allowed image URLs
 // into inline <img> embeds. Plain text is escaped. Non-image URLs render
 // as themed links. Honors state.settings.showInlineGifs (default on).
+// Highlight @mentions in already-escaped text. @your-own-name gets a stronger
+// treatment. Applied only to text slices, never inside link markup.
+function highlightMentions(escaped) {
+  const me = (state.user?.username || '').toLowerCase();
+  return escaped.replace(/@(\w{1,32})/g, (m, name) =>
+    `<span class="chat-mention${name.toLowerCase() === me ? ' me' : ''}">@${name}</span>`);
+}
+
+// Renders a shared-server marker ([[server:ID]]) as a clickable card with the
+// server's banner + name. Falls back to a plain chip if the server isn't loaded.
+function serverCardChip(id) {
+  const s = (state.servers || []).find(x => String(x.id) === String(id));
+  if (!s) return `<span class="chat-server-card missing">Server unavailable</span>`;
+  const img = s.cardBannerUrl || s.bannerUrl || '';
+  return `<button class="chat-server-card" data-open-server="${escAttr(s.id)}" title="Open ${escAttr(s.name)}">
+    ${img ? `<img class="csc-img" src="${escAttr(img)}" alt="" loading="lazy">` : `<span class="csc-img csc-fallback">${escHtml((s.name || '?').slice(0,2).toUpperCase())}</span>`}
+    <span class="csc-meta"><span class="csc-name">${escHtml(s.name)}</span><span class="csc-cta">Open on the Hub ›</span></span>
+  </button>`;
+}
+
+// @-mention autocomplete for a chat input. Type "@" then letters to filter your
+// friends; Up/Down to move, Enter/Tab/click to insert.
+function attachMentionAutocomplete(input) {
+  if (!input) return;
+  const getNames = () => {
+    if (state.friends?.length) return state.friends.map(f => f.username);
+    const c = window.DATA_CACHE?.friends?.data;
+    return c?.friends ? c.friends.map(f => f.username) : [];
+  };
+  if (!getNames().length) { api.getFriends().then(d => { if (d?.friends) state.friends = d.friends; }).catch(() => {}); }
+
+  const dd = document.createElement('div');
+  dd.className = 'mention-dd'; dd.hidden = true;
+  const row = input.parentElement;
+  if (row) { row.style.position = row.style.position || 'relative'; row.appendChild(dd); }
+  let items = [], active = -1;
+
+  const tokenAtCaret = () => {
+    const pos = input.selectionStart;
+    const m = input.value.slice(0, pos).match(/(^|\s)@([A-Za-z0-9_]*)$/);
+    if (!m) return null;
+    return { q: m[2], start: pos - m[2].length - 1, end: pos };
+  };
+  const paint = () => dd.querySelectorAll('.mention-item').forEach((el, i) => el.classList.toggle('active', i === active));
+  const render = (q) => {
+    const ql = q.toLowerCase();
+    items = getNames().filter(n => n.toLowerCase().includes(ql)).slice(0, 6);
+    active = items.length ? 0 : -1;
+    if (!items.length) { dd.hidden = true; return; }
+    dd.innerHTML = items.map((n, i) => `<div class="mention-item${i === 0 ? ' active' : ''}" data-i="${i}">@${escHtml(n)}</div>`).join('');
+    dd.hidden = false;
+  };
+  const apply = (name) => {
+    const t = tokenAtCaret(); if (!t) return;
+    const before = input.value.slice(0, t.start), after = input.value.slice(t.end);
+    input.value = before + '@' + name + ' ' + after;
+    const caret = (before + '@' + name + ' ').length;
+    input.setSelectionRange(caret, caret);
+    dd.hidden = true; input.focus();
+  };
+
+  input.addEventListener('input', () => { const t = tokenAtCaret(); if (t) render(t.q); else dd.hidden = true; });
+  // Capture phase so Enter/Tab selection beats the chat's own send-on-Enter.
+  input.addEventListener('keydown', (e) => {
+    if (dd.hidden) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(items.length - 1, active + 1); paint(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(0, active - 1); paint(); }
+    else if ((e.key === 'Enter' || e.key === 'Tab') && active >= 0) { e.preventDefault(); e.stopPropagation(); apply(items[active]); }
+    else if (e.key === 'Escape') { e.stopPropagation(); dd.hidden = true; }
+  }, true);
+  dd.addEventListener('mousedown', (e) => { const it = e.target.closest('.mention-item'); if (it) { e.preventDefault(); apply(items[+it.dataset.i]); } });
+  input.addEventListener('blur', () => setTimeout(() => { dd.hidden = true; }, 150));
+}
+
 function renderChatBody(rawText) {
   const showInline = state.settings?.showInlineGifs !== false;
+  // Pull out a shared-server marker first; render the rest as normal text.
+  let cardHtml = '';
+  const sm = rawText.match(/\[\[server:(\d+)\]\]/);
+  if (sm) {
+    cardHtml = serverCardChip(sm[1]);
+    rawText = rawText.replace(sm[0], '').trim();
+  }
   const urlPattern = /\bhttps?:\/\/[^\s<>"]+/g;
   let html = '';
   let lastIndex = 0;
   let match;
   while ((match = urlPattern.exec(rawText)) !== null) {
-    html += escHtml(rawText.slice(lastIndex, match.index));
+    html += highlightMentions(escHtml(rawText.slice(lastIndex, match.index)));
     const url = match[0];
     if (showInline && chatUrlIsInlineImage(url)) {
       html += `<a href="${escAttr(url)}" class="chat-gif-link" target="_blank" rel="noopener"><img src="${escAttr(url)}" alt="GIF" class="chat-gif" loading="lazy"></a>`;
@@ -4553,8 +4833,9 @@ function renderChatBody(rawText) {
     }
     lastIndex = urlPattern.lastIndex;
   }
-  html += escHtml(rawText.slice(lastIndex));
-  return html;
+  html += highlightMentions(escHtml(rawText.slice(lastIndex)));
+  if (!cardHtml) return html;
+  return (html ? `<div class="csc-caption">${html}</div>` : '') + cardHtml;
 }
 
 // Cached ownership flag. Re-derived from window.HUB_STORE_CATALOG on every
@@ -4681,19 +4962,128 @@ window.ownsGifSupport = ownsGifSupport;
 window.attachGifPicker = attachGifPicker;
 window.renderChatBody = renderChatBody;
 
+const ACTIVITY_ICONS = {
+  'started playing': '🎮', 'stopped playing': '⏹️',
+  'installed': '⬇️', 'uninstalled': '🗑️',
+  'favourited': '★', 'unfavourited': '☆',
+  'unlocked level': '⭐', 'reviewed': '✍️',
+  'is now friends with': '🤝',
+};
+// Actions too noisy/private to surface in the feed (all friend-graph events, plus
+// the negative/low-signal ones). The feed stays about servers and games.
+const ACTIVITY_HIDE = new Set([
+  'sent a friend request to', 'is now friends with',
+  'unfavourited', 'uninstalled', 'stopped playing',
+]);
+function activityVerb(a) {
+  const t = `<b>${escHtml(a.target || '')}</b>`;
+  switch (a.action) {
+    case 'started playing': return `started playing ${t}`;
+    case 'stopped playing': return `stopped playing ${t}`;
+    case 'installed':       return `installed ${t}`;
+    case 'uninstalled':     return `uninstalled ${t}`;
+    case 'favourited':      return `favourited ${t}`;
+    case 'unfavourited':    return `unfavourited ${t}`;
+    case 'unlocked level':  return `unlocked ${t}`;
+    case 'reviewed':        return `reviewed ${t}`;
+    default:                return `${escHtml(a.action)} ${t}`;
+  }
+}
+async function renderActivityFeed(el) {
+  el.innerHTML = `
+    <div class="alt-header"><h2>ACTIVITY</h2><p>What you and your friends have been up to</p></div>
+    <div id="activity-list"><p class="loading-msg">Loading activity…</p></div>`;
+  const host = el.querySelector('#activity-list');
+  let feed = [];
+  try {
+    const d = await window.hub.get('/api/activity/feed');
+    feed = (d?.feed || []).filter(a => !ACTIVITY_HIDE.has(a.action));
+  } catch { host.innerHTML = '<p class="empty-msg">Could not load activity.</p>'; return; }
+  if (!feed.length) {
+    host.innerHTML = '<p class="empty-msg">No activity yet. Play a server or add some friends, and it\'ll show up here.</p>';
+    return;
+  }
+  const me = state.user?.username;
+  host.innerHTML = feed.map(a => {
+    const icon = ACTIVITY_ICONS[a.action] || '⚡';
+    const who = a.username === me
+      ? '<span class="act-you">You</span>'
+      : `<span class="act-user lb-clickable" data-open-profile="${escAttr(a.username)}">${escHtml(a.username)}</span>`;
+    return `<div class="act-row">
+      <div class="act-icon">${icon}</div>
+      <div class="act-body">
+        <span class="act-text">${who} ${activityVerb(a)}</span>
+        <span class="act-ts">${escHtml(timeAgoShort(a.created_at))}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 function renderGroupChat(el) {
   // Group chat as a feature was stripped pre-launch — the only working room
   // here is global Hub Chat, so we skip the channel-list step and open it
   // directly. Tab still exists (renamed "HUB") so users have a single click
   // path to the global feed.
+  const pending = window._pendingGCRoom;
+  window._pendingGCRoom = null;
+  if (pending && pending.id) return openGCRoom(el, pending.id, pending.name || 'Community');
   return openGCRoom(el, 'hub', 'Hub Chat');
 }
 
 
+// Durable client UI prefs, stored in the account's settings (written to disk by
+// the Java backend). Renderer localStorage is NOT reliable here — a force-kill
+// can lose unflushed writes — so anything that must survive a restart lives here.
+function getUiPrefs() {
+  try { return JSON.parse(state.settings?.uiPrefs || '{}') || {}; } catch (_) { return {}; }
+}
+function setUiPref(key, value) {
+  const p = getUiPrefs();
+  p[key] = value;
+  const json = JSON.stringify(p);
+  if (state.settings) state.settings.uiPrefs = json;
+  try { api.saveSettings({ uiPrefs: json }); } catch (_) {}
+}
+
+// Pinned community-room tabs the user has added from server pages, so the Hub
+// Chat tab bar is user-curated. Persisted in uiPrefs (survives restarts).
+function getPinnedRooms() {
+  const r = getUiPrefs().pinnedRooms;
+  return Array.isArray(r) ? r : [];
+}
+function setPinnedRooms(list) {
+  setUiPref('pinnedRooms', list);
+}
+function addPinnedRoom(id, name) {
+  const list = getPinnedRooms();
+  if (!list.some(r => r.id === id)) { list.push({ id, name }); setPinnedRooms(list); }
+}
+function removePinnedRoom(id) {
+  setPinnedRooms(getPinnedRooms().filter(r => r.id !== id));
+}
+
+let _gcPollToken = 0;
 async function openGCRoom(el, roomId, roomName) {
   const myUsername = state.user?.username || '';
   let lastId = 0;
   let pollTimer = null;
+  const myToken = ++_gcPollToken; // stops the previous room's poller
+  state.activeGCRoom = roomId;    // so background unread polling knows what you're viewing
+  clearUnread('groupchat');       // opening/viewing chat clears the Hub tab badge
+
+  // Room tabs: Hub (always) + the server rooms the user has pinned. Pinned
+  // rooms are added from a server's page and can be X'd off here.
+  const rooms = [{ id: 'hub', name: 'Hub' }, ...getPinnedRooms()];
+  // Always include the room currently being viewed (e.g. just added), so the
+  // active tab is present even before the pinned list re-reads.
+  if (roomId !== 'hub' && !rooms.some(r => r.id === roomId)) {
+    rooms.push({ id: roomId, name: roomName });
+  }
+  const roomsBar = rooms.map(r => {
+    const active = r.id === roomId ? ' active' : '';
+    const x = r.id === 'hub' ? '' : `<span class="gc-room-x" data-remove-room="${escAttr(r.id)}" title="Remove this tab">✕</span>`;
+    return `<button class="gc-room-chip${active}" data-room-id="${escAttr(r.id)}" data-room-name="${escAttr(r.name)}">${r.id === 'hub' ? '🌐 ' : '# '}${escHtml(r.name)}${x}</button>`;
+  }).join('');
 
   el.style.overflow = 'hidden';
   el.style.padding  = '0';
@@ -4701,9 +5091,10 @@ async function openGCRoom(el, roomId, roomName) {
     <div class="dm-wrap">
       <div class="dm-header" style="padding:10px 14px">
         <span class="dm-title">${roomId === 'hub' ? '🌐' : '#'} ${roomName}</span>
-        <span class="dm-sub" style="margin-left:8px;color:#6a5a3a;font-size:0.74rem">Global launcher chat</span>
+        <span class="dm-sub" style="margin-left:8px;color:#6a5a3a;font-size:0.74rem">${roomId === 'hub' ? 'Global launcher chat' : 'Community room for ' + escHtml(roomName)}</span>
         <button class="chat-popout-btn" id="gc-popout">⧉</button>
       </div>
+      <div class="gc-rooms">${roomsBar}</div>
       <div class="dm-messages" id="gc-room-msgs"><p class="loading-msg">Loading...</p></div>
       <div class="dm-input-row" style="padding:10px 14px">
         <input class="dm-input" id="gc-room-input" type="text" placeholder="Message ${roomName}..." maxlength="300">
@@ -4817,8 +5208,9 @@ async function openGCRoom(el, roomId, roomName) {
   }
 
   async function poll() {
+    if (myToken !== _gcPollToken) return; // a newer room replaced this poller
     try {
-      const data = await window.hub.get(`/api/chat/hub?since=${lastId}`);
+      const data = await window.hub.get(`/api/chat/hub?since=${lastId}&room=${encodeURIComponent(roomId)}`);
       const msgs = data?.messages || [];
       if (msgs.length) {
         if (lastId === 0) msgEl.innerHTML = '';
@@ -4828,6 +5220,7 @@ async function openGCRoom(el, roomId, roomName) {
           appendMsg(m);
           lastId = Math.max(lastId, m.id);
         });
+        _roomLastSeen[roomId] = lastId; // keep background unread in sync with what you've seen
         if (atBottom) msgEl.scrollTop = msgEl.scrollHeight;
       } else if (lastId === 0) {
         msgEl.innerHTML = '<p class="empty-msg" style="padding:16px">No messages yet. Say something!</p>';
@@ -4861,7 +5254,7 @@ async function openGCRoom(el, roomId, roomName) {
     msgEl.scrollTop = msgEl.scrollHeight;
 
     try {
-      await window.hub.post('/api/chat/hub', { message: content });
+      await window.hub.post('/api/chat/hub', { message: content, room: roomId });
       // Force-poll right away so the canonical server message arrives
       // before the next 3s tick. The optimistic bubble gets reconciled
       // (removed) when the real one lands.
@@ -4891,6 +5284,27 @@ async function openGCRoom(el, roomId, roomName) {
   // GIF picker — shows only if user owns the f_gif_support hub store item.
   // No-op for non-owners, no flash of un-permitted UI.
   attachGifPicker(el.querySelector('.dm-input-row'), input);
+
+  // @-mention autocomplete (friends dropdown as you type @).
+  attachMentionAutocomplete(input);
+
+  // Room switcher — switch rooms, or X off a pinned tab.
+  el.querySelectorAll('.gc-room-chip').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      const x = e.target.closest('[data-remove-room]');
+      if (x) {
+        e.stopPropagation();
+        const rid = x.dataset.removeRoom;
+        removePinnedRoom(rid);
+        // Removing the active tab drops you back to Hub; otherwise just refresh.
+        if (rid === roomId) openGCRoom(el, 'hub', 'Hub Chat');
+        else openGCRoom(el, roomId, roomName);
+        return;
+      }
+      if (chip.dataset.roomId === roomId) return;
+      openGCRoom(el, chip.dataset.roomId, chip.dataset.roomName);
+    });
+  });
 
   // Pop-out button — spawns a floating always-on-top chat window
   el.querySelector('#gc-popout')?.addEventListener('click', () => {
@@ -5044,6 +5458,48 @@ function openReportModal(targetType, targetRef, targetName) {
 window.openReportModal = openReportModal;
 
 // ── SERVER DETAIL MODAL ────────────────────────────────────────────────────────
+
+// Friend picker for recommending a server; sends it into the chosen friend's DMs.
+async function openServerSharePicker(server) {
+  let friends = state.friends || [];
+  if (!friends.length) { try { const d = await api.getFriends(); friends = d?.friends || []; } catch {} }
+  if (!friends.length) { showToast('Add a friend first to share servers.', 'info'); return; }
+  const ov = document.createElement('div');
+  ov.className = 'share-overlay';
+  ov.innerHTML = `
+    <div class="share-modal">
+      <div class="share-title"><span>Send <b>${escHtml(server.name)}</b> to…</span><button class="share-close" title="Close">✕</button></div>
+      <div class="share-list">
+        ${friends.map(f => `
+          <button class="share-friend" data-u="${escAttr(f.username)}">
+            <span class="share-av">${avatarInnerHTML(f.username, { hasAvatar: !!f.hasAvatar })}</span>
+            <span class="share-name">${renderName(f.username, f.equipped)}</span>
+          </button>`).join('')}
+      </div>
+    </div>`;
+  const closeShare = () => { ov.remove(); document.removeEventListener('keydown', onEsc); };
+  const onEsc = e => { if (e.key === 'Escape') closeShare(); };
+  ov.addEventListener('click', closeShare);
+  ov.querySelector('.share-modal').addEventListener('click', e => e.stopPropagation());
+  ov.querySelector('.share-close').addEventListener('click', closeShare);
+  document.addEventListener('keydown', onEsc);
+  document.body.appendChild(ov);
+  ov.querySelectorAll('.share-friend').forEach(b => b.addEventListener('click', async () => {
+    const u = b.dataset.u;
+    closeShare();
+    try {
+      await api.sendMessage(u, `👀 Check out ${server.name} on the Hub! [[server:${server.id}]]`);
+      showToast(`Sent to ${u}`, 'success');
+      // Close the server page and open the DM so you can see what you sent
+      // (opens the conversation, creating it if this is the first message).
+      if (typeof closeServerDetail === 'function') closeServerDetail();
+      state.activeDM = u;
+      const chatTab = document.querySelector('.rs-tab[data-panel="chat"]');
+      if (chatTab) chatTab.click();
+      else { const pb = document.getElementById('slide-panel-body'); if (pb) openDM(pb, u); }
+    } catch { showToast('Could not send.', 'error'); }
+  }));
+}
 
 function showServerDetail(server) {
   // Remove any existing detail modal
@@ -5217,6 +5673,8 @@ function showServerDetail(server) {
         <div class="sd-footer-left">
           ${server.discordUrl ? `<button class="sd-link-btn" id="sd-discord-btn">Discord</button>` : ''}
           ${server.websiteUrl ? `<button class="sd-link-btn" id="sd-website-btn">Website</button>` : ''}
+          <button class="sd-link-btn" id="sd-community-btn">➕ Add community chat</button>
+          <button class="sd-link-btn" id="sd-share-btn">↗ Send to a friend</button>
         </div>
         <div class="sd-footer-right">
           <button class="sd-link-btn ${isFav ? 'fav-active' : ''}" id="sd-fav-btn" style="min-width:120px">
@@ -5284,6 +5742,23 @@ function showServerDetail(server) {
   overlay.querySelector('#sd-website-btn')?.addEventListener('click', e => {
     e.stopPropagation();
     window.hub?.openExternal(server.websiteUrl);
+  });
+
+  // Recommend this server to a friend (drops it into their DMs).
+  overlay.querySelector('#sd-share-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    openServerSharePicker(server);
+  });
+
+  // Add this server's community chat as a pinned tab in Hub Chat, then open it.
+  overlay.querySelector('#sd-community-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const rid = 'server:' + (server.id || '');
+    addPinnedRoom(rid, server.name);
+    window._pendingGCRoom = { id: rid, name: server.name };
+    closeServerDetail();
+    document.querySelector('.rs-tab[data-panel="groupchat"]')?.click();
+    showToast(`Added ${server.name} chat to Hub`, 'success');
   });
 
   // Favourite toggle
@@ -5561,10 +6036,21 @@ function closeServerDetail() {
 function setupSearch() {
   const input = document.getElementById('search-input');
   if (!input) return;
+  const clearBtn = document.getElementById('search-clear');
+  const syncClear = () => { if (clearBtn) clearBtn.hidden = !input.value; };
   input.addEventListener('input', () => {
     state.search = input.value;
+    syncClear();
     renderServers();
   });
+  clearBtn?.addEventListener('click', () => {
+    input.value = '';
+    state.search = '';
+    syncClear();
+    renderServers();
+    input.focus();
+  });
+  syncClear();
 }
 
 function setupTagFilters() {
@@ -5592,6 +6078,7 @@ function setupSort() {
   wrap.querySelectorAll('.custom-select-option').forEach(opt => {
     opt.addEventListener('click', () => {
       state.sortOrder = opt.dataset.value;
+      setUiPref('serverSort', state.sortOrder);
       btn.childNodes[0].textContent = opt.textContent;
       wrap.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
       opt.classList.add('selected');
@@ -5599,6 +6086,15 @@ function setupSort() {
       renderServers();
     });
   });
+
+  // Apply + reflect the remembered sort order in the dropdown UI on startup.
+  state.sortOrder = getUiPrefs().serverSort || state.sortOrder || 'players';
+  const savedOpt = wrap.querySelector(`.custom-select-option[data-value="${state.sortOrder}"]`);
+  if (savedOpt) {
+    btn.childNodes[0].textContent = savedOpt.textContent;
+    wrap.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+    savedOpt.classList.add('selected');
+  }
 
   document.addEventListener('click', () => wrap.classList.remove('open'));
 }
@@ -5817,8 +6313,8 @@ function setupAuthForms() {
     renderUser();
     hideAuthScreen();
     closeAllDropdowns();
-    startHeartbeat(); startMessagePolling(); startFriendRequestPolling();
-    startFriendOnlinePolling(); startAnnouncementPolling(); startNewsNotificationPolling();
+    startHeartbeat(); startMessagePolling(); startFriendRequestPolling(); startHubActivityPolling();
+    startFriendOnlinePolling(); startRoomUnreadPolling(); startAnnouncementPolling(); startNewsNotificationPolling();
     startPlaytimeRefresh();
     // Kick off background prefetch for expensive tab data so the first
     // click on Stats / Friends / Chat renders instantly from cache.
@@ -6197,6 +6693,52 @@ function updateBadge(panel) {
   }
 }
 
+// Background unread tracking for Hub Chat + pinned server rooms. Lights up the
+// Hub tab badge when a new message lands in a room you're not currently viewing.
+const _roomLastSeen = {}; // roomId -> highest message id seen
+
+function watchedChatRooms() {
+  return ['hub', ...getPinnedRooms().map(r => r.id)];
+}
+
+function startRoomUnreadPolling() {
+  const poll = async () => {
+    if (!state.user?.username) return;
+    const me = state.user.username;
+    const activePanel = document.querySelector('.rs-tab.active')?.dataset?.panel;
+    for (const room of watchedChatRooms()) {
+      try {
+        const since = _roomLastSeen[room] || 0;
+        const data = await window.hub.get(`/api/chat/hub?since=${since}&room=${encodeURIComponent(room)}`);
+        const msgs = data?.messages || [];
+        if (!msgs.length) continue;
+        const firstSeed = !(room in _roomLastSeen);
+        _roomLastSeen[room] = msgs.reduce((m, x) => Math.max(m, x.id), since);
+        if (firstSeed) continue; // don't badge pre-existing history on first sight
+        const others = msgs.filter(x => x.username !== me);
+        const viewingThisRoom = activePanel === 'groupchat' && state.activeGCRoom === room;
+        if (others.length > 0 && !viewingThisRoom) {
+          _unread.groupchat = (_unread.groupchat || 0) + others.length;
+          updateBadge('groupchat');
+        }
+        // @mention ping: notify when someone tags you in a room you're not viewing.
+        const mre = new RegExp('@' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+        if (!viewingThisRoom) {
+          for (const m of others) {
+            if (mre.test(m.message || '')) {
+              const label = room === 'hub' ? 'Hub Chat' : (getPinnedRooms().find(r => r.id === room)?.name || 'a room');
+              pushNotif('mention', 'Mentioned you', `${m.username} mentioned you in ${label}`);
+              showToast(`💬 ${m.username} mentioned you in ${label}`, 'info');
+            }
+          }
+        }
+      } catch (_) {}
+    }
+  };
+  poll();
+  setInterval(poll, 15_000);
+}
+
 // ── INCOMING MESSAGE POLLING ──────────────────────────────────────────────────
 // ── NOTIFICATION SYSTEM ──────────────────────────────────────────────────────
 
@@ -6208,6 +6750,7 @@ const NOTIF_ICONS = {
   'friend-request': '👤',
   'server-update':  '📢',
   'friend-online':  '🟢',
+  'friend-playing': '🎮',
   'message':        '💬',
   'system':         '📣',
   'mention':        '@',
@@ -6267,7 +6810,7 @@ function renderNotifDropdown() {
     return;
   }
   list.innerHTML = NOTIF_STORE.map(n => `
-    <div class="notif-item${n.read ? '' : ' notif-unread'}" data-notif-id="${n.id}" ${n.postId ? `data-post-id="${n.postId}"` : ''}>
+    <div class="notif-item${n.read ? '' : ' notif-unread'}" data-notif-id="${n.id}" data-notif-type="${n.type}" ${n.postId ? `data-post-id="${n.postId}"` : ''}>
       <div class="notif-icon-wrap">${NOTIF_ICONS[n.type] || '🔔'}</div>
       <div class="notif-body">
         <div class="notif-title">${escHtml(n.title)}</div>
@@ -6310,6 +6853,20 @@ function renderNotifDropdown() {
         const newsPanel = document.querySelector('#slide-panel.open .panel-content') || document.body;
         openNewsDetail(post, newsPanel);
       }
+    });
+  });
+  // Friend notifications (playing / online / request) jump to the Friends tab,
+  // where the Join button and requests live.
+  list.querySelectorAll('[data-notif-type="friend-playing"], [data-notif-type="friend-online"], [data-notif-type="friend-request"]').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = item.dataset.notifId;
+      const stored = NOTIF_STORE.find(n => n.id === id);
+      if (stored) stored.read = true;
+      updateNotifBadge();
+      item.classList.remove('notif-unread');
+      closeAllDropdowns();
+      document.querySelector('.rs-tab[data-panel="friends"]')?.click();
     });
   });
 }
@@ -6394,6 +6951,9 @@ function startNewsNotificationPolling() {
 
 const _knownFriendsOnline = new Set();
 let   _friendOnlineInit   = false;
+// Tracks which server each friend was last seen playing, so we only alert on a
+// genuine start / switch, not on every poll while they stay in the same server.
+const _knownFriendPlaying = new Map();
 
 function startFriendOnlinePolling() {
   const poll = async () => {
@@ -6404,15 +6964,45 @@ function startFriendOnlinePolling() {
       const nowOnline = new Set(
         (data?.friends || []).filter(f => f.online).map(f => f.username)
       );
+      const friendsArr = data?.friends || [];
       if (_friendOnlineInit) {
         for (const username of nowOnline) {
           if (!_knownFriendsOnline.has(username)) {
             pushNotif('friend-online', 'Friend Online', `${username} is now online`);
           }
         }
+        // "Friend started playing" alerts: fire when a friend enters a server
+        // (or switches servers). Gated by its own notification setting.
+        if (state.settings?.notifFriendPlaying !== false) {
+          for (const f of friendsArr) {
+            if (!f.online || !f.playingServer) continue;
+            if (_knownFriendPlaying.get(f.username) !== f.playingServer) {
+              pushNotif('friend-playing', 'Friend Playing', `${f.username} just started playing ${f.playingServer}`);
+            }
+          }
+        }
       }
       _knownFriendsOnline.clear();
       nowOnline.forEach(u => _knownFriendsOnline.add(u));
+      // Refresh the playing map from this poll (drop friends no longer playing).
+      _knownFriendPlaying.clear();
+      // Reverse map: server name -> [friend usernames], for the card chip.
+      const byServer = {};
+      for (const f of friendsArr) {
+        if (f.online && f.playingServer) {
+          _knownFriendPlaying.set(f.username, f.playingServer);
+          (byServer[f.playingServer] = byServer[f.playingServer] || []).push(f.username);
+        }
+      }
+      const changed = JSON.stringify(byServer) !== JSON.stringify(state.friendsPlayingByServer || {});
+      state.friendsPlayingByServer = byServer;
+      // Nav Friends tab badge: how many friends are online.
+      const fb = document.getElementById('badge-friends');
+      if (fb) { fb.textContent = nowOnline.size; fb.style.display = nowOnline.size > 0 ? '' : 'none'; }
+      // Refresh cards so the "friends playing here" chip stays current.
+      if (changed && _friendOnlineInit && document.getElementById('server-grid')?.style.display !== 'none') {
+        renderServers();
+      }
       _friendOnlineInit = true;
     } catch {}
   };
@@ -6457,13 +7047,17 @@ function startFriendRequestPolling() {
     if (state.settings?.notifFriendRequests === false) return;
     try {
       const data = await api.getFriendRequests().catch(() => null);
-      for (const r of (data?.requests || [])) {
+      const reqs = data?.requests || [];
+      for (const r of reqs) {
         const who = r.username || r.from_user || r.sender;
         if (who && !_knownFriendRequests.has(who)) {
           _knownFriendRequests.add(who);
           pushNotif('friend-request', 'Friend Request', `${who} sent you a friend request`);
         }
       }
+      // Nav Friends tab: red dot while requests are pending.
+      const dot = document.getElementById('dot-friends-req');
+      if (dot) dot.style.display = reqs.length > 0 ? '' : 'none';
     } catch {}
   };
   setTimeout(poll, 5_000); // first check 5s after login
@@ -6581,7 +7175,7 @@ function startMessagePolling() {
             ${m.sender !== state.user.username
               ? `<span class="dm-sender">${renderName(m.sender, m.equipped)}</span>`
               : ''}
-            <div class="dm-bubble">${escHtml(m.content || m.message || '')}</div>
+            <div class="dm-bubble">${renderChatBody(m.content || m.message || '')}</div>
           </div>
         `).join('');
         if (wasBottom) msgEl.scrollTop = msgEl.scrollHeight;
@@ -8123,6 +8717,13 @@ function buildSettingsHTML(s) {
       </div>
       ${setToggleHtml('set-autoupdate', s.autoUpdateLauncher !== false)}
     </div>
+    <div class="set-row set-between">
+      <div>
+        <div class="set-label">Discord Rich Presence</div>
+        <div class="set-sub">Show the game you're playing on your Discord profile. Turn off to keep it private.</div>
+      </div>
+      ${setToggleHtml('set-discord-rpc', s.discordRpc !== false)}
+    </div>
   </div>
 
   <!-- ── NOTIFICATIONS ── -->
@@ -8131,6 +8732,7 @@ function buildSettingsHTML(s) {
     ${[
       ['set-nf-fr',     'notifFriendRequests', 'Friend Requests',  'When someone sends you a friend request'],
       ['set-nf-fo',     'notifFriendOnline',   'Friends Online',   'When a friend comes online'],
+      ['set-nf-fp',     'notifFriendPlaying',  'Friends Playing',  'When a friend starts playing a server'],
       ['set-nf-su',     'notifServerUpdates',  'Server Updates',   'When a server you play pushes an update'],
       ['set-nf-streak', 'notifStreakReminder',  'Streak Reminders', 'Remind you to play before your daily streak resets'],
       ['set-nf-sys',    'notifSystem',         'System Messages',  'Hub announcements and important updates'],
@@ -8235,6 +8837,7 @@ function buildSettingsHTML(s) {
       <div class="set-row set-between" style="gap:8px">
         <input class="set-input" id="set-ref-code" type="text" readonly style="flex:1;text-transform:uppercase;letter-spacing:2px;font-family:monospace;background:#1a1610">
         <button class="set-browse-btn" id="set-ref-copy">Copy Code</button>
+        <button class="set-browse-btn" id="set-ref-copy-link">Copy Link</button>
       </div>
     </div>
     <div class="set-row set-col" style="margin-top:8px">
@@ -8319,6 +8922,8 @@ function bindSettingsEvents(el, initial) {
   // Launcher toggles
   el.querySelector('#set-minimize')?.addEventListener('change', e =>
     save('minimizeOnLaunch', e.target.checked));
+  el.querySelector('#set-discord-rpc')?.addEventListener('change', e =>
+    save('discordRpc', e.target.checked));
   el.querySelector('#set-autoupdate')?.addEventListener('change', async e => {
     const enabled = e.target.checked;
     // Persist locally so the renderer can show the right toggle state next time
@@ -8332,6 +8937,7 @@ function bindSettingsEvents(el, initial) {
   const notifMap = {
     'set-nf-fr':     'notifFriendRequests',
     'set-nf-fo':     'notifFriendOnline',
+    'set-nf-fp':     'notifFriendPlaying',
     'set-nf-su':     'notifServerUpdates',
     'set-nf-streak': 'notifStreakReminder',
     'set-nf-sys':    'notifSystem',
@@ -8382,6 +8988,17 @@ function bindSettingsEvents(el, initial) {
       btn.textContent = 'Copied!';
       setTimeout(() => { btn.textContent = orig; }, 1500);
     }).catch(() => showToast('Could not copy. Select the code manually.', 'error'));
+  });
+  el.querySelector('#set-ref-copy-link')?.addEventListener('click', () => {
+    const code = el.querySelector('#set-ref-code')?.value;
+    if (!code) return;
+    const link = `https://therspshub.com/register.html?ref=${encodeURIComponent(code)}`;
+    navigator.clipboard.writeText(link).then(() => {
+      const btn = el.querySelector('#set-ref-copy-link');
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    }).catch(() => showToast('Could not copy link.', 'error'));
   });
 
   // Discord link status + actions

@@ -174,6 +174,8 @@
     <div class="rs-tab" data-panel="friends">
       <span class="rs-tab-icon">👥</span>
       <span class="rs-tab-label">FRIENDS</span>
+      <span class="tab-badge" id="badge-friends" style="display:none">0</span>
+      <span class="tab-req-dot" id="dot-friends-req" style="display:none"></span>
     </div>
     <div class="rs-tab" data-panel="chat">
       <span class="rs-tab-icon">💬</span>
@@ -184,6 +186,10 @@
       <span class="rs-tab-icon">🌐</span>
       <span class="rs-tab-label">HUB</span>
       <span class="tab-badge" id="badge-groupchat" style="display:none">0</span>
+    </div>
+    <div class="rs-tab" data-panel="activity">
+      <span class="rs-tab-icon">⚡</span>
+      <span class="rs-tab-label">ACTIVITY</span>
     </div>
     <div class="rs-tab" data-panel="stats">
       <span class="rs-tab-icon">📜</span>
@@ -233,6 +239,7 @@
       <div class="search-row">
         <div class="search-wrap">
           <input class="search-input" id="search-input" type="text" placeholder="Search for a server...">
+          <button class="search-clear" id="search-clear" type="button" aria-label="Clear search" hidden>✕</button>
         </div>
         <span class="sort-label">Sort by:</span>
         <select class="sort-select" id="sort-select">
@@ -272,6 +279,9 @@
 
     <!-- LOADING -->
     <div id="loading-indicator" class="loading-msg" style="display:none">Loading servers...</div>
+
+    <!-- LIVE ACTIVITY (who's playing right now, Hub-wide) -->
+    <div class="live-activity" id="live-activity" hidden></div>
 
     <!-- SERVER GRID -->
     <div class="server-list" id="server-grid"></div>
