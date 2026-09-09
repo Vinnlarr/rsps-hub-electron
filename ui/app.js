@@ -543,6 +543,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       startAnnouncementPolling();
       startNewsNotificationPolling();
       startNewVideoPolling();
+      startVoteReminderPolling();
       startPlaytimeRefresh();
       // Prefetch tab data so Stats/Friends/Chat open instantly from cache.
       prefetchTabs();
@@ -1463,18 +1464,21 @@ setInterval(() => {
   if (expired && typeof renderServers === 'function') renderServers();
 }, 30000);
 
+// Returns true only when a vote was actually recorded (so callers like the Home
+// "vote ready" strip can remove the row only on a real vote, not on cancel).
 async function castVote(server, btn) {
   const token = state.user && state.user.token;
-  if (!token) { showToast('Log in to vote for servers.', 'error'); return; }
+  if (!token) { showToast('Log in to vote for servers.', 'error'); return false; }
   // Ask for the in-game name so the server can match the vote and hand out the
   // reward, same as the website flow. Remember the last name entered.
   const remembered = localStorage.getItem('voteIgn') || (state.user && state.user.username) || '';
   const entered = await promptThemed('Vote for ' + server.name, 'Your in-game name (so the server can give you your reward)', remembered);
-  if (entered === null) return;                 // cancelled
+  if (entered === null) return false;           // cancelled
   const ign = entered.trim();
-  if (!ign) { showToast('Enter your in-game name to vote.', 'error'); return; }
+  if (!ign) { showToast('Enter your in-game name to vote.', 'error'); return false; }
   localStorage.setItem('voteIgn', ign);
   if (btn) { btn.disabled = true; btn.textContent = 'Voting…'; }
+  let ok = false;
   try {
     const res = await fetch('https://api.therspshub.com/api/vote/cast.php', {
       method: 'POST',
@@ -1483,6 +1487,7 @@ async function castVote(server, btn) {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.success) {
+      ok = true;
       setVoteCooldown(server, data.cooldown_seconds);
       const v = state.votes[server.id] || (state.votes[server.id] = { month_votes: 0, all_votes: 0 });
       v.month_votes = (v.month_votes || 0) + 1;
@@ -1499,7 +1504,10 @@ async function castVote(server, btn) {
   } catch (e) {
     showToast('Could not vote (network).', 'error');
   }
+  // Restore the button if the vote didn't go through, so it stays usable.
+  if (!ok && btn) { btn.disabled = false; }
   renderServers();
+  return ok;
 }
 
 // One-shot per launcher session — see loadServers() above.
@@ -2240,6 +2248,11 @@ async function renderHome(el) {
 
       <div class="home-ticker" id="home-ticker" hidden></div>
 
+      <div class="home-section home-vote-sec" id="home-vote-sec" hidden>
+        <h2>&#128499;&#65039; Your vote is ready</h2>
+        <div class="home-vote-list" id="home-vote-list"></div>
+      </div>
+
       ${jump ? `
       <div class="home-section home-jump-sec">
         <h2>Jump back in</h2>
@@ -2274,6 +2287,38 @@ async function renderHome(el) {
     const s = (state.servers || []).find(x => x.name === b.dataset.homeOpen); if (s) showServerDetail(s);
   }));
   el.querySelector('[data-home-play]')?.addEventListener('click', () => { if (jump) joinFriendServer(jump.id, jump.name); });
+
+  // "Your vote is ready" strip — servers you vote for whose 12h cooldown is up.
+  (async () => {
+    let ready = [];
+    try {
+      const d = await fetch('https://api.therspshub.com/api/vote/reminders.php', {
+        headers: { 'Authorization': 'Bearer ' + (u.token || '') }, cache: 'no-store'
+      }).then(r => r.ok ? r.json() : null);
+      ready = (d && d.ready) || [];
+    } catch (_) {}
+    const sec = el.querySelector('#home-vote-sec'), host = el.querySelector('#home-vote-list');
+    if (!host || !ready.length) return;
+    host.innerHTML = ready.map(s => `
+      <div class="home-vote">
+        ${s.icon_url ? `<img class="hv-ic" src="${escAttr(s.icon_url)}" alt="">` : `<span class="hv-ic hv-ic-ph">${escHtml((s.name || '?').slice(0,2).toUpperCase())}</span>`}
+        <span class="hv-nm">${escHtml(s.name)}</span>
+        <button class="hv-vote" data-vote-sid="${s.server_id}" data-vote-name="${escAttr(s.name)}">&#128499;&#65039; Vote</button>
+      </div>`).join('');
+    host.querySelectorAll('.hv-vote').forEach(b => b.addEventListener('click', async () => {
+      const sid = +b.dataset.voteSid;
+      const srv = (state.servers || []).find(x => String(x.id) === String(sid)) || { id: sid, name: b.dataset.voteName };
+      const orig = b.innerHTML;
+      const ok = (typeof castVote === 'function') ? await castVote(srv, b) : false;
+      if (ok) {
+        const row = b.closest('.home-vote'); if (row) row.remove();
+        if (host && !host.children.length && sec) sec.hidden = true;
+      } else {
+        b.disabled = false; b.innerHTML = orig;   // cancelled or failed — keep the row
+      }
+    }));
+    if (sec) sec.hidden = false;
+  })();
 
   // "Latest videos" strip — newest community videos, opens in the player.
   (async () => {
@@ -6581,6 +6626,7 @@ function setupAuthForms() {
     startHeartbeat(); startMessagePolling(); startFriendRequestPolling(); startHubActivityPolling();
     startFriendOnlinePolling(); startRoomUnreadPolling(); startAnnouncementPolling(); startNewsNotificationPolling();
     startNewVideoPolling();
+    startVoteReminderPolling();
     startPlaytimeRefresh();
     // Kick off background prefetch for expensive tab data so the first
     // click on Stats / Friends / Chat renders instantly from cache.
@@ -7025,6 +7071,7 @@ const NOTIF_ICONS = {
   'pin':            '📌',
   'new-video':      '🎬',
   'video_comment':  '💬',
+  'vote-ready':     '🗳️',
 };
 
 function pushNotif(type, title, msg) {
@@ -7148,6 +7195,18 @@ function renderNotifDropdown() {
       item.classList.remove('notif-unread');
       closeAllDropdowns();
       if (typeof setActiveNavTab === 'function') setActiveNavTab('videos');
+    });
+  });
+  // Vote-ready notifications jump to the server list (where the Vote buttons live).
+  list.querySelectorAll('[data-notif-type="vote-ready"]').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const stored = NOTIF_STORE.find(n => String(n.id) === item.dataset.notifId);
+      if (stored) stored.read = true;
+      updateNotifBadge();
+      item.classList.remove('notif-unread');
+      closeAllDropdowns();
+      if (typeof setActiveNavTab === 'function') setActiveNavTab('store');
     });
   });
 }
@@ -7331,6 +7390,37 @@ function startNewVideoPolling() {
   };
   setTimeout(poll, 12_000);
   setInterval(poll, 120_000);
+}
+
+// ── VOTE-READY REMINDERS ──────────────────────────────────────────────────────
+// Reminds you when a server you vote for is off its 12h cooldown — the daily
+// return hook. Fires bell notifications; the Home "vote again" strip fetches
+// the same endpoint on render.
+let _voteReadyInit = false;
+const _voteReadyNotified = new Set();
+function startVoteReminderPolling() {
+  const poll = async () => {
+    if (!state.user?.username) return;
+    if (state.settings?.notifVoteReady === false) return;
+    try {
+      const d = await fetch('https://api.therspshub.com/api/vote/reminders.php', {
+        headers: { 'Authorization': 'Bearer ' + (state.user.token || '') }, cache: 'no-store'
+      }).then(r => r.ok ? r.json() : null).catch(() => null);
+      const ready = (d && Array.isArray(d.ready)) ? d.ready : [];
+      for (const s of ready) {
+        if (_voteReadyNotified.has(s.server_id)) continue;
+        _voteReadyNotified.add(s.server_id);
+        pushNotif('vote-ready', 'Vote ready', `Your vote for ${s.name} is ready again`);
+      }
+      // Forget servers no longer ready (voted since) so a later expiry re-fires.
+      for (const id of Array.from(_voteReadyNotified)) {
+        if (!ready.some(s => s.server_id === id)) _voteReadyNotified.delete(id);
+      }
+      _voteReadyInit = true;
+    } catch {}
+  };
+  setTimeout(poll, 15_000);
+  setInterval(poll, 5 * 60_000);
 }
 
 // ── ANNOUNCEMENT POLLING ──────────────────────────────────────────────────────
@@ -9060,6 +9150,7 @@ function buildSettingsHTML(s) {
       ['set-nf-streak', 'notifStreakReminder',  'Streak Reminders', 'Remind you to play before your daily streak resets'],
       ['set-nf-sys',    'notifSystem',         'System Messages',  'Hub announcements and important updates'],
       ['set-nf-nv',     'notifNewVideo',       'New Videos',       'When a creator posts a new video'],
+      ['set-nf-vr',     'notifVoteReady',      'Vote Reminders',   'When a server you vote for can be voted for again'],
     ].map(([id, key, lbl, sub]) => `
       <div class="set-row set-between">
         <div>
@@ -9255,6 +9346,7 @@ function bindSettingsEvents(el, initial) {
     'set-nf-streak': 'notifStreakReminder',
     'set-nf-sys':    'notifSystem',
     'set-nf-nv':     'notifNewVideo',
+    'set-nf-vr':     'notifVoteReady',
   };
   Object.entries(notifMap).forEach(([id, key]) => {
     el.querySelector(`#${id}`)?.addEventListener('change', e => save(key, e.target.checked));
