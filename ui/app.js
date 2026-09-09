@@ -659,6 +659,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     try { window.RspsHubForceUpdate.init(); } catch (_) {}
   }
 
+  // rspshub:// deep links from the website. The main process forwards them
+  // here as { action, target }; target is a server id or name.
+  try { window.hub.onDeepLink?.(handleDeepLink); } catch (_) {}
+
   // First-launch onboarding tour. Auto-fires once per device when the
   // signed-in user lands on the store with the UI fully painted. No-op
   // after the first completion. Users can re-run via Settings.
@@ -5782,6 +5786,36 @@ async function openServerSharePicker(server) {
       else { const pb = document.getElementById('slide-panel-body'); if (pb) openDM(pb, u); }
     } catch { showToast('Could not send.', 'error'); }
   }));
+}
+
+/**
+ * Handle an rspshub:// deep link. Opens the named server's detail modal, and
+ * for a vote link casts the vote straight away so a click on the website
+ * finishes in the launcher rather than dumping the user on a list to search.
+ *
+ * The server list may not be loaded yet on a cold start, so this waits for it
+ * rather than silently doing nothing.
+ */
+async function handleDeepLink(link) {
+  if (!link || !link.target) return;
+  const target = String(link.target).toLowerCase();
+
+  // Wait up to ~10s for the server list, polling gently.
+  for (let i = 0; i < 40 && !(state.servers || []).length; i++) {
+    await new Promise(r => setTimeout(r, 250));
+  }
+  const server = (state.servers || []).find(s =>
+    String(s.id) === target || (s.name || '').toLowerCase() === target);
+  if (!server) {
+    try { setActiveNavTab('store'); } catch (_) {}
+    return;
+  }
+
+  try { setActiveNavTab('store'); } catch (_) {}
+  showServerDetail(server);
+  if (link.action === 'vote') {
+    try { await castVote(server); } catch (_) {}
+  }
 }
 
 function showServerDetail(server) {

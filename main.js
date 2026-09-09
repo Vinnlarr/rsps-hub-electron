@@ -77,6 +77,49 @@ const API_SECRET = require('crypto').randomBytes(32).toString('hex');
 let mainWindow;
 let javaProcess;
 
+// ── DEEP LINKS (rspshub://) ──────────────────────────────────────────────────
+// Lets the website hand a user straight to a server inside the launcher, e.g.
+//   rspshub://server/42        open server 42's page
+//   rspshub://vote/42          open server 42 with the vote action
+// Windows and Linux deliver the URL as an argv entry (on first launch, or via
+// the second-instance event when the app is already running); macOS delivers
+// it through the open-url event instead. A link that arrives before the window
+// is ready is parked in pendingDeepLink and replayed once the renderer loads.
+let pendingDeepLink = null;
+
+function parseDeepLink(url) {
+  if (typeof url !== 'string' || !url.toLowerCase().startsWith('rspshub://')) return null;
+  let parsed;
+  try { parsed = new URL(url); } catch (_) { return null; }
+  // "rspshub://server/42" puts "server" in host and "/42" in pathname.
+  const action = (parsed.hostname || '').toLowerCase();
+  const rest   = decodeURIComponent((parsed.pathname || '').replace(/^\/+/, '')).trim();
+  if (action !== 'server' && action !== 'vote') return null;
+  if (!rest) return null;
+  // Accept an id or a server name, but keep it bounded so a hostile link can't
+  // push an arbitrary payload into the renderer.
+  if (rest.length > 64) return null;
+  return { action, target: rest };
+}
+
+function deliverDeepLink(link) {
+  if (!link) return;
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isLoading()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send('deep-link', link);
+  } else {
+    pendingDeepLink = link;
+  }
+}
+
+/** Pull the first rspshub:// argument out of a process argv array. */
+function deepLinkFromArgv(argv) {
+  const hit = (argv || []).find(a => typeof a === 'string' && a.toLowerCase().startsWith('rspshub://'));
+  return hit ? parseDeepLink(hit) : null;
+}
+
 // ── JAVA BACKEND ─────────────────────────────────────────────────────────────
 
 function killPortIfBusy(port) {
@@ -219,6 +262,15 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'ui', 'index.html'));
+
+  // Replay a link that arrived before the UI existed (cold start from a
+  // browser click). Fires once; the renderer is ready to receive by now.
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (!pendingDeepLink) return;
+    const link = pendingDeepLink;
+    pendingDeepLink = null;
+    mainWindow.webContents.send('deep-link', link);
+  });
 
   // Defense-in-depth: even though devTools:false blocks openDevTools(), also
   // intercept the keyboard shortcuts (F12, Ctrl+Shift+I/J/C, Cmd+Opt+I)
@@ -1057,7 +1109,47 @@ function installTrailerReferrerShim() {
   });
 }
 
+// Only one launcher at a time. Beyond being the behaviour people expect, it is
+// what makes deep links work: a second launch carrying an rspshub:// URL hands
+// that URL to the running instance and exits, instead of booting a rival copy
+// that would fight over the Java backend's port.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const link = deepLinkFromArgv(argv);
+    if (link) deliverDeepLink(link);
+    else if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
+// macOS hands deep links to the running app here rather than through argv.
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  const link = parseDeepLink(url);
+  if (link) deliverDeepLink(link);
+});
+
 app.whenReady().then(() => {
+  // Register rspshub:// with the OS. In development the executable is Electron
+  // itself, so the path plus the app directory have to be passed explicitly or
+  // Windows registers the wrong command.
+  try {
+    if (process.defaultApp && process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient('rspshub', process.execPath, [path.resolve(process.argv[1])]);
+    } else {
+      app.setAsDefaultProtocolClient('rspshub');
+    }
+  } catch (e) { console.warn('[deep-link] could not register protocol', e.message); }
+
+  // A cold start from a link arrives in our own argv.
+  pendingDeepLink = deepLinkFromArgv(process.argv) || pendingDeepLink;
+
   buildApplicationMenu();
   installTrailerReferrerShim();
   startJavaBackend();

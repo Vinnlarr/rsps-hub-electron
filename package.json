@@ -83,7 +83,15 @@
       "provider": "github",
       "owner": "Vinnlarr",
       "repo": "rsps-hub-electron"
-    }
+    },
+    "protocols": [
+      {
+        "name": "RSPS Hub",
+        "schemes": [
+          "rspshub"
+        ]
+      }
+    ]
   },
   "dependencies": {
     "electron-log": "^5.4.3",
