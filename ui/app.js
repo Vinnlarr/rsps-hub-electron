@@ -1643,8 +1643,8 @@ function getFilteredServers() {
   }
 
   // Sort
-  if (state.sortOrder === 'players')   list.sort((a, b) => (b.hubPlayers || 0) - (a.hubPlayers || 0));
-  if (state.sortOrder === 'votes')     list.sort((a, b) => serverVoteCount(b) - serverVoteCount(a) || (b.hubPlayers || 0) - (a.hubPlayers || 0));
+  if (state.sortOrder === 'players')   list.sort((a, b) => (b.hoursPlayed || 0) - (a.hoursPlayed || 0));
+  if (state.sortOrder === 'votes')     list.sort((a, b) => serverVoteCount(b) - serverVoteCount(a) || (b.hoursPlayed || 0) - (a.hoursPlayed || 0));
   // The Java backend serialises these as camelCase (`reviewCount`,
   // `avgRating`). The PHP endpoint uses snake_case but Java's
   // ServerProfile maps with @SerializedName and re-emits camelCase. Reading
@@ -1727,20 +1727,22 @@ function startHubActivityPolling() {
 function renderLiveActivity() {
   const el = document.getElementById('live-activity');
   if (!el) return;
+  // Headline the total hours the community has played through the Hub, not a
+  // live headcount. The chips still rank servers, but by hours played.
   const active = (state.servers || [])
-    .filter(s => (s.hubPlayers || 0) > 0)
-    .sort((a, b) => (b.hubPlayers || 0) - (a.hubPlayers || 0));
-  const chipTotal = active.reduce((n, s) => n + (s.hubPlayers || 0), 0);
-  const online = _hubActivity?.online ?? 0;
-  const inGame = _hubActivity?.in_game ?? chipTotal;
-  if (online <= 0 && inGame <= 0 && chipTotal <= 0) { el.hidden = true; el.innerHTML = ''; return; }
+    .filter(s => (s.hoursPlayed || 0) > 0)
+    .sort((a, b) => (b.hoursPlayed || 0) - (a.hoursPlayed || 0));
+  const totalHours = _hubActivity?.total_hours
+    ?? active.reduce((n, s) => n + (s.hoursPlayed || 0), 0);
+  const trackedServers = _hubActivity?.tracked_servers ?? active.length;
+  if (totalHours <= 0) { el.hidden = true; el.innerHTML = ''; return; }
   const chips = active.slice(0, 4).map(s =>
-    `<button class="la-chip" data-la-server="${escAttr(s.name)}">${escHtml(s.name)} <b>${s.hubPlayers}</b></button>`
+    `<button class="la-chip" data-la-server="${escAttr(s.name)}">${escHtml(s.name)} <b>${(s.hoursPlayed || 0).toLocaleString()}h</b></button>`
   ).join('');
   el.innerHTML =
     '<span class="la-pulse"></span>' +
-    `<span class="la-count"><b>${online}</b> online</span>` +
-    (inGame > 0 ? `<span class="la-sep">·</span><span class="la-count"><b>${inGame}</b> in-game now</span>` : '') +
+    `<span class="la-count"><b>${totalHours.toLocaleString()}</b> hours played</span>` +
+    (trackedServers > 0 ? `<span class="la-sep">·</span><span class="la-count">across <b>${trackedServers}</b> servers</span>` : '') +
     (chips ? `<span class="la-sep">·</span><span class="la-chips">${chips}</span>` : '');
   el.hidden = false;
   el.querySelectorAll('[data-la-server]').forEach(btn => {
@@ -2035,12 +2037,13 @@ function renderFavSidebar() {
  *  - Otherwise just show the hub count we trust directly.
  */
 function buildPlayerCountHTML(server, hubPlayers) {
-  // Always single-line, byte-identical to the original. The server-reported
-  // live count (when fresh) is rendered as a floating badge on the banner
-  // image instead — see buildLiveBadgeHTML — so the action column stays
-  // the same size as every other card.
-  return (hubPlayers > 0 ? '<span class="player-pulse"></span>' : '▲ ') +
-         `${formatNumber(hubPlayers)} Hub Players Online`;
+  // We show total hours played through the Hub rather than a live headcount.
+  // Hours are measured by our own client so they can't be inflated, and they
+  // don't make a healthy server look dead just because it's 4am.
+  const hrs = server.hoursPlayed || 0;
+  if (hrs <= 0) return '▲ New listing';
+  return (hubPlayers > 0 ? '<span class="player-pulse"></span>' : '') +
+         `${formatNumber(hrs)} Hours Played`;
 }
 
 /** Returns an HTML snippet for the "X in game" pill that overlays the
@@ -2160,11 +2163,12 @@ function homeReducedMotion() {
 }
 function homeCountUp(node, to, dur) {
   if (!node) return; to = to | 0;
-  if (to <= 0 || homeReducedMotion()) { node.textContent = to; return; }
+  const fmt = (n) => n.toLocaleString();
+  if (to <= 0 || homeReducedMotion()) { node.textContent = fmt(to); return; }
   const start = performance.now();
   (function step(t) {
     const p = Math.min(1, (t - start) / dur);
-    node.textContent = Math.round((1 - Math.pow(1 - p, 3)) * to);
+    node.textContent = fmt(Math.round((1 - Math.pow(1 - p, 3)) * to));
     if (p < 1) requestAnimationFrame(step);
   })(start);
 }
@@ -2345,9 +2349,9 @@ async function renderHome(el) {
 
   (async () => { try { const r = await fetch('https://api.therspshub.com/api/activity/live.php', { cache: 'no-store' });
     if (r.ok) { const d = await r.json(); const le = el.querySelector('#home-live');
-      if (le) { le.innerHTML = '<span class="hl-dot"></span> <b id="hl-on">0</b> online, <b id="hl-ig">0</b> in game right now';
-        homeCountUp(el.querySelector('#hl-on'), d.online || 0, 900);
-        homeCountUp(el.querySelector('#hl-ig'), d.in_game || 0, 900); } } } catch (_) {} })();
+      if (le) { le.innerHTML = '<span class="hl-dot"></span> <b id="hl-hrs">0</b> hours played across <b id="hl-srv">0</b> servers';
+        homeCountUp(el.querySelector('#hl-hrs'), d.total_hours || 0, 900);
+        homeCountUp(el.querySelector('#hl-srv'), d.tracked_servers || 0, 900); } } } catch (_) {} })();
 
   // If equipped cosmetics weren't cached yet, fetch and re-skin the name.
   if (!homeEquipped) { (async () => {
@@ -2357,13 +2361,13 @@ async function renderHome(el) {
     } catch (_) {}
   })(); }
 
-  // "Playing now" ticker: servers with players in game right now, scrolling.
+  // "Most played" ticker: servers ranked by hours played through the Hub.
   (function () {
     const tk = el.querySelector('#home-ticker'); if (!tk) return;
-    const active = (state.servers || []).filter(s => (s.hubPlayers || 0) > 0)
-      .sort((a, b) => (b.hubPlayers || 0) - (a.hubPlayers || 0));
+    const active = (state.servers || []).filter(s => (s.hoursPlayed || 0) > 0)
+      .sort((a, b) => (b.hoursPlayed || 0) - (a.hoursPlayed || 0)).slice(0, 12);
     if (!active.length) { tk.hidden = true; return; }
-    const items = active.map(s => `<span class="tk-item"><span class="tk-dot"></span>${escHtml(s.name)} <b>${s.hubPlayers}</b></span>`).join('');
+    const items = active.map(s => `<span class="tk-item"><span class="tk-dot"></span>${escHtml(s.name)} <b>${(s.hoursPlayed || 0).toLocaleString()}h</b></span>`).join('');
     tk.innerHTML = `<div class="tk-track">${items}${items}</div>`;
     tk.hidden = false;
     tk.querySelectorAll('.tk-item').forEach(it => it.addEventListener('click', () => {}));
@@ -5842,7 +5846,16 @@ function showServerDetail(server) {
 
       <!-- STATS ROW -->
       <div class="sd-stats-row">
-        <div class="sd-stat"><span class="sd-stat-val">${players.toLocaleString()}</span><span class="sd-stat-lbl">Hub Players Online</span></div>
+        <div class="sd-stat"><span class="sd-stat-val">${(server.hoursPlayed || 0).toLocaleString()}</span><span class="sd-stat-lbl">Hours Played</span></div>
+        ${(() => {
+          // Servers that push a heartbeat still get their live count shown
+          // beside the hours. Stale reports (>10 min) are dropped so a crashed
+          // server can't leave an old number on screen.
+          const age = server.playersOnlineAgeSeconds;
+          const fresh = typeof age === 'number' && age >= 0 && age < 600;
+          if (!fresh || !(server.playersOnline > 0)) return '';
+          return `<div class="sd-stat"><span class="sd-stat-val">${formatNumber(server.playersOnline)}</span><span class="sd-stat-lbl">In Game Now</span></div>`;
+        })()}
         ${stars ? `<div class="sd-stat"><span class="sd-stat-val sd-stars" title="${(server.avgRating||0).toFixed(1)}/5">${stars}</span><span class="sd-stat-lbl">${server.reviewCount || 0} Reviews</span></div>` : ''}
       </div>
 
@@ -7903,7 +7916,7 @@ function renderDevServerList(el, servers, isAll, fallbackReason) {
           <div class="dp-server-badges">
             <span class="dp-badge ${s.approved ? 'dp-badge-ok' : 'dp-badge-warn'}">${s.approved ? 'Approved' : 'Pending'}</span>
             <span class="dp-badge ${s.serverOnline === 1 ? 'dp-badge-ok' : 'dp-badge-off'}">${s.serverOnline === 1 ? 'Online' : 'Offline'}</span>
-            ${s.hubPlayers > 0 ? `<span class="dp-badge">${s.hubPlayers} hub players</span>` : ''}
+            ${s.hoursPlayed > 0 ? `<span class="dp-badge">${s.hoursPlayed.toLocaleString()} hours played</span>` : ''}
             ${s.jarSha256
               ? `<span class="dp-badge dp-badge-ok" title="${escAttr(s.jarSha256)}">✓ Hash ${escHtml(s.jarSha256.slice(0,8))}</span>`
               : `<span class="dp-badge dp-badge-warn">⚠ No hash</span>`}
