@@ -5712,3 +5712,30 @@ h5.news-md-h { font-size: 0.88rem; color: var(--accent); }
   transition: border-color 0.15s, background 0.15s;
 }
 .dp-snippet:hover { border-color: var(--accent); background: #14100a; }
+
+
+/* Server detail SAFETY panel. Explains what the Hub actually verifies about a
+   downloaded client, in plain language rather than a SHA-256 nobody can use. */
+.sd-trust-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sd-trust-list li {
+  position: relative;
+  padding-left: 22px;
+  color: #a89a72;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.sd-trust-list li::before {
+  content: '¹3';
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: #7ad88a;
+  font-weight: 700;
+}

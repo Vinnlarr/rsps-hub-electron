@@ -1531,6 +1531,10 @@ async function refreshInstalledJars() {
       // Java decides whether to actually re-download based on remote
       // ETag / Last-Modified / size; if unchanged, this is a no-op HEAD.
       const res = await api.install(s.name, s.jarUrl, s.jarSha256, s.jarSizeBytes);
+      // Silent unless the client drifted from its approved fingerprint: this
+      // loop runs across every installed server, so a toast per success would
+      // be noise, but a mismatch found here is exactly what we want surfaced.
+      reportInstallIntegrity(s, res, true);
       if (res?.success) updated += 1;
     } catch (_) { /* best effort; never block the user */ }
   }
@@ -1916,6 +1920,7 @@ function buildServerCard(server) {
       }
       if (action === 'install') {
         const result = await api.install(server.name, server.jarUrl, server.jarSha256, server.jarSizeBytes);
+        reportInstallIntegrity(server, result);
         if (result && result.error) {
           showToast('Install failed: ' + result.error, 'error');
           btn.classList.remove('is-loading');
@@ -5818,6 +5823,26 @@ async function handleDeepLink(link) {
   }
 }
 
+/**
+ * React to the integrity check the backend ran on a freshly downloaded client.
+ *
+ * A mismatch is shown, never enforced. The usual cause is a server owner
+ * replacing their JAR in place without telling us, and refusing to launch
+ * would lock every player out of that server until a staff member re-hashed
+ * it by hand. The player is told plainly and decides for themselves.
+ */
+function reportInstallIntegrity(server, result, quietWhenFine) {
+  const status = result && result.hashStatus;
+  if (status === 'mismatch') {
+    showToast(
+      server.name + ': this client does not match the version the Hub approved. ' +
+      'It may just be an update the owner has not registered yet, but treat it with caution.',
+      'error');
+  } else if (status === 'verified' && !quietWhenFine) {
+    showToast(server.name + ': client verified against the Hub fingerprint.', 'success');
+  }
+}
+
 function showServerDetail(server) {
   // Remove any existing detail modal
   document.getElementById('server-detail-overlay')?.remove();
@@ -5950,12 +5975,23 @@ function showServerDetail(server) {
             : `<div class="sd-empty-section">No changelog posted yet — check back later for patch notes.</div>`}
         </div>
 
-        ${''/* Client integrity hash was previously surfaced here in the
-              UI but it's not useful to regular users (they can't do
-              anything with a SHA-256) and the rare staff need for it
-              is better served by the dev portal Re-hash button which
-              shows the value. Stays in the DB and enforced silently
-              on every download. */}
+        ${''/* The raw SHA-256 is deliberately not shown: a hex string means
+              nothing to a player and the staff path for it is the dev
+              portal's Re-hash button. What IS worth showing is what the
+              Hub actually does with it, since "why should I trust this
+              launcher with a stranger's JAR" is the real objection. Every
+              claim below is enforced in LauncherEngine.downloadClient. */}
+        <div class="sd-section sd-trust">
+          <h3 class="sd-section-title">SAFETY</h3>
+          <ul class="sd-trust-list">
+            <li>${server.jarSha256
+                  ? 'The Hub has a fingerprint on file for this client and checks every download against it.'
+                  : 'No fingerprint on file for this client yet, so downloads cannot be checked.'}</li>
+            <li>If a download does not match, you are warned before you play. The Hub does not block it, so a server updating its client never locks you out.</li>
+            <li>Downloads must use HTTPS. Plain HTTP links are refused.</li>
+            <li>When an owner changes their download link, staff review it before it reaches players.</li>
+          </ul>
+        </div>
 
         ${state.user?.isStaff ? `
         <div class="sd-section sd-staff-review">
@@ -6147,6 +6183,7 @@ function showServerDetail(server) {
       btn.classList.remove('install-btn');
       try {
         const result = await api.install(server.name, server.jarUrl, server.jarSha256, server.jarSizeBytes);
+        reportInstallIntegrity(server, result);
         if (result?.success) {
           await loadServers();
           closeServerDetail();
