@@ -169,6 +169,10 @@ function startJavaBackend() {
     // X-Launcher-Version. The hub API uses this to refuse old launchers
     // and force them through the auto-updater.
     RSPS_HUB_LAUNCHER_VERSION: app.getVersion(),
+    // Our own PID, so the backend can shut itself down when we're gone
+    // however we went (see startParentWatchdog in main.java). It can't watch
+    // its own parent: on Windows that's the cmd.exe wrapper, not us.
+    RSPS_HUB_PARENT_PID: String(process.pid),
   };
   if (hasBundledJre) childEnv.JAVA_HOME = bundledJreHome;
 
@@ -1179,11 +1183,12 @@ function killJava() {
   javaProcess = null;
 }
 
+// Closing the launcher no longer kills the backend. taskkill /T took its
+// whole process tree, including any game started through the Hub, and a
+// game should keep running when the launcher closes. The backend's parent
+// watchdog shuts it down within ~2s of us exiting, or stays until the last
+// game closes so that session is still counted. The update installer is the
+// one exception: it kills Java outright (see 'install-update').
 app.on('window-all-closed', () => {
-  killJava();
   if (process.platform !== 'darwin') app.quit();
-});
-
-app.on('before-quit', () => {
-  killJava();
 });
