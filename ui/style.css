@@ -5732,7 +5732,7 @@ h5.news-md-h { font-size: 0.88rem; color: var(--accent); }
   line-height: 1.5;
 }
 .sd-trust-list li::before {
-  content: '¹3';
+  content: '\2713';
   position: absolute;
   left: 0;
   top: 0;

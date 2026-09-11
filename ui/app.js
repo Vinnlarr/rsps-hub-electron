@@ -659,9 +659,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     try { window.RspsHubForceUpdate.init(); } catch (_) {}
   }
 
-  // rspshub:// deep links from the website. The main process forwards them
-  // here as { action, target }; target is a server id or name.
-  try { window.hub.onDeepLink?.(handleDeepLink); } catch (_) {}
+  // rspshub:// deep links from the website. The main process parks each link
+  // and we collect it: now, for a cold start from a link (after we've landed,
+  // so boot's jump to Home can't override it), and whenever we're nudged about
+  // a link clicked while the Hub is open. Signed-out players get theirs after
+  // logging in, via window.__hubTakeDeepLink.
+  const takeDeepLink = async () => {
+    try { const link = await window.hub.takeDeepLink?.(); if (link) handleDeepLink(link); } catch (_) {}
+  };
+  window.__hubTakeDeepLink = takeDeepLink;
+  try { window.hub.onDeepLink?.(() => { if (state.user) takeDeepLink(); }); } catch (_) {}
+  if (state.user) takeDeepLink();
 
   // First-launch onboarding tour. Auto-fires once per device when the
   // signed-in user lands on the store with the UI fully painted. No-op
@@ -6194,9 +6202,9 @@ function showServerDetail(server) {
             <li>${server.jarSha256
                   ? 'The Hub has a fingerprint on file for this client and checks every download against it.'
                   : 'No fingerprint on file for this client yet, so downloads cannot be checked.'}</li>
-            <li>If a download does not match, you are warned before you play. The Hub does not block it, so a server updating its client never locks you out.</li>
+            <li>If the owner changes the download link, staff approve the new link before anyone gets it.</li>
+            <li>If the file behind the link changes, usually the owner updating their client, you get a warning when it downloads. You can still play, so an update never locks you out.</li>
             <li>Downloads must use HTTPS. Plain HTTP links are refused.</li>
-            <li>When an owner changes their download link, staff review it before it reaches players.</li>
           </ul>
         </div>
 
@@ -6803,6 +6811,9 @@ function hideAuthScreen() {
   const canvas = document.getElementById('auth-canvas');
   if (canvas) canvas._animating = false;
   setTimeout(() => { el.style.display = 'none'; }, 520);
+  // Signed in now: collect an "Open in launcher" link that arrived while
+  // the login screen was up. No-op if there isn't one.
+  window.__hubTakeDeepLink?.();
 }
 
 function setupAuthForms() {
@@ -8954,6 +8965,18 @@ try (Response res = http.newCall(check).execute()) {
           Uncheck to hide your listing while you polish it.
         </div>
       </div>` : ''}
+      ${!isNew && state.user?.isStaff ? `
+      <div style="margin-top:12px">
+        <label class="dp-tag-check">
+          <input type="checkbox" id="dp-child-java"${[true, 1, '1', 'true'].includes(s.childJavaFlags) ? ' checked' : ''}>
+          <span class="dp-tag-lbl">Staff: pass Java fix to the game's own launcher</span>
+        </label>
+        <div style="font-size:0.72rem;color:#6a5a3a;margin-top:4px;margin-left:24px;font-style:italic">
+          Only for servers whose game closes straight after loading, where the client
+          log shows InaccessibleObjectException (e.g. Simplicity). Leave off otherwise:
+          it breaks launchers that check the Java version, like Oakhaven's.
+        </div>
+      </div>` : ''}
     </div>
 
   </div>
@@ -9194,6 +9217,10 @@ function devCollect(el) {
     // doesn't accidentally get hidden. Backend keeps the existing value.
     ...(el.querySelector('#dp-visible')
         ? { visible: el.querySelector('#dp-visible').checked ? 1 : 0 }
+        : {}),
+    // Staff-only switch; the checkbox only exists for staff, so owners never send it.
+    ...(el.querySelector('#dp-child-java')
+        ? { child_java_flags: el.querySelector('#dp-child-java').checked ? 1 : 0 }
         : {}),
     players_online:  parseInt(el.querySelector('#dp-players')?.value || '0'),
   };

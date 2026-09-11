@@ -93,7 +93,8 @@ function parseDeepLink(url) {
   try { parsed = new URL(url); } catch (_) { return null; }
   // "rspshub://server/42" puts "server" in host and "/42" in pathname.
   const action = (parsed.hostname || '').toLowerCase();
-  const rest   = decodeURIComponent((parsed.pathname || '').replace(/^\/+/, '')).trim();
+  // Strip slashes at both ends: some browsers hand over "rspshub://server/42/".
+  const rest   = decodeURIComponent((parsed.pathname || '').replace(/^\/+|\/+$/g, '')).trim();
   if (action !== 'server' && action !== 'vote') return null;
   if (!rest) return null;
   // Accept an id or a server name, but keep it bounded so a hostile link can't
@@ -104,13 +105,19 @@ function parseDeepLink(url) {
 
 function deliverDeepLink(link) {
   if (!link) return;
-  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isLoading()) {
+  // Park it and let the renderer come and take it. Pushing it straight in
+  // lost it on a cold start: the page finishes loading long before the app
+  // has booted and started listening, and boot then lands on Home anyway.
+  pendingDeepLink = link;
+  if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
-    mainWindow.webContents.send('deep-link', link);
-  } else {
-    pendingDeepLink = link;
+    // Nudge a renderer that's already up. One that's still booting takes the
+    // link itself when it finishes (see take-deep-link).
+    if (mainWindow.webContents && !mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.send('deep-link');
+    }
   }
 }
 
@@ -119,6 +126,15 @@ function deepLinkFromArgv(argv) {
   const hit = (argv || []).find(a => typeof a === 'string' && a.toLowerCase().startsWith('rspshub://'));
   return hit ? parseDeepLink(hit) : null;
 }
+
+// The renderer calls this once it has booted and is signed in, and again
+// whenever it's nudged. Hands the parked link over exactly once.
+ipcMain.handle('take-deep-link', () => {
+  const link = pendingDeepLink;
+  pendingDeepLink = null;
+  if (link) console.log('[deep-link] handed to renderer:', link.action, link.target);
+  return link;
+});
 
 // ── JAVA BACKEND ─────────────────────────────────────────────────────────────
 
@@ -266,15 +282,6 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'ui', 'index.html'));
-
-  // Replay a link that arrived before the UI existed (cold start from a
-  // browser click). Fires once; the renderer is ready to receive by now.
-  mainWindow.webContents.once('did-finish-load', () => {
-    if (!pendingDeepLink) return;
-    const link = pendingDeepLink;
-    pendingDeepLink = null;
-    mainWindow.webContents.send('deep-link', link);
-  });
 
   // Defense-in-depth: even though devTools:false blocks openDevTools(), also
   // intercept the keyboard shortcuts (F12, Ctrl+Shift+I/J/C, Cmd+Opt+I)
@@ -1140,15 +1147,17 @@ app.on('open-url', (event, url) => {
 });
 
 app.whenReady().then(() => {
-  // Register rspshub:// with the OS. In development the executable is Electron
-  // itself, so the path plus the app directory have to be passed explicitly or
-  // Windows registers the wrong command.
+  // A second copy stops here without starting anything. It used to run the
+  // whole startup on its way out, and startJavaBackend() frees port 7890 by
+  // killing whatever holds it: the RUNNING launcher's backend. That logged
+  // people out whenever they clicked "Open in launcher" with the Hub open.
+  if (!gotSingleInstanceLock) return;
+
+  // Register rspshub:// with the OS, from the installed app only. A dev build
+  // registering itself hijacked every link on the developer's machine and
+  // sent it to the dev copy instead of the real launcher.
   try {
-    if (process.defaultApp && process.argv.length >= 2) {
-      app.setAsDefaultProtocolClient('rspshub', process.execPath, [path.resolve(process.argv[1])]);
-    } else {
-      app.setAsDefaultProtocolClient('rspshub');
-    }
+    if (app.isPackaged) app.setAsDefaultProtocolClient('rspshub');
   } catch (e) { console.warn('[deep-link] could not register protocol', e.message); }
 
   // A cold start from a link arrives in our own argv.
@@ -1166,6 +1175,7 @@ app.whenReady().then(() => {
 // Standard macOS behavior: clicking the dock icon when no windows are open
 // should re-create the main window instead of leaving the app stranded.
 app.on('activate', () => {
+  if (!gotSingleInstanceLock) return;
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }

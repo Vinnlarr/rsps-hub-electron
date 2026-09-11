@@ -53,8 +53,11 @@ contextBridge.exposeInMainWorld('hub', {
   onUpdateError:         (cb)  => ipcRenderer.on('update-error', (_, msg) => cb(msg)),
   // Hub API said our version is too old. data = {min_version, detected_version, message, ...}
   onForceUpdate:         (cb)  => ipcRenderer.on('launcher-update-required', (_, data) => cb(data)),
-  // rspshub:// deep link from the website. data = { action: 'server'|'vote', target: '<id or name>' }
-  onDeepLink:            (cb)  => ipcRenderer.on('deep-link', (_, data) => cb(data)),
+  // rspshub:// deep links from the website. The main process parks each link;
+  // onDeepLink is a nudge that one is waiting, takeDeepLink collects it
+  // (returns { action: 'server'|'vote', target: '<id or name>' } or null).
+  onDeepLink:            (cb)  => ipcRenderer.on('deep-link', () => cb()),
+  takeDeepLink:          ()    => ipcRenderer.invoke('take-deep-link'),
   setAutoUpdateLauncher: (enabled) => ipcRenderer.invoke('set-auto-update-launcher', enabled),
   getAutoUpdateLauncher: ()        => ipcRenderer.invoke('get-auto-update-launcher'),
 
