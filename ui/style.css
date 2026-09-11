@@ -5739,3 +5739,70 @@ h5.news-md-h { font-size: 0.88rem; color: var(--accent); }
   color: #7ad88a;
   font-weight: 700;
 }
+
+
+/* ── Report modal ──────────────────────────────────────────────────────────
+   Reason picker is buttons rather than a native <select>: every option and its
+   hint is visible at once (a vague pick is what made reports unreadable) and
+   nothing falls back to OS dropdown styling. */
+.rep-intro { color: #9a8a6a; font-size: 0.82rem; margin: 0 0 14px; line-height: 1.5; }
+
+.rep-check {
+  display: flex; align-items: center; gap: 10px; cursor: pointer;
+  color: #d8c8a8; font-size: 0.88rem; margin: 0 0 10px; user-select: none;
+}
+.rep-check input {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: 0 0 18px;
+  width: 18px; height: 18px; border: 1px solid #4a3a18; border-radius: 4px;
+  background: #0e0c08; cursor: pointer; position: relative; transition: border-color 0.15s, background 0.15s;
+}
+.rep-check input:hover { border-color: var(--accent); }
+.rep-check input:checked { background: var(--accent); border-color: var(--accent); }
+.rep-check input:checked::after {
+  content: ''; position: absolute; left: 5px; top: 1px; width: 5px; height: 10px;
+  border: solid #1a1408; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.rep-check input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.rep-combo { position: relative; margin: 0 0 14px; }
+.rep-combo[hidden] { display: none; }
+.rep-srv-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5;
+  margin: 0; padding: 4px; list-style: none; max-height: 240px; overflow-y: auto;
+  background: #1a1d24; border: 1px solid #2a2e39; border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+}
+.rep-srv-list[hidden] { display: none; }
+.rep-srv-item {
+  padding: 8px 10px; border-radius: 3px; cursor: pointer;
+  color: #d8c8a8; font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rep-srv-item b { color: var(--accent); font-weight: 700; }
+.rep-srv-item:hover, .rep-srv-item.is-active { background: #2a2418; }
+.rep-srv-empty { padding: 8px 10px; color: #7a6a4a; font-size: 0.82rem; }
+.rep-pick-hint { color: #7a6a4a; font-size: 0.82rem; margin: 2px 0 14px; font-style: italic; }
+
+.rep-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.rep-group-title {
+  font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #8a7a5a; font-weight: 600; margin-bottom: 2px;
+}
+.rep-opt {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; text-align: left; cursor: pointer; font-family: inherit;
+  background: #0e0c08; border: 1px solid #2a2418; border-radius: 4px; padding: 9px 12px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.rep-opt:hover { border-color: #4a3a18; }
+.rep-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rep-opt.is-on { border-color: var(--accent); background: #1a1408; }
+.rep-opt-l { color: #d8c8a8; font-size: 0.88rem; }
+.rep-opt.is-on .rep-opt-l { color: var(--accent); }
+.rep-opt-h { color: #7a6a4a; font-size: 0.75rem; line-height: 1.35; }
+#rep-submit:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Staff reports panel: problem vs abuse badge and the reporter's context. */
+.abuse-kind { font-size: 0.64rem; font-weight: 700; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 3px; }
+.abuse-kind-problem { background: #1d2a3a; color: #8ab8ff; border: 1px solid #2e4a6a; }
+.abuse-kind-abuse   { background: #3a1d1d; color: #ff8a8a; border: 1px solid #6a2e2e; }
+.abuse-ctx { color: #8a8f9c; font-size: 0.76rem; margin: 4px 0 6px; font-family: ui-monospace, Consolas, monospace; }

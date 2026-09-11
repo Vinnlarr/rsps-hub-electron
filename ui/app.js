@@ -5675,21 +5675,60 @@ function buildLeaderboardHTML(data) {
 
 function openReportModal(targetType, targetRef, targetName) {
   document.getElementById('report-overlay')?.remove();
+  const isUser = targetType === 'user';
 
-  const categories = targetType === 'server'
-    ? [
-        ['malicious_jar', 'Malicious / suspicious JAR'],
-        ['scam',          'Scam / pay-to-win violation'],
-        ['impersonation', 'Impersonating another server'],
-        ['spam',          'Spam / fake content'],
-        ['other',         'Other'],
-      ]
-    : [
-        ['harassment',    'Harassment / threats'],
-        ['spam',          'Spam'],
-        ['impersonation', 'Impersonating another user'],
-        ['other',         'Other'],
-      ];
+  // Every listed server, for the "which server?" picker.
+  const servers = (state.servers || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  // Opened from a server's page: that server is pre-picked (and editable).
+  let srv = (!isUser && targetType === 'server')
+    ? servers.find(s => String(s.id) === String(targetRef)) || null
+    : null;
+  // The tickbox. Unticked means the problem is with RSPS Hub itself, which is
+  // exactly the distinction that got lost when "Website is down" came in with
+  // no way to tell whether it meant a server's site or ours.
+  let aboutServer = !!srv;
+  let cat = null;
+
+  const hostOf = (u) => { try { return u ? new URL(u).hostname : ''; } catch { return u || ''; } };
+
+  // Each option: [value, label, hint, details placeholder]
+  function optionGroups() {
+    if (isUser) return [
+      { title: 'Report this user', items: [
+        ['harassment', 'Harassment or threats', '', 'What was said, and where?'],
+        ['spam', 'Spam', '', 'Where did it happen?'],
+        ['impersonation', 'Pretending to be someone else', '', 'Who are they pretending to be?'],
+        ['other', 'Something else', '', 'Tell us what happened.'],
+      ]},
+    ];
+    if (!aboutServer) return [
+      { title: 'Problem with RSPS Hub', items: [
+        ['hub_launcher', "The launcher won't open, crashes or freezes", 'The RSPS Hub app itself.', 'What were you doing when it happened?'],
+        ['hub_website', "therspshub.com isn't working", "Our website, not a server's own site.", 'Which page, and what went wrong?'],
+        ['hub_account', 'Login or account problem', 'Signing in, email, password, profile.', 'What happens when you try?'],
+        ['hub_problem', 'Something else in the Hub', 'Friends, chat, videos, votes, anything else.', 'What were you trying to do?'],
+      ]},
+    ];
+    if (!srv) return [];
+    const name = srv.name;
+    const site = srv.websiteUrl || '';
+    return [
+      { title: `Something's not working with ${name}`, items: [
+        ['server_offline', `Can't connect to ${name}`, 'The game will not log in, or the server seems offline.', 'What happens when you try? Any error message?'],
+        ...(site ? [['server_website', `${name}'s website is down`, hostOf(site), 'Does it not load at all, or show an error? Roughly when did you notice?']] : []),
+        ['install_failed', 'Download or install fails', 'The Hub cannot download or install this client.', 'What does the Hub say when it fails?'],
+        ['client_crash', "The game crashes or won't open", 'It installs, but closes or never appears.', 'Does it close straight away, or after a while?'],
+        ['wrong_info', 'Listing info is wrong', 'Name, links, description or images are out of date.', 'What is wrong, and what should it say?'],
+      ]},
+      { title: `Report ${name}`, items: [
+        ['malicious_jar', 'Malicious or suspicious client', 'Antivirus alerts, strange behaviour, stolen accounts.', 'What made you suspicious?'],
+        ['scam', 'Scam or pay-to-win', 'Taking money unfairly or breaking promises.', 'What happened?'],
+        ['impersonation', 'Pretending to be another server', '', 'Which server are they copying?'],
+        ['spam', 'Spam or fake listing', '', 'What makes it look fake?'],
+      ]},
+      { title: '', items: [['other', 'Something else', '', 'Tell us what happened.']] },
+    ];
+  }
 
   const overlay = document.createElement('div');
   overlay.id = 'report-overlay';
@@ -5697,53 +5736,221 @@ function openReportModal(targetType, targetRef, targetName) {
   // the rest of the launcher (gold-on-dark palette).
   overlay.className = 'rsm-backdrop';
   overlay.innerHTML = `
-    <div class="rsm-modal">
+    <div class="rsm-modal" role="dialog" aria-modal="true" aria-labelledby="rep-title">
       <div class="rsm-hdr">
-        <h3>🚩 Report ${escHtml(targetType)} · ${escHtml(targetName || targetRef)}</h3>
-        <button class="rsm-close" id="rep-close">✕</button>
+        <h3 id="rep-title">${isUser ? `🚩 Report · ${escHtml(targetName || targetRef)}` : '🚩 Report a problem'}</h3>
+        <button class="rsm-close" id="rep-close" aria-label="Close">✕</button>
       </div>
       <div class="rsm-body">
-        <label class="rsm-label">Reason <span class="rsm-req">*</span></label>
-        <select class="rsm-input" id="rep-cat">
-          ${categories.map(([v, l]) => `<option value="${v}">${escHtml(l)}</option>`).join('')}
-        </select>
-        <label class="rsm-label">Details <span class="rsm-hint">(optional, max 2000 chars)</span></label>
-        <textarea class="rsm-input rsm-textarea" id="rep-det" maxlength="2000" rows="5"
-          placeholder="What happened? Anything that helps staff investigate."></textarea>
+        <p class="rep-intro">This goes to RSPS Hub staff. Pick the closest match so we know exactly what's wrong.</p>
+        ${isUser ? '' : `
+        <label class="rep-check">
+          <input type="checkbox" id="rep-about" ${aboutServer ? 'checked' : ''}>
+          <span>This is about a specific server</span>
+        </label>
+        <div class="rep-combo" id="rep-combo" ${aboutServer ? '' : 'hidden'}>
+          <input class="rsm-input" id="rep-srv" type="text" autocomplete="off" spellcheck="false"
+            role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="rep-srv-list"
+            placeholder="Start typing a server name..." value="${srv ? escAttr(srv.name) : ''}">
+          <ul class="rep-srv-list" id="rep-srv-list" role="listbox" hidden></ul>
+        </div>`}
+        <div id="rep-opts"></div>
+        <label class="rsm-label" for="rep-det">Details <span class="rsm-hint">(optional, max 2000 chars)</span></label>
+        <textarea class="rsm-input rsm-textarea" id="rep-det" maxlength="2000" rows="4"
+          placeholder="Pick what's wrong above first."></textarea>
         <div class="rsm-msg" id="rep-msg"></div>
       </div>
       <div class="rsm-foot">
         <button class="rsm-btn" id="rep-cancel">Cancel</button>
-        <button class="rsm-btn" id="rep-submit" style="background:linear-gradient(180deg,#c8a840,#8a6f20);color:#1a1408;border-color:#c8a840">Submit report</button>
+        <button class="rsm-btn" id="rep-submit" disabled style="background:linear-gradient(180deg,#c8a840,#8a6f20);color:#1a1408;border-color:#c8a840">Submit report</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
 
-  const close = () => overlay.remove();
+  const optsEl    = overlay.querySelector('#rep-opts');
+  const det       = overlay.querySelector('#rep-det');
+  const msgEl     = overlay.querySelector('#rep-msg');
+  const submitBtn = overlay.querySelector('#rep-submit');
+
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
   overlay.querySelector('#rep-close').addEventListener('click', close);
   overlay.querySelector('#rep-cancel').addEventListener('click', close);
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
-  overlay.querySelector('#rep-submit').addEventListener('click', async () => {
-    const cat   = overlay.querySelector('#rep-cat').value;
-    const det   = overlay.querySelector('#rep-det').value.trim();
-    const msgEl = overlay.querySelector('#rep-msg');
+  function resetChoice() {
+    cat = null;
+    submitBtn.disabled = true;
+    det.placeholder = "Pick what's wrong above first.";
+  }
+
+  function renderOptions() {
+    const groups = optionGroups();
+    if (!groups.length) {
+      optsEl.innerHTML = `<p class="rep-pick-hint">Choose the server above and the options will appear here.</p>`;
+      return;
+    }
+    const placeholders = {};
+    optsEl.innerHTML = groups.map(g => `
+      <div class="rep-group">
+        ${g.title ? `<div class="rep-group-title">${escHtml(g.title)}</div>` : ''}
+        ${g.items.map(([v, l, h, ph]) => { placeholders[v] = ph; return `
+          <button type="button" class="rep-opt${v === cat ? ' is-on' : ''}" data-val="${escAttr(v)}" aria-pressed="${v === cat}">
+            <span class="rep-opt-l">${escHtml(l)}</span>
+            ${h ? `<span class="rep-opt-h">${escHtml(h)}</span>` : ''}
+          </button>`; }).join('')}
+      </div>`).join('');
+    optsEl.querySelectorAll('.rep-opt').forEach(btn => {
+      btn.addEventListener('click', () => {
+        optsEl.querySelectorAll('.rep-opt').forEach(b => { b.classList.remove('is-on'); b.setAttribute('aria-pressed', 'false'); });
+        btn.classList.add('is-on');
+        btn.setAttribute('aria-pressed', 'true');
+        cat = btn.dataset.val;
+        det.placeholder = placeholders[cat] || 'Anything that helps staff investigate.';
+        submitBtn.disabled = false;
+        msgEl.textContent = '';
+      });
+    });
+  }
+
+  // ── Tickbox + type-to-search server picker ──
+  if (!isUser) {
+    const about = overlay.querySelector('#rep-about');
+    const combo = overlay.querySelector('#rep-combo');
+    const input = overlay.querySelector('#rep-srv');
+    const list  = overlay.querySelector('#rep-srv-list');
+    let matches = [];
+    let active  = -1;
+
+    const closeList = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); };
+
+    // Bold the typed part of each name. Escape first, then mark up.
+    const highlight = (nm, q) => {
+      const i = q ? nm.toLowerCase().indexOf(q) : -1;
+      if (i < 0) return escHtml(nm);
+      return escHtml(nm.slice(0, i)) + '<b>' + escHtml(nm.slice(i, i + q.length)) + '</b>' + escHtml(nm.slice(i + q.length));
+    };
+
+    function renderList() {
+      const q = input.value.trim().toLowerCase();
+      matches = (q ? servers.filter(s => (s.name || '').toLowerCase().includes(q)) : servers.slice())
+        // names that START with what you typed first, then the rest
+        .sort((a, b) => {
+          const as = (a.name || '').toLowerCase().startsWith(q) ? 0 : 1;
+          const bs = (b.name || '').toLowerCase().startsWith(q) ? 0 : 1;
+          return as - bs || (a.name || '').localeCompare(b.name || '');
+        })
+        .slice(0, 8);
+      if (active >= matches.length) active = matches.length - 1;
+      list.innerHTML = matches.length
+        ? matches.map((s, i) => `<li role="option" id="rep-srv-${i}" class="rep-srv-item${i === active ? ' is-active' : ''}" data-i="${i}" aria-selected="${i === active}">${highlight(s.name || '', q)}</li>`).join('')
+        : `<li class="rep-srv-empty">No listed server matches "${escHtml(input.value.trim())}"</li>`;
+      list.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+      if (active >= 0) input.setAttribute('aria-activedescendant', `rep-srv-${active}`);
+      else input.removeAttribute('aria-activedescendant');
+    }
+
+    function pick(s) {
+      srv = s;
+      input.value = s.name;
+      closeList();
+      resetChoice();
+      renderOptions();
+    }
+
+    about.addEventListener('change', () => {
+      aboutServer = about.checked;
+      combo.hidden = !aboutServer;
+      resetChoice();
+      renderOptions();
+      if (aboutServer && !srv) setTimeout(() => input.focus(), 0);
+    });
+    input.addEventListener('input', () => {
+      // Typing an exact name (any casing) picks it; anything else clears the pick.
+      const exact = servers.find(s => (s.name || '').toLowerCase() === input.value.trim().toLowerCase());
+      const changed = (exact || null) !== srv;
+      srv = exact || null;
+      active = 0;
+      renderList();
+      if (changed) { resetChoice(); renderOptions(); }
+    });
+    input.addEventListener('focus', () => { active = -1; renderList(); });
+    input.addEventListener('blur', () => setTimeout(closeList, 120));
+    input.addEventListener('keydown', (e) => {
+      const open = !list.hidden;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (!open) renderList();
+        active = Math.min(active + 1, matches.length - 1);
+        renderList();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        active = Math.max(active - 1, 0);
+        renderList();
+      } else if (e.key === 'Enter') {
+        if (open && matches[active >= 0 ? active : 0]) { e.preventDefault(); pick(matches[active >= 0 ? active : 0]); }
+      } else if (e.key === 'Escape' && open) {
+        // Close the dropdown only, not the whole modal.
+        e.stopPropagation();
+        closeList();
+      }
+    });
+    // mousedown, not click: fires before the input's blur closes the list.
+    list.addEventListener('mousedown', (e) => {
+      const li = e.target.closest('[data-i]');
+      if (!li) return;
+      e.preventDefault();
+      pick(matches[+li.dataset.i]);
+    });
+  }
+
+  renderOptions();
+
+  // What the Hub can see right now, sent with the report so staff can tell
+  // "the server is down for everyone" from "it's just this player".
+  async function buildContext() {
+    const ctx = { from: isUser ? 'user' : (aboutServer ? 'server' : 'hub') };
+    try { const v = await window.hub.getVersion?.(); if (v) ctx.launcher = String(v); } catch {}
+    if (aboutServer && srv) {
+      ctx.hub_status = srv.serverOnline === 1 ? 'online' : srv.serverOnline === 0 ? 'offline' : 'unknown';
+      ctx.installed  = !!srv.downloaded;
+      if (srv.websiteUrl) ctx.website = srv.websiteUrl;
+    }
+    if (navigator.platform) ctx.platform = navigator.platform;
+    return ctx;
+  }
+
+  submitBtn.addEventListener('click', async () => {
+    if (!cat) { msgEl.textContent = "Pick what's wrong first."; msgEl.style.color = '#c84040'; return; }
+    let tType, tRef;
+    if (isUser)           { tType = 'user';   tRef = String(targetRef); }
+    else if (aboutServer) {
+      if (!srv) { msgEl.textContent = 'Choose which server this is about, or untick the box.'; msgEl.style.color = '#c84040'; return; }
+      tType = 'server'; tRef = String(srv.id);
+    } else                { tType = 'hub';    tRef = 'hub'; }
+
     msgEl.textContent = 'Submitting…'; msgEl.style.color = '#888';
+    submitBtn.disabled = true;
     try {
       const res = await window.hub.post('/api/reports/submit', {
-        target_type: targetType, target_ref: String(targetRef),
-        category: cat, details: det,
+        target_type: tType, target_ref: tRef,
+        category: cat, details: det.value.trim(),
+        context: await buildContext(),
       });
       if (res?.ok) {
-        msgEl.textContent = '✓ Report submitted. Thank you.';
+        msgEl.textContent = '✓ Sent to staff. Thank you.';
         msgEl.style.color = '#7ad88a';
         setTimeout(close, 1500);
       } else {
         msgEl.textContent = res?.error || 'Submit failed.';
         msgEl.style.color = '#c84040';
+        submitBtn.disabled = false;
       }
     } catch (e) {
       msgEl.textContent = 'Network error.'; msgEl.style.color = '#c84040';
+      submitBtn.disabled = false;
     }
   });
 }
@@ -8146,29 +8353,61 @@ function renderDevPending(el, servers) {
 // from anywhere in the launcher). Same pattern as server requests —
 // each row has Resolve / Dismiss buttons that close out the report.
 async function renderDevAbuseReports(el) {
-  el.innerHTML = `<div class="dp-section-hdr">Abuse Reports</div><p class="loading-msg">Loading…</p>`;
+  el.innerHTML = `<div class="dp-section-hdr">Reports</div><p class="loading-msg">Loading…</p>`;
   let res;
   try {
     res = await window.hub.get('/api/reports/pending');
   } catch (e) {
-    el.innerHTML = `<div class="dp-section-hdr">Abuse Reports</div>
+    el.innerHTML = `<div class="dp-section-hdr">Reports</div>
       <p class="empty-msg" style="padding:30px">Failed to load: ${escHtml(e.message)}</p>`;
     return;
   }
   const reports = res?.reports || [];
 
   const categoryLabel = (c) => ({
-    malicious_jar: 'Malicious JAR',
-    scam:          'Scam / P2W',
-    impersonation: 'Impersonation',
-    harassment:    'Harassment',
-    spam:          'Spam',
-    other:         'Other',
+    server_offline: "Can't connect",
+    server_website: "Server's website is down",
+    install_failed: 'Download or install fails',
+    client_crash:   "Game crashes or won't open",
+    wrong_info:     'Listing info is wrong',
+    hub_launcher:   "Launcher won't open / crashes",
+    hub_website:    "therspshub.com not working",
+    hub_account:    'Login or account problem',
+    hub_problem:    'Other Hub problem',
+    malicious_jar:  'Malicious JAR',
+    scam:           'Scam / P2W',
+    impersonation:  'Impersonation',
+    harassment:     'Harassment',
+    spam:           'Spam',
+    other:          'Other',
   }[c] || c);
+  // "It's broken" and "this server is bad" need different handling, so they
+  // are badged differently at a glance.
+  const PROBLEM = new Set(['server_offline', 'server_website', 'install_failed', 'client_crash', 'wrong_info',
+                           'hub_launcher', 'hub_website', 'hub_account', 'hub_problem']);
+  const targetLabel = (r) => {
+    if (r.target_type === 'hub') return 'RSPS Hub';
+    const n = r.target_name || r.target_ref;
+    return r.category === 'hub_problem' ? `RSPS Hub (reported from ${n})` : n;
+  };
+  // What the reporter's launcher could see when they filed it. Older launchers
+  // send nothing, so this is simply omitted for them.
+  const contextLine = (r) => {
+    let c = null;
+    try { c = r.context ? JSON.parse(r.context) : null; } catch { c = null; }
+    if (!c) return '';
+    const bits = [];
+    if (c.launcher) bits.push('Launcher v' + c.launcher);
+    if (c.hub_status) bits.push('Hub sees server: ' + c.hub_status);
+    if (typeof c.installed === 'boolean') bits.push('Installed: ' + (c.installed ? 'yes' : 'no'));
+    if (c.website) bits.push('Site: ' + c.website);
+    if (c.platform) bits.push(c.platform);
+    return bits.length ? `<div class="abuse-ctx">${escHtml(bits.join(' · '))}</div>` : '';
+  };
 
   el.innerHTML = `
     <div class="dp-section-hdr">
-      Abuse Reports
+      Reports
       <span class="dp-section-count">${reports.length} pending</span>
     </div>
     ${reports.length === 0
@@ -8177,23 +8416,27 @@ async function renderDevAbuseReports(el) {
            <span class="coming-soon-title">No pending reports.</span>
            <span class="coming-soon-sub">All clear. New reports will land here when players submit them.</span>
          </div>`
-      : `<div class="abuse-list">${reports.map(r => `
+      : `<div class="abuse-list">${reports.map(r => {
+          const isProblem = PROBLEM.has(r.category);
+          return `
           <div class="abuse-card" data-rep-id="${r.id}">
             <div class="abuse-hdr">
               <span class="abuse-id">#${r.id}</span>
+              <span class="abuse-kind abuse-kind-${isProblem ? 'problem' : 'abuse'}">${isProblem ? 'PROBLEM' : 'ABUSE'}</span>
               <span class="abuse-type abuse-type-${escAttr(r.target_type)}">${escHtml(r.target_type.toUpperCase())}</span>
-              <span class="abuse-target">${escHtml(r.target_ref)}</span>
+              <span class="abuse-target">${escHtml(targetLabel(r))}</span>
               <span class="abuse-cat">${escHtml(categoryLabel(r.category))}</span>
               <span class="abuse-when">${escHtml(r.created_at || '')}</span>
             </div>
             <div class="abuse-meta">Reported by <b>${escHtml(r.reporter)}</b> · status: ${escHtml(r.status)}</div>
+            ${contextLine(r)}
             <div class="abuse-details">${r.details ? escHtml(r.details).replace(/\n/g, '<br>') : '<i style="color:#6a7080">(no details provided)</i>'}</div>
             <div class="abuse-actions">
               <button class="abuse-btn abuse-resolve" data-action="resolved" data-id="${r.id}">✓ Mark Resolved</button>
               <button class="abuse-btn abuse-dismiss" data-action="dismissed" data-id="${r.id}">✗ Dismiss</button>
               <span class="abuse-msg" data-msg="${r.id}"></span>
             </div>
-          </div>`).join('')}
+          </div>`; }).join('')}
         </div>`}
   `;
 
@@ -9364,6 +9607,13 @@ function buildSettingsHTML(s) {
       </div>
       <button class="set-browse-btn" id="set-replay-onboarding" type="button">Start tour</button>
     </div>
+    <div class="set-row set-between">
+      <div>
+        <span class="set-label">Report a problem</span>
+        <div class="set-sub">Something broken in the launcher, the website, or a specific server? Tell staff here.</div>
+      </div>
+      <button class="set-browse-btn" id="set-report-problem" type="button">Report</button>
+    </div>
   </div>
 
   <div class="set-section">
@@ -9396,6 +9646,11 @@ function bindSettingsEvents(el, initial) {
     window.RspsHubOnboarding.reset();
     setTimeout(() => window.RspsHubOnboarding.start(), 200);
   });
+
+  // General "Report a problem": opens the report form with no server picked,
+  // so it defaults to a problem with the Hub itself. The player can tick the
+  // box to pick a server instead.
+  el.querySelector('#set-report-problem')?.addEventListener('click', () => openReportModal());
 
   // Ko-fi donation — opens the support page in the user's default browser.
   el.querySelector('#set-kofi-btn')?.addEventListener('click', () => {
