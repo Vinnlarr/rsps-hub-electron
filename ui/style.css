@@ -2684,6 +2684,20 @@ body.is-mac .title-bar { padding-left: 80px; }
   border-radius: 12px; padding: 16px 18px;
   backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
 }
+/* Staff-only download health panel on Home */
+.home-staff-sec { border-color: #5a3a14; }
+.staff-dl-sum { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-family: 'Inter', sans-serif; font-size: 0.86rem; font-weight: 600; margin-bottom: 8px; }
+.staff-dl-sum.good { color: #80d080; }
+.staff-dl-sum.bad  { color: #ff9a6a; }
+.staff-dl-meta { font-weight: 400; font-size: 0.74rem; color: #8a7a5a; }
+.staff-dl-recheck { background: none; border: 0; padding: 0; color: #c8a840; cursor: pointer; text-decoration: underline; font: inherit; }
+.staff-dl-row { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left;
+  background: rgba(14,10,6,0.55); border: 1px solid #3a2e14; border-radius: 4px; padding: 7px 10px; margin-top: 6px;
+  color: #e0c890; font-family: 'Inter', sans-serif; font-size: 0.8rem; cursor: pointer; }
+.staff-dl-row:hover { border-color: var(--accent); }
+.staff-dl-name { font-weight: 600; }
+.staff-dl-why  { color: #ff9a6a; text-align: right; }
 .home-section h2 { font-family: 'Cinzel', serif; font-size: 0.85rem; letter-spacing: 2px; text-transform: uppercase; color: var(--accent-hot); font-weight: 700; margin: 0 0 12px; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
 .home-friend, .home-act { color: #d8cba8; }
 .ha-txt { color: #d8cba8; }

@@ -2082,6 +2082,11 @@ function buildPlayerCountHTML(server, hubPlayers) {
   // Hours are measured by our own client so they can't be inflated, and they
   // don't make a healthy server look dead just because it's 4am.
   const hrs = server.hoursPlayed || 0;
+  // Unreleased servers show the players waiting for launch instead.
+  const waiting = server.followerCount || 0;
+  if (server.releaseStatus && server.releaseStatus !== 'live' && waiting > 0) {
+    return `🔔 ${formatNumber(waiting)} waiting`;
+  }
   if (hrs <= 0) return '▲ New listing';
   return (hubPlayers > 0 ? '<span class="player-pulse"></span>' : '') +
          `${formatNumber(hrs)} Hours Played`;
@@ -2258,6 +2263,42 @@ function attachTilt(node, max) {
   node.addEventListener('mouseleave', () => { node.style.transform = ''; });
 }
 
+// ── STAFF: DOWNLOAD HEALTH ──────────────────────────────────────────────────
+// Staff-only Home panel: which listed servers have a broken download right
+// now. The check runs in this launcher through the same Java code installs
+// use, so Cloudflare-protected hosts aren't falsely flagged. Players never
+// see this and nothing is hidden automatically.
+async function loadStaffDownloadHealth(host, refresh) {
+  if (!host) return;
+  const hdr = '<h2>🛠️ Staff: download health</h2>';
+  host.innerHTML = hdr + '<p class="empty-msg">Checking every server\'s download…</p>';
+  let d = null;
+  try { d = await window.hub.get('/api/dev/download-health' + (refresh ? '?refresh=1' : '')); } catch (_) {}
+  if (!host.isConnected) return;
+  if (!d || d.error || !Array.isArray(d.broken)) {
+    host.innerHTML = hdr + `<p class="empty-msg">Couldn't run the check${d?.error ? ': ' + escHtml(d.error) : ''}.</p>`;
+    return;
+  }
+  const mins = Math.round((Date.now() - d.checkedAt) / 60000);
+  const when = mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)}h ago`;
+  const broken = d.broken;
+  host.innerHTML = hdr + `
+    <div class="staff-dl-sum ${broken.length ? 'bad' : 'good'}">
+      <span>${broken.length ? `${broken.length} of ${d.total} downloads broken` : `All ${d.total} downloads working`}</span>
+      <span class="staff-dl-meta">Checked ${when} · <button class="staff-dl-recheck" type="button">Re-check</button></span>
+    </div>
+    ${broken.map(b => `
+      <button class="staff-dl-row" type="button" data-id="${escAttr(String(b.id))}" title="${escAttr(b.url || '')}">
+        <span class="staff-dl-name">${escHtml(b.name)}</span>
+        <span class="staff-dl-why">${escHtml(b.reason)}</span>
+      </button>`).join('')}`;
+  host.querySelector('.staff-dl-recheck')?.addEventListener('click', () => loadStaffDownloadHealth(host, true));
+  host.querySelectorAll('.staff-dl-row').forEach(r => r.addEventListener('click', () => {
+    const s = (state.servers || []).find(x => String(x.id) === r.dataset.id);
+    if (s) showServerDetail(s);
+  }));
+}
+
 // Living home dashboard: greeting + live pulse, jump-back-in, friends online,
 // recent activity, and quick access to your servers.
 async function renderHome(el) {
@@ -2270,12 +2311,18 @@ async function renderHome(el) {
   let homeEquipped = stats.equipped || state.equipped || null;
   if (homeEquipped) state.equipped = homeEquipped;
   const pt = state.playtime || {};
+  // Jump back in = the server you played most recently (saved each time you
+  // start one from the Hub). Until one is saved, use the most-played server;
+  // the activity feed below corrects that once it loads.
   let topName = null, topMin = 0;
   for (const n in pt) { if (pt[n] > topMin) { topMin = pt[n]; topName = n; } }
-  const jump = topName ? (state.servers || []).find(s => s.name === topName) : null;
+  const lastName = getUiPrefs().lastPlayed?.name;
+  const jumpName = (lastName && (state.servers || []).some(s => s.name === lastName)) ? lastName : topName;
+  const jump = jumpName ? (state.servers || []).find(s => s.name === jumpName) : null;
+  const jumpMin = jump ? (pt[jump.name] || 0) : 0;
   const favs = (state.servers || []).filter(s => state.favourites?.has?.(s.name)).slice(0, 8);
-  const jLvl  = jump ? calcLevel(topMin) : 0;
-  const jProg = jump ? calcXpProgress(topMin) : 0;
+  const jLvl  = jump ? calcLevel(jumpMin) : 0;
+  const jProg = jump ? calcXpProgress(jumpMin) : 0;
   const jRank = jump ? getRankName(jLvl) : '';
   const jArt  = jump ? (jump.cardBannerUrl || jump.bannerUrl || '') : '';
 
@@ -2293,6 +2340,8 @@ async function renderHome(el) {
 
       <div class="home-ticker" id="home-ticker" hidden></div>
 
+      ${state.user?.isStaff ? '<div class="home-section home-staff-sec" id="home-staff-dl"></div>' : ''}
+
       <div class="home-section home-vote-sec" id="home-vote-sec" hidden>
         <h2>&#128499;&#65039; Your vote is ready</h2>
         <div class="home-vote-list" id="home-vote-list"></div>
@@ -2304,7 +2353,7 @@ async function renderHome(el) {
         <button class="home-jump tilt" data-home-play="${escAttr(jump.name)}"${jArt ? ` style="background-image:linear-gradient(90deg,rgba(9,7,4,.93),rgba(9,7,4,.5) 70%,rgba(9,7,4,.2)),url('${escAttr(jArt)}')"` : ''}>
           <div class="hj-info">
             <div class="hj-name">${escHtml(jump.name)}</div>
-            <div class="hj-lvlrow"><span class="hj-lvl">Lvl ${jLvl}</span><span class="hj-rank">${escHtml(jRank)}</span><span class="hj-hrs">${Math.max(1, Math.round(topMin / 60))}h played</span></div>
+            <div class="hj-lvlrow"><span class="hj-lvl">Lvl ${jLvl}</span><span class="hj-rank">${escHtml(jRank)}</span><span class="hj-hrs">${Math.max(1, Math.round(jumpMin / 60))}h played</span></div>
             <div class="hj-xp"><div class="hj-xp-fill" style="width:${Math.round(jProg * 100)}%"></div></div>
             <div class="hj-xp-label">${jLvl >= 99 ? 'Maxed on this server' : (Math.round(jProg * 100) + '% to level ' + (jLvl + 1))}</div>
           </div>
@@ -2433,6 +2482,8 @@ async function renderHome(el) {
     wrap?.addEventListener('mouseleave', () => { if (heroL) heroL.style.transform = ''; });
   }
 
+  if (state.user?.isStaff) loadStaffDownloadHealth(el.querySelector('#home-staff-dl'), false);
+
   (async () => { let fr = []; try { const d = await api.getFriends(); fr = (d?.friends || []).filter(f => f.online); } catch (_) {}
     const host = el.querySelector('#home-friends'); if (!host) return;
     if (!fr.length) { host.innerHTML = '<p class="empty-msg">No friends online right now.</p>'; return; }
@@ -2449,6 +2500,15 @@ async function renderHome(el) {
     const host = el.querySelector('#home-activity'); if (!host) return;
     if (!feed.length) { host.innerHTML = '<p class="empty-msg">Nothing yet. Go play something.</p>'; return; }
     const me = state.user?.username;
+    // No last-played saved yet (first run on this version): take it from
+    // your latest "started playing" and redraw Home once.
+    if (!getUiPrefs().lastPlayed) {
+      const mine = feed.find(a => a.username === me && a.action === 'started playing' && a.target);
+      if (mine) {
+        setUiPref('lastPlayed', { name: mine.target, at: Date.now() });
+        if (mine.target !== jump?.name && (state.servers || []).some(s => s.name === mine.target)) { renderHome(el); return; }
+      }
+    }
     host.innerHTML = feed.slice(0, 6).map(a => `<div class="home-act">
         <span class="ha-i">${ACTIVITY_ICONS[a.action] || '⚡'}</span>
         <span class="ha-txt">${a.username === me ? 'You' : escHtml(a.username)} ${activityVerb(a)} <span class="ha-t">${escHtml(timeAgoShort(a.created_at))}</span></span>
@@ -7269,6 +7329,7 @@ async function launchWebServer(server) {
   // Chip already running for this server (window was reused). Don't double-track.
   if (res?.reused) return;
   beginSessionSummary(server.name);
+  setUiPref('lastPlayed', { name: server.name, at: Date.now() });
   startWebSessionChip(server);
 }
 
@@ -7415,6 +7476,7 @@ function startActiveSessionChip(serverName) {
   nameEl.textContent = serverName;
   timeEl.textContent = '0:00:00';
   beginSessionSummary(serverName);
+  setUiPref('lastPlayed', { name: serverName, at: Date.now() });
   chip.style.display = 'flex';
 
   // Give the VPS a few seconds to register our session_start, then refresh
@@ -8466,6 +8528,9 @@ function renderDevServerList(el, servers, isAll, fallbackReason) {
             <span class="dp-badge ${s.approved ? 'dp-badge-ok' : 'dp-badge-warn'}">${s.approved ? 'Approved' : 'Pending'}</span>
             <span class="dp-badge ${s.serverOnline === 1 ? 'dp-badge-ok' : 'dp-badge-off'}">${s.serverOnline === 1 ? 'Online' : 'Offline'}</span>
             ${s.hoursPlayed > 0 ? `<span class="dp-badge">${s.hoursPlayed.toLocaleString()} hours played</span>` : ''}
+            ${s.releaseStatus === 'coming_soon' ? '<span class="dp-badge dp-badge-warn">Coming soon</span>'
+              : s.releaseStatus === 'beta' ? '<span class="dp-badge dp-badge-warn">Beta</span>' : ''}
+            ${s.followerCount > 0 ? `<span class="dp-badge dp-badge-ok">🔔 ${s.followerCount.toLocaleString()} waiting for launch</span>` : ''}
             ${s.jarSha256
               ? `<span class="dp-badge dp-badge-ok" title="${escAttr(s.jarSha256)}">✓ Hash ${escHtml(s.jarSha256.slice(0,8))}</span>`
               : `<span class="dp-badge dp-badge-warn">⚠ No hash</span>`}
