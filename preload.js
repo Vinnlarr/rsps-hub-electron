@@ -71,6 +71,12 @@ contextBridge.exposeInMainWorld('hub', {
   // lifecycle. Renderer subscribes to onWebSessionEnded so it can hide the
   // active-session chip + refresh playtime when the user closes the window.
   launchWebServer:       (opts)       => ipcRenderer.invoke('launch-web-server', opts),
+
+  // Windows notifications (bottom-right toast) and close to tray.
+  showDesktopNotification: (p)  => ipcRenderer.send('desktop-notify', p),
+  onDesktopNotifClick:     (cb) => ipcRenderer.on('desktop-notif-click', (_, d) => cb(d)),
+  setCloseToTray:          (v)  => ipcRenderer.invoke('set-close-to-tray', !!v),
+  getCloseToTray:          ()   => ipcRenderer.invoke('get-close-to-tray'),
   onWebSessionEnded:     (cb)         => ipcRenderer.on('web-session-ended', (_, data) => cb(data)),
 });
 

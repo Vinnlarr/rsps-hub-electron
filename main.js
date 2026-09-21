@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu, session } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, session, Notification, Tray, nativeImage } = require('electron');
 const { spawn, execSync } = require('child_process');
 
 // If stdout/stderr is a pipe whose reader goes away (e.g. launched from a
@@ -30,6 +30,59 @@ function writeAutoUpdateLauncher(enabled) {
     fs.writeFileSync(UPDATER_PREF_PATH, JSON.stringify({ enabled: !!enabled }));
   } catch (e) { console.error('[updater] failed saving pref:', e?.message); }
 }
+// Close to tray. Off by default: v1.0.73 made closing the window really quit,
+// and turning this on silently would bring back "the Hub keeps running after
+// I close it". Players who want notifications while the window is closed
+// switch it on in Settings. Stored here, not in the Java settings, because
+// this process needs it the moment the window closes.
+const TRAY_PREF_PATH = path.join(RSPS_DIR, 'close_to_tray.json');
+function readCloseToTray() {
+  try { return JSON.parse(fs.readFileSync(TRAY_PREF_PATH, 'utf8')).enabled === true; }
+  catch { return false; }
+}
+function writeCloseToTray(enabled) {
+  try {
+    fs.mkdirSync(RSPS_DIR, { recursive: true });
+    fs.writeFileSync(TRAY_PREF_PATH, JSON.stringify({ enabled: !!enabled }));
+  } catch (e) { console.error('[tray] failed saving pref:', e?.message); }
+}
+let closeToTray = process.platform !== 'darwin' && readCloseToTray();
+let isQuitting  = false;   // true once the user really means to quit
+let tray        = null;
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function ensureTray() {
+  if (tray || process.platform === 'darwin') return;
+  const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 16, height: 16 });
+  tray = new Tray(img);
+  tray.setToolTip('RSPS Hub');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open RSPS Hub', click: showMainWindow },
+    { type: 'separator' },
+    { label: 'Quit RSPS Hub', click: () => { isQuitting = true; app.quit(); } },
+  ]));
+  tray.on('click', showMainWindow);
+}
+
+function destroyTray() {
+  if (tray) { tray.destroy(); tray = null; }
+}
+
+// Windows notifications. Objects are kept alive until clicked or closed,
+// otherwise they can be garbage collected and the click handler lost.
+const liveNotifications = new Set();
+
+// Windows only shows notifications for an app whose AppUserModelID matches
+// its Start menu shortcut, which electron-builder stamps with build.appId.
+// Without this, toasts from the installed app are dropped or say "Electron".
+if (process.platform === 'win32') app.setAppUserModelId('com.rspshub.launcher');
+
 const AVATAR_PATH   = path.join(RSPS_DIR, 'avatar.png');
 const PLAYTIME_PATH = path.join(RSPS_DIR, 'playtime.json');
 // Legacy (pre-per-user) paths — still read as a fallback and auto-migrated to
@@ -282,6 +335,16 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'ui', 'index.html'));
+
+  // Close to tray: hide instead of quitting, unless we're really quitting
+  // (tray Quit, an update install, or Windows shutting down).
+  mainWindow.on('close', (e) => {
+    if (closeToTray && !isQuitting) {
+      e.preventDefault();
+      ensureTray();
+      mainWindow.hide();
+    }
+  });
 
   // Defense-in-depth: even though devTools:false blocks openDevTools(), also
   // intercept the keyboard shortcuts (F12, Ctrl+Shift+I/J/C, Cmd+Opt+I)
@@ -715,6 +778,7 @@ function setupAutoUpdater() {
   autoUpdater.logger = require('electron-log');
   autoUpdater.logger.transports.file.level = 'info';
 
+  autoUpdater.on('before-quit-for-update', () => { isQuitting = true; });
   autoUpdater.on('checking-for-update', () => {
     console.log('[updater] Checking for update...');
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -785,7 +849,47 @@ ipcMain.on('check-for-update', () => {
 
 ipcMain.handle('app-version', () => app.getVersion());
 
+// ── WINDOWS NOTIFICATIONS + CLOSE TO TRAY ──────────────────────────────────
+// The renderer decides WHEN to notify (settings, focus, per-type toggles);
+// this just shows the native toast. It is always silent: the renderer plays
+// the sound the player picked for that notification type instead.
+ipcMain.on('desktop-notify', (_e, p) => {
+  try {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({
+      title:  String(p?.title || 'RSPS Hub').slice(0, 120),
+      body:   String(p?.body  || '').slice(0, 300),
+      icon:   path.join(__dirname, 'assets', 'icon.png'),
+      silent: true,
+    });
+    liveNotifications.add(n);
+    const done = () => liveNotifications.delete(n);
+    n.on('click', () => {
+      done();
+      showMainWindow();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('desktop-notif-click', { type: String(p?.type || '') });
+      }
+    });
+    n.on('close', done);
+    // Windows can drop a toast (Do Not Disturb, notifications off for the app);
+    // log the outcome so a silent notification can be diagnosed.
+    n.on('show', () => console.log('[notify] shown:', p?.type || ''));
+    n.on('failed', (_ev, err) => console.error('[notify] Windows rejected the toast:', err));
+    n.show();
+  } catch (e) { console.error('[notify] failed:', e?.message); }
+});
+
+ipcMain.handle('set-close-to-tray', (_e, enabled) => {
+  closeToTray = process.platform !== 'darwin' && !!enabled;
+  writeCloseToTray(closeToTray);
+  if (closeToTray) ensureTray(); else destroyTray();
+  return closeToTray;
+});
+ipcMain.handle('get-close-to-tray', () => closeToTray);
+
 ipcMain.on('install-update', () => {
+  isQuitting = true;   // don't let close-to-tray swallow the restart
   killJava();
   // Wait for Java process tree to fully die before handing off to NSIS
   setTimeout(() => autoUpdater.quitAndInstall(true, true), 1000);
@@ -888,6 +992,7 @@ ipcMain.handle('launch-web-server', async (_e, { serverId, name, url }) => {
 // is accurate up to the moment of quit. The reaper still covers cases where
 // the launcher crashes before this runs.
 app.on('before-quit', () => {
+  isQuitting = true;
   for (const serverId of Array.from(webSessions.keys())) {
     endWebSessionTracking(serverId);
   }
@@ -1152,6 +1257,8 @@ app.whenReady().then(() => {
   // killing whatever holds it: the RUNNING launcher's backend. That logged
   // people out whenever they clicked "Open in launcher" with the Hub open.
   if (!gotSingleInstanceLock) return;
+
+  if (closeToTray) ensureTray();   // tray icon visible while the Hub runs
 
   // Register rspshub:// with the OS, from the installed app only. A dev build
   // registering itself hijacked every link on the developer's machine and

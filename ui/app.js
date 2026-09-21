@@ -544,6 +544,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       startNewsNotificationPolling();
       startNewVideoPolling();
       startVoteReminderPolling();
+      loadFollows().then(startFollowLaunchPolling);
       startPlaytimeRefresh();
       // Prefetch tab data so Stats/Friends/Chat open instantly from cache.
       prefetchTabs();
@@ -596,7 +597,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (state.settings?.notifStreakReminder !== false) {
         window.hub.get('/api/streak/me').then(s => {
           if (s?.at_risk && !s?.already_today && s.current >= 2 && window.showToast) {
-            window.showToast(`🔥 Don't break your ${s.current}-day streak! Stay logged in today.`, 'info');
+            pushNotif('streak', 'Streak reminder', `Don't break your ${s.current}-day streak! Stay logged in today.`);
           }
         }).catch(() => {});
       }
@@ -701,6 +702,12 @@ function setupWindowControls() {
   const notifDropdown = document.getElementById('notif-dropdown');
   const acctBtn       = document.getElementById('btn-account');
   const acctDropdown  = document.getElementById('account-dropdown');
+
+  // Clicking a Windows notification brings the Hub forward (main process)
+  // and opens the bell so you can see what it was about.
+  window.hub?.onDesktopNotifClick?.(() => {
+    if (notifDropdown && notifDropdown.style.display === 'none') notifBtn?.click();
+  });
 
   notifBtn?.addEventListener('click', e => {
     e.stopPropagation();
@@ -1651,8 +1658,12 @@ function getFilteredServers() {
     list = list.filter(s => s.name.toLowerCase().startsWith(q));
   }
 
-  // Tag filter
-  if (state.activeTag !== 'All') {
+  // Tag filter. The status: chips filter on release status, not tags.
+  if (state.activeTag === 'status:beta') {
+    list = list.filter(isBetaServer);
+  } else if (state.activeTag === 'status:coming_soon') {
+    list = list.filter(isComingSoon);
+  } else if (state.activeTag !== 'All') {
     list = list.filter(s => s.tags && s.tags.some(t =>
       t.toLowerCase() === state.activeTag.toLowerCase()
     ));
@@ -1701,6 +1712,7 @@ function getFilteredServers() {
 }
 
 function renderServers() {
+  syncReleaseChips();
   const grid = document.getElementById('server-grid');
   if (!grid) return;
   grid.innerHTML = '';
@@ -1792,6 +1804,8 @@ function buildServerCard(server) {
   const ageDays   = createdAt ? (Date.now() - new Date(createdAt.replace(' ', 'T') + 'Z').getTime()) / 86_400_000 : 999;
   const isNew     = ageDays <= 14;
   const isActive  = players >= 5;
+  const isBeta    = isBetaServer(server);
+  const isSoon    = isComingSoon(server);
 
   // Visual star pictograph from avg_rating
   function starsFromRating(r) {
@@ -1812,8 +1826,10 @@ function buildServerCard(server) {
         ? `<img src="${escHtml(server.cardBannerUrl || server.bannerUrl)}" alt="${escHtml(server.name)}" onerror="this.style.display='none'">`
         : `<span class="banner-placeholder">${escHtml(server.name)}</span>`
       }
-      ${(isNew || isActive) ? `
+      ${(isNew || isActive || isBeta || isSoon) ? `
       <div class="card-badges">
+        ${isSoon   ? '<span class="card-badge b-soon">COMING SOON</span>' : ''}
+        ${isBeta   ? '<span class="card-badge b-beta">BETA</span>' : ''}
         ${isNew    ? '<span class="card-badge b-new">NEW</span>' : ''}
         ${isActive ? '<span class="card-badge b-hot">🔥 ACTIVE</span>' : ''}
       </div>` : ''}
@@ -1873,7 +1889,11 @@ function buildServerCard(server) {
     })()}
     <div class="card-actions">
       <span class="player-count">${buildPlayerCountHTML(server, players)}</span>
-      ${server.launchType === 'web'
+      ${isSoon
+        ? (server.discordUrl
+            ? `<button class="action-btn soon-btn" data-action="discord" data-name="${escAttr(server.name)}" data-tip="Not released yet">JOIN DISCORD</button>`
+            : `<button class="action-btn soon-btn" data-action="soon" data-name="${escAttr(server.name)}" disabled>COMING SOON</button>`)
+        : server.launchType === 'web'
         ? `<button class="action-btn play-btn" data-action="play-web" data-name="${escAttr(server.name)}">PLAY</button>`
         : `<button class="action-btn ${isDownloaded ? 'play-btn' : 'install-btn'}"
                   data-action="${isDownloaded ? 'play' : 'install'}"
@@ -1905,6 +1925,8 @@ function buildServerCard(server) {
     e.stopPropagation();
     const btn    = e.currentTarget;
     const action = btn.dataset.action;
+    if (action === 'discord') { openServerDiscord(server); return; }
+    if (!(await confirmReleaseStatus(server))) return;
     btn.disabled = true;
     btn.classList.add('is-loading');
     btn.textContent = action === 'play' ? 'Updating...'
@@ -2016,6 +2038,8 @@ function renderFavSidebar() {
     slot.addEventListener('click', async e => {
       if (e.target.closest('.fav-remove-btn')) return;
       if (!server) return;
+      if (isComingSoon(server)) { showServerDetail(server); return; }
+      if ((server.launchType === 'web' || server.downloaded) && !(await confirmReleaseStatus(server))) return;
       if (server.launchType === 'web') {
         try { await launchWebServer(server); }
         catch { showToast('Failed to launch ' + server.name, 'error'); }
@@ -2617,6 +2641,7 @@ async function renderAltContent(tab, el) {
     // Launcher self-update toggle lives on the Electron side, not Java —
     // merge it in so the toggle reflects the on-disk pref.
     try { s.autoUpdateLauncher = await window.hub.getAutoUpdateLauncher(); } catch (_) { s.autoUpdateLauncher = true; }
+    try { s.closeToTray = await window.hub.getCloseToTray(); } catch (_) { s.closeToTray = false; }
     el.innerHTML = buildSettingsHTML(s);
     bindSettingsEvents(el, s);
     try {
@@ -2684,6 +2709,126 @@ function confirmThemed(message, opts = {}) {
     document.body.appendChild(modal);
     setTimeout(() => modal.querySelector('[data-act="ok"]').focus(), 50);
   });
+}
+
+// ── Release status (live / beta / coming soon) ─────────────────────────
+// Owners set this on the website. A Coming soon listing has no download
+// (list.php withholds it), so every play path swaps to Join Discord. Beta
+// servers are playable but warn once per server before the first launch,
+// remembered in uiPrefs so it survives restarts.
+function isComingSoon(server) { return server?.releaseStatus === 'coming_soon'; }
+function isBetaServer(server)  { return server?.releaseStatus === 'beta'; }
+
+function openServerDiscord(server) {
+  const url = server?.discordUrl;
+  if (!url) { showToast(`${server?.name || 'This server'} hasn't released yet.`, 'info'); return; }
+  if (window.hub?.openExternal) window.hub.openExternal(url); else window.open(url, '_blank');
+}
+
+// Resolves true when it's fine to launch.
+async function confirmReleaseStatus(server) {
+  if (isComingSoon(server)) {
+    showToast(`${server.name} hasn't released yet. Join their Discord for the launch date.`, 'info');
+    return false;
+  }
+  if (!isBetaServer(server)) return true;
+  const acked = getUiPrefs().betaAck || {};
+  if (acked[server.id]) return true;
+  const ok = await confirmThemed(
+    `${server.name} is in beta. Expect bugs, missing content and possible progress wipes before the full release.`,
+    { title: 'Beta server', okLabel: 'Play anyway', cancelLabel: 'Not now' }
+  );
+  if (ok) setUiPref('betaAck', { ...acked, [server.id]: true });
+  return ok;
+}
+
+// ── FOLLOW A COMING SOON / BETA SERVER ─────────────────────────────────────
+// The website stores who follows what (and the count owners see). The
+// launcher does the telling: it remembers each followed server's release
+// status in uiPrefs.followSeen and notifies when it moves forward, so a launch
+// that happened while the Hub was closed still notifies on the next start.
+const RELEASE_RANK = { coming_soon: 0, beta: 1, live: 2 };
+state.follows = new Set();
+
+async function loadFollows() {
+  if (!state.user?.token) return;
+  try {
+    const d = await fetch('https://api.therspshub.com/api/servers/follows.php', {
+      headers: { 'Authorization': 'Bearer ' + state.user.token }, cache: 'no-store'
+    }).then(r => r.ok ? r.json() : null);
+    if (Array.isArray(d?.server_ids)) state.follows = new Set(d.server_ids.map(Number));
+  } catch (_) {}
+}
+
+async function setFollow(server, follow) {
+  const r = await fetch('https://api.therspshub.com/api/servers/follow.php', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + (state.user?.token || ''), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ server_id: server.id, follow }),
+  }).then(res => res.json()).catch(() => null);
+  if (!r?.success) throw new Error(r?.error || 'Could not update follow');
+  if (follow) state.follows.add(Number(server.id)); else state.follows.delete(Number(server.id));
+  server.followerCount = r.follower_count;
+  // Remember where it stands now, so only a later release step notifies.
+  const seen = { ...(getUiPrefs().followSeen || {}) };
+  if (follow) seen[server.id] = server.releaseStatus || 'live'; else delete seen[server.id];
+  setUiPref('followSeen', seen);
+  return r;
+}
+
+function followBtnLabel(server) {
+  const n = server.followerCount || 0;
+  const waiting = n > 0 ? ` · ${n} waiting` : '';
+  return state.follows.has(Number(server.id)) ? `✓ Following${waiting}` : `🔔 Notify me when it launches${waiting}`;
+}
+
+let _followPollStarted = false;
+function startFollowLaunchPolling() {
+  if (_followPollStarted) return;
+  _followPollStarted = true;
+  const poll = async () => {
+    if (!state.user?.username || !state.follows.size) return;
+    let list;
+    try { list = (await api.getServers())?.servers || []; } catch { return; }
+    const seen = { ...(getUiPrefs().followSeen || {}) };
+    let changed = false;
+    for (const id of state.follows) {
+      const srv = list.find(s => Number(s.id) === id);
+      if (!srv) continue;
+      const now = srv.releaseStatus || 'live', before = seen[id];
+      if (before && (RELEASE_RANK[now] ?? 2) > (RELEASE_RANK[before] ?? 2)) {
+        changed = true;
+        if (state.settings?.notifServerLaunch !== false) {
+          pushNotif('server-launch',
+            now === 'live' ? `${srv.name} is live!` : `${srv.name} is in beta`,
+            now === 'live' ? `${srv.name} has launched. You can install and play it now.`
+                           : `${srv.name} opened its beta. You can install and try it now.`);
+        }
+      }
+      if (before !== now) seen[id] = now;
+    }
+    setUiPref('followSeen', seen);
+    if (changed) loadServers().catch(() => {});
+  };
+  setTimeout(poll, 20_000);
+  setInterval(poll, 5 * 60_000);
+}
+
+// The Beta / Coming soon filter chips only appear when there's something
+// to show under them.
+function syncReleaseChips() {
+  const list = state.servers || [];
+  const chips = [['status:beta', isBetaServer], ['status:coming_soon', isComingSoon]];
+  for (const [tag, test] of chips) {
+    const chip = document.querySelector(`.tag-btn[data-tag="${tag}"]`);
+    if (!chip) continue;
+    const any = list.some(test);
+    chip.style.display = any ? '' : 'none';
+    if (!any && state.activeTag === tag) {
+      state.activeTag = 'All';
+      document.querySelectorAll('.tag-btn').forEach(b => b.classList.toggle('active', b.dataset.tag === 'All'));
+    }
+  }
 }
 
 // Manual list toggle — execCommand misbehaves in some Electron builds.
@@ -4331,6 +4476,8 @@ function openNewsCompose(el, editPost = null) {
 }
 
 async function handleLibraryPlay(name) {
+  const srv = (state.servers || []).find(s => s.name === name);
+  if (srv && !(await confirmReleaseStatus(srv))) return;
   try { await api.play(name); startActiveSessionChip(name); } catch (err) { console.error(err); }
 }
 
@@ -4522,6 +4669,8 @@ async function joinFriendServer(serverId, serverName) {
     showToast(`${serverName || 'That server'} isn't in your list yet.`, 'error');
     return;
   }
+  if (isComingSoon(server)) { showServerDetail(server); return; }
+  if ((server.launchType === 'web' || server.downloaded) && !(await confirmReleaseStatus(server))) return;
   try {
     if (server.launchType === 'web') {
       await launchWebServer(server);
@@ -6111,9 +6260,13 @@ function showServerDetail(server) {
             <h2 class="sd-name">${escHtml(server.name)}</h2>
             ${isUnknown ? '' : `<span class="sd-status-dot ${isOnline ? 'online' : 'offline'}" title="${isOnline ? 'Online' : 'Offline'}"></span>`}
             ${server.isNew ? '<span class="sd-new-badge">NEW</span>' : ''}
+            ${isComingSoon(server) ? '<span class="sd-release-badge soon">COMING SOON</span>'
+              : isBetaServer(server) ? '<span class="sd-release-badge beta">BETA</span>' : ''}
             <button class="sd-report-btn" data-report-server="${escAttr(String(server.id))}" data-report-name="${escAttr(server.name)}">🚩 Report</button>
           </div>
           <p class="sd-tagline">${escHtml(server.tagline || '')}</p>
+          ${isComingSoon(server) ? '<p class="sd-release-note">Not released yet. Join their Discord for the launch date.</p>'
+            : isBetaServer(server) ? '<p class="sd-release-note">In beta: expect bugs and possible progress wipes before the full release.</p>' : ''}
           <div class="sd-tags">${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}</div>
         </div>
       </div>
@@ -6253,6 +6406,8 @@ function showServerDetail(server) {
       <!-- FOOTER ACTIONS -->
       <div class="sd-footer">
         <div class="sd-footer-left">
+          ${(isComingSoon(server) || isBetaServer(server)) && state.user
+            ? `<button class="sd-link-btn sd-follow-btn${state.follows.has(Number(server.id)) ? ' following' : ''}" id="sd-follow-btn">${escHtml(followBtnLabel(server))}</button>` : ''}
           ${server.discordUrl ? `<button class="sd-link-btn" id="sd-discord-btn">Discord</button>` : ''}
           ${server.websiteUrl ? `<button class="sd-link-btn" id="sd-website-btn">Website</button>` : ''}
           <button class="sd-link-btn" id="sd-community-btn">➕ Add community chat</button>
@@ -6262,9 +6417,13 @@ function showServerDetail(server) {
           <button class="sd-link-btn ${isFav ? 'fav-active' : ''}" id="sd-fav-btn" style="min-width:120px">
             ${isFav ? '★ Favourited' : '☆ Favourite'}
           </button>
-          <button class="action-btn ${(server.launchType === 'web' || isInstalled) ? 'play-btn' : 'install-btn'}" id="sd-play-btn" style="height:36px;font-size:0.72rem;min-width:100px">
-            ${(server.launchType === 'web' || isInstalled) ? 'PLAY' : 'INSTALL'}
-          </button>
+          ${isComingSoon(server)
+            ? `<button class="action-btn soon-btn" id="sd-play-btn" style="height:36px;min-width:120px" ${server.discordUrl ? '' : 'disabled'}>
+                 ${server.discordUrl ? 'JOIN DISCORD' : 'COMING SOON'}
+               </button>`
+            : `<button class="action-btn ${(server.launchType === 'web' || isInstalled) ? 'play-btn' : 'install-btn'}" id="sd-play-btn" style="height:36px;font-size:0.72rem;min-width:100px">
+                 ${(server.launchType === 'web' || isInstalled) ? 'PLAY' : 'INSTALL'}
+               </button>`}
         </div>
       </div>
 
@@ -6317,6 +6476,20 @@ function showServerDetail(server) {
   });
 
   // External links
+  overlay.querySelector('#sd-follow-btn')?.addEventListener('click', async e => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    const follow = !state.follows.has(Number(server.id));
+    btn.disabled = true;
+    try {
+      await setFollow(server, follow);
+      showToast(follow ? `You'll get a notification when ${server.name} launches.` : `Stopped following ${server.name}.`, 'success');
+    } catch (err) { showToast(err.message || 'Could not update follow', 'error'); }
+    btn.disabled = false;
+    btn.textContent = followBtnLabel(server);
+    btn.classList.toggle('following', state.follows.has(Number(server.id)));
+  });
+
   overlay.querySelector('#sd-discord-btn')?.addEventListener('click', e => {
     e.stopPropagation();
     window.hub?.openExternal(server.discordUrl);
@@ -6366,6 +6539,8 @@ function showServerDetail(server) {
   overlay.querySelector('#sd-play-btn').addEventListener('click', async e => {
     e.stopPropagation();
     const btn = overlay.querySelector('#sd-play-btn');
+    if (isComingSoon(server)) { openServerDiscord(server); return; }
+    if (!(await confirmReleaseStatus(server))) return;
     btn.disabled = true;
     btn.classList.add('is-loading');
     // Web-client servers (LostCity, Xternium, etc) skip the JAR install path
@@ -6929,6 +7104,7 @@ function setupAuthForms() {
     startFriendOnlinePolling(); startRoomUnreadPolling(); startAnnouncementPolling(); startNewsNotificationPolling();
     startNewVideoPolling();
     startVoteReminderPolling();
+    loadFollows().then(startFollowLaunchPolling);
     startPlaytimeRefresh();
     // Kick off background prefetch for expensive tab data so the first
     // click on Stats / Friends / Chat renders instantly from cache.
@@ -7092,6 +7268,7 @@ async function launchWebServer(server) {
   }
   // Chip already running for this server (window was reused). Don't double-track.
   if (res?.reused) return;
+  beginSessionSummary(server.name);
   startWebSessionChip(server);
 }
 
@@ -7179,6 +7356,7 @@ if (window.hub?.onWebSessionEnded) {
       const pt = await api.getPlaytime();
       if (pt && pt.perServer) state.playtime = pt.perServer;
       updatePlaytimeStatus();
+      finishSessionSummary((state.servers || []).find(s => String(s.id) === String(serverId))?.name);
       await loadServers();
       const fresh = await window.hub.getProfile(state.user?.username);
       if (fresh) state.profile = fresh;
@@ -7194,6 +7372,38 @@ if (window.hub?.onWebSessionEnded) {
   });
 }
 
+// ── SESSION SUMMARY ──────────────────────────────────────────────────────────
+// When a game closes, tell the player what that session earned them:
+// "+1h 42m on Elyon · Level 23, 45% to 24". Most players never open Stats,
+// so this is how they find out the Hub tracks their hours at all.
+const _sessionBaseline = new Map();   // server name -> its minutes when the session started
+
+function beginSessionSummary(serverName) {
+  if (!serverName || _sessionBaseline.has(serverName)) return;
+  _sessionBaseline.set(serverName, state.playtime?.[serverName] || 0);
+}
+
+function fmtPlayed(mins) {
+  const h = Math.floor(mins / 60), m = Math.floor(mins % 60);
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+// Call after state.playtime has been refreshed for the finished session.
+function finishSessionSummary(serverName) {
+  if (!serverName || !_sessionBaseline.has(serverName)) return;
+  const before = _sessionBaseline.get(serverName);
+  _sessionBaseline.delete(serverName);
+  const after  = state.playtime?.[serverName] || 0;
+  const gained = after - before;
+  if (gained < 1) return;   // a crash on launch isn't worth a summary
+  if (state.settings?.notifSessionSummary === false) return;
+  const lvBefore = calcLevel(before), lv = calcLevel(after);
+  const progress = lv >= 99 ? 'Level 99' : `Level ${lv}, ${Math.floor(calcXpProgress(after) * 100)}% to ${lv + 1}`;
+  const levelUp  = lv > lvBefore ? ' · Level up!' : '';
+  pushNotif('session-summary', `+${fmtPlayed(gained)} on ${serverName}`,
+    `+${fmtPlayed(gained)} on ${serverName} · ${progress}${levelUp}`);
+}
+
 function startActiveSessionChip(serverName) {
   const chip   = document.getElementById('active-session-chip');
   const nameEl = document.getElementById('active-session-name');
@@ -7204,6 +7414,7 @@ function startActiveSessionChip(serverName) {
 
   nameEl.textContent = serverName;
   timeEl.textContent = '0:00:00';
+  beginSessionSummary(serverName);
   chip.style.display = 'flex';
 
   // Give the VPS a few seconds to register our session_start, then refresh
@@ -7231,6 +7442,7 @@ function startActiveSessionChip(serverName) {
           const pt = await api.getPlaytime();
           if (pt && pt.perServer) state.playtime = pt.perServer;
           updatePlaytimeStatus();
+          finishSessionSummary(serverName);
           // Pull fresh server list from VPS (new hub_players, per-server totals)
           await loadServers();
           // Refresh state.profile too — that's what hero / sidebar / nav
@@ -7374,7 +7586,53 @@ const NOTIF_ICONS = {
   'new-video':      '🎬',
   'video_comment':  '💬',
   'vote-ready':     '🗳️',
+  'streak':         '🔥',
+  'server-launch':  '🚀',
+  'session-summary':'⏱️',
 };
+
+// ── NOTIFICATION SOUND + WINDOWS NOTIFICATIONS ──────────────────────────────
+// Every notification goes through notifyOut(): it plays the Hub's one
+// notification sound (ui/sounds/notification.ogg) and, when the Hub isn't the
+// window you're using, shows a Windows notification.
+const NOTIF_CATEGORY = {
+  'friend-request': 'friendRequest',
+  'friend-online':  'friendOnline',
+  'friend-playing': 'friendPlaying',
+  'server-update':  'serverUpdate',
+  'streak':         'streak',
+  'system':         'system',
+  'new-video':      'newVideo',
+  'vote-ready':     'voteReady',
+  'server-launch':  'serverLaunch',
+  'session-summary':'sessionSummary',
+  'mention': 'community', 'reply': 'community', 'reaction': 'community',
+  'pin': 'community', 'video_comment': 'community', 'message': 'community',
+};
+// Categories whose on/off switch is checked here rather than in their poller.
+const NOTIF_GATE_KEY = { community: 'notifCommunity', serverLaunch: 'notifServerLaunch' };
+
+let _notifSoundEl = null;   // loaded once, replayed from the start each time
+function playNotifSound() {
+  try {
+    if (!_notifSoundEl) _notifSoundEl = new Audio('sounds/notification.ogg');
+    _notifSoundEl.volume = 0.6;
+    _notifSoundEl.currentTime = 0;
+    _notifSoundEl.play().catch(() => {});
+  } catch (_) { /* audio unavailable: stay silent */ }
+}
+
+function notifyOut(type, title, msg) {
+  const cat = NOTIF_CATEGORY[type] || 'system';
+  const s = state.settings || {};
+  const gate = NOTIF_GATE_KEY[cat];
+  if (gate && s[gate] === false) return;
+  if (s.notifSound !== false) playNotifSound();
+  // Only when you're somewhere else; inside the Hub the in-app toast covers it.
+  if (s.notifDesktop !== false && !document.hasFocus()) {
+    try { window.hub?.showDesktopNotification?.({ title: title || 'RSPS Hub', body: msg || '', type }); } catch (_) {}
+  }
+}
 
 function pushNotif(type, title, msg) {
   NOTIF_STORE.unshift({ id: _notifNextId++, type, title, msg, ts: Date.now(), read: false });
@@ -7382,6 +7640,7 @@ function pushNotif(type, title, msg) {
   updateNotifBadge();
   renderNotifDropdown();
   showToast(`${NOTIF_ICONS[type] || '🔔'} ${msg}`, 'info');
+  notifyOut(type, title, msg);
 }
 
 function updateNotifBadge() {
@@ -7580,7 +7839,8 @@ function startNewsNotificationPolling() {
         read: false, postId: n.post_id,
       });
       _seenNewsNotifIds.add(n.id);
-      showToast(`${NOTIF_ICONS[n.type] || '🔔'} ${title}`, 'info');
+      if (state.settings?.notifCommunity !== false) showToast(`${NOTIF_ICONS[n.type] || '🔔'} ${title}`, 'info');
+      notifyOut(n.type, title, msg);
     }
     if (NOTIF_STORE.length > 50) NOTIF_STORE.length = 50;
     updateNotifBadge();
@@ -8807,7 +9067,18 @@ function renderDevEditor(el, server) {
     <div class="dp-form-section">
       <div class="dp-form-section-hdr">⚙️ Server Details</div>
       <div class="dp-field">
-        <label class="dp-label">JAR Download URL <span class="dp-req">*</span></label>
+        <label class="dp-label">Release status</label>
+        <select class="dp-select" id="dp-release" style="width:100%">
+          <option value="live" ${(s.releaseStatus || 'live') === 'live' ? 'selected' : ''}>Live: players can download and play</option>
+          <option value="beta" ${s.releaseStatus === 'beta' ? 'selected' : ''}>Beta: playable, one-time beta warning</option>
+          <option value="coming_soon" ${s.releaseStatus === 'coming_soon' ? 'selected' : ''}>Coming soon: listed, no download, Join Discord</option>
+        </select>
+        <div style="font-size:0.72rem;color:#6a5a3a;margin-top:4px;font-style:italic">
+          Switch it yourself on launch day. A new download link is checked by staff first, so add it while you're Coming soon.
+        </div>
+      </div>
+      <div class="dp-field">
+        <label class="dp-label">JAR Download URL <span class="dp-req" id="dp-jar-req"${s.releaseStatus === 'coming_soon' ? ' style="color:#8a7a5a"' : ''}>${s.releaseStatus === 'coming_soon' ? '(optional while Coming soon)' : '*'}</span></label>
         <input class="dp-input" id="dp-jar" type="text" value="${escHtml(s.jarUrl)}" placeholder="https://...">
       </div>
       <div class="dp-field">
@@ -9144,6 +9415,13 @@ try (Response res = http.newCall(check).execute()) {
   });
 
   // Save
+  el.querySelector('#dp-release')?.addEventListener('change', e => {
+    const req = el.querySelector('#dp-jar-req');
+    if (!req) return;
+    const soon = e.target.value === 'coming_soon';
+    req.textContent = soon ? '(optional while Coming soon)' : '*';
+    req.style.color = soon ? '#8a7a5a' : '';   // muted, not the red "required" colour
+  });
   el.querySelector('#dp-save')?.addEventListener('click', () => devPortalSave(el, server));
 
   // Delete
@@ -9204,6 +9482,7 @@ function devCollect(el) {
     description:     el.querySelector('#dp-desc')?.value.trim()           || '',
     changelog:       el.querySelector('#dp-changelog')?.value.trim()      || '',
     jar_url:         el.querySelector('#dp-jar')?.value.trim()            || '',
+    release_status:  el.querySelector('#dp-release')?.value             || 'live',
     // xp_rate removed from the dev portal — was redundant with the
     // server's own description and ended up wrong on most listings.
     website_url:     el.querySelector('#dp-website')?.value.trim()        || '',
@@ -9484,6 +9763,14 @@ function buildSettingsHTML(s) {
       </div>
       ${setToggleHtml('set-autoupdate', s.autoUpdateLauncher !== false)}
     </div>
+    ${window.hub?.isMac ? '' : `
+    <div class="set-row set-between">
+      <div>
+        <div class="set-label">Close to Tray</div>
+        <div class="set-sub">Closing the window keeps the Hub running by the clock, so notifications still arrive. Right-click the tray icon to quit.</div>
+      </div>
+      ${setToggleHtml('set-tray', s.closeToTray === true)}
+    </div>`}
     <div class="set-row set-between">
       <div>
         <div class="set-label">Discord Rich Presence</div>
@@ -9496,15 +9783,32 @@ function buildSettingsHTML(s) {
   <!-- ── NOTIFICATIONS ── -->
   <div class="set-section">
     <div class="set-section-hdr">🔔&nbsp; Notifications</div>
+    <div class="set-row set-between">
+      <div>
+        <div class="set-label">Windows Notifications</div>
+        <div class="set-sub">Show notifications in the corner of your screen when the Hub isn't the window you're using</div>
+      </div>
+      ${setToggleHtml('set-nf-desktop', nd(s.notifDesktop))}
+    </div>
+    <div class="set-row set-between">
+      <div>
+        <div class="set-label">Notification Sounds</div>
+        <div class="set-sub">Play a sound when a notification arrives</div>
+      </div>
+      ${setToggleHtml('set-nf-sound', nd(s.notifSound))}
+    </div>
     ${[
       ['set-nf-fr',     'notifFriendRequests', 'Friend Requests',  'When someone sends you a friend request'],
       ['set-nf-fo',     'notifFriendOnline',   'Friends Online',   'When a friend comes online'],
       ['set-nf-fp',     'notifFriendPlaying',  'Friends Playing',  'When a friend starts playing a server'],
+      ['set-nf-sl',     'notifServerLaunch',   'Server Launches',  'When a Coming soon server you follow goes live'],
+      ['set-nf-ss',     'notifSessionSummary', 'Session Summary',  'When a game closes: how long you played and your level progress'],
+      ['set-nf-vr',     'notifVoteReady',      'Vote Reminders',   'When a server you vote for can be voted for again'],
+      ['set-nf-cm',     'notifCommunity',      'Mentions & Replies', 'When someone mentions you, replies or reacts to your post'],
+      ['set-nf-nv',     'notifNewVideo',       'New Videos',       'When a creator posts a new video'],
       ['set-nf-su',     'notifServerUpdates',  'Server Updates',   'When a server you play pushes an update'],
       ['set-nf-streak', 'notifStreakReminder',  'Streak Reminders', 'Remind you to play before your daily streak resets'],
       ['set-nf-sys',    'notifSystem',         'System Messages',  'Hub announcements and important updates'],
-      ['set-nf-nv',     'notifNewVideo',       'New Videos',       'When a creator posts a new video'],
-      ['set-nf-vr',     'notifVoteReady',      'Vote Reminders',   'When a server you vote for can be voted for again'],
     ].map(([id, key, lbl, sub]) => `
       <div class="set-row set-between">
         <div>
@@ -9571,9 +9875,10 @@ function buildSettingsHTML(s) {
               : '')}
       </div>
       <div class="set-sub" style="margin-bottom:6px">Used for password resets. We never share it. Changing it triggers a fresh verification email.</div>
-      <div class="set-row set-between" style="gap:8px">
+      <!-- Stacked: the settings panel is too narrow for the box and button side by side -->
+      <div style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:100%">
         <input class="set-input" id="set-email-input" type="email" placeholder="you@example.com"
-               value="${escAttr(state.profile?.email || '')}" style="flex:1">
+               value="${escAttr(state.profile?.email || '')}" style="width:100%;box-sizing:border-box">
         <button class="set-browse-btn" id="set-email-submit">Update Email</button>
       </div>
       <div id="set-email-msg" class="set-sub" style="color:#888;margin-top:4px"></div>
@@ -9713,9 +10018,18 @@ function bindSettingsEvents(el, initial) {
     'set-nf-sys':    'notifSystem',
     'set-nf-nv':     'notifNewVideo',
     'set-nf-vr':     'notifVoteReady',
+    'set-nf-sl':     'notifServerLaunch',
+    'set-nf-ss':     'notifSessionSummary',
+    'set-nf-cm':     'notifCommunity',
+    'set-nf-desktop':'notifDesktop',
+    'set-nf-sound':  'notifSound',
   };
   Object.entries(notifMap).forEach(([id, key]) => {
     el.querySelector(`#${id}`)?.addEventListener('change', e => save(key, e.target.checked));
+  });
+
+  el.querySelector('#set-tray')?.addEventListener('change', async e => {
+    try { await window.hub.setCloseToTray(e.target.checked); } catch {}
   });
 
   // Logout
