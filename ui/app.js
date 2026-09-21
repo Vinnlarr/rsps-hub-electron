@@ -5574,6 +5574,7 @@ const ACTIVITY_ICONS = {
   'favourited': '★', 'unfavourited': '☆',
   'unlocked level': '⭐', 'reviewed': '✍️',
   'is now friends with': '🤝',
+  'reached': '🎉',   // a server you play reached a new server level
 };
 // Actions too noisy/private to surface in the feed (all friend-graph events, plus
 // the negative/low-signal ones). The feed stays about servers and games.
@@ -5612,7 +5613,9 @@ async function renderActivityFeed(el) {
   const me = state.user?.username;
   host.innerHTML = feed.map(a => {
     const icon = ACTIVITY_ICONS[a.action] || '⚡';
-    const who = a.username === me
+    const who = a.server_id
+      ? `<span class="act-user lb-clickable" data-open-server="${escAttr(String(a.server_id))}">${escHtml(a.username)}</span>`
+      : a.username === me
       ? '<span class="act-you">You</span>'
       : `<span class="act-user lb-clickable" data-open-profile="${escAttr(a.username)}">${escHtml(a.username)}</span>`;
     return `<div class="act-row">
@@ -5623,6 +5626,11 @@ async function renderActivityFeed(el) {
       </div>
     </div>`;
   }).join('');
+  // Server level-up rows open the server, not a player profile.
+  host.querySelectorAll('[data-open-server]').forEach(elm => elm.addEventListener('click', () => {
+    const s = (state.servers || []).find(x => String(x.id) === elm.dataset.openServer);
+    if (s) showServerDetail(s);
+  }));
 }
 
 function renderGroupChat(el) {
@@ -7751,6 +7759,7 @@ const NOTIF_ICONS = {
   'server-launch':  '🚀',
   'session-summary':'⏱️',
   'staff-download': '🛠️',
+  'server_level':   '🎉',
 };
 
 // ── NOTIFICATION SOUND + WINDOWS NOTIFICATIONS ──────────────────────────────
@@ -7769,11 +7778,12 @@ const NOTIF_CATEGORY = {
   'server-launch':  'serverLaunch',
   'session-summary':'sessionSummary',
   'staff-download': 'staffDownloads',
+  'server_level':   'system',
   'mention': 'community', 'reply': 'community', 'reaction': 'community',
   'pin': 'community', 'video_comment': 'community', 'message': 'community',
 };
 // Categories whose on/off switch is checked here rather than in their poller.
-const NOTIF_GATE_KEY = { community: 'notifCommunity', serverLaunch: 'notifServerLaunch' };
+const NOTIF_GATE_KEY = { community: 'notifCommunity', serverLaunch: 'notifServerLaunch', system: 'notifSystem' };
 
 let _notifSoundEl = null;   // loaded once, replayed from the start each time
 function playNotifSound() {
@@ -7960,6 +7970,8 @@ const _seenNewsNotifIds = new Set();
 let   _newsNotifInit    = false;
 
 function _newsNotifLabel(n) {
+  // Sent to owners by the server level-up job; the preview says it all.
+  if (n.type === 'server_level') return { title: 'Server level up', msg: n.preview || '' };
   const verb = n.type === 'mention'  ? 'mentioned you'
              : n.type === 'reaction' ? 'reacted to your post'
              : n.type === 'reply'    ? 'replied to your post'
@@ -8002,7 +8014,8 @@ function startNewsNotificationPolling() {
         read: false, postId: n.post_id,
       });
       _seenNewsNotifIds.add(n.id);
-      if (state.settings?.notifCommunity !== false) showToast(`${NOTIF_ICONS[n.type] || '🔔'} ${title}`, 'info');
+      const nGate = NOTIF_GATE_KEY[NOTIF_CATEGORY[n.type] || 'system'];
+      if (!nGate || state.settings?.[nGate] !== false) showToast(`${NOTIF_ICONS[n.type] || '🔔'} ${n.type === 'server_level' ? msg : title}`, 'info');
       notifyOut(n.type, title, msg);
     }
     if (NOTIF_STORE.length > 50) NOTIF_STORE.length = 50;
