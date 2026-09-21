@@ -2306,6 +2306,80 @@ function fmtPlayedAgo(ms) {
   const d = Math.floor(h / 24); return d < 30 ? `Played ${d}d ago` : `Played ${Math.floor(d / 30)}mo ago`;
 }
 
+// ── GAME CLOSED RIGHT AFTER LAUNCH ──────────────────────────────────────────
+// A game that closes within 90 seconds of starting usually failed to start: a
+// broken client, or the server's own launcher erroring (e.g. a missing
+// bootstrap file, which leaves an error window open for a while, hence 90s
+// and not a few seconds). We tell the player it isn't them and report it to
+// staff, who see these per server on Home. Only claim staff were told if the
+// report actually went through.
+const QUICK_EXIT_SECONDS = 90;
+
+function showInfoThemed(title, message) {
+  const modal = document.createElement('div');
+  modal.className = 'news-modal-backdrop';
+  modal.innerHTML = `
+    <div class="news-modal" style="width:min(440px,90vw)">
+      <div class="news-modal-hdr"><h3>${escHtml(title)}</h3></div>
+      <div class="news-modal-body" style="color:#cdc0a0">${escHtml(message)}</div>
+      <div class="news-modal-foot"><button class="news-btn news-btn-primary" data-act="ok">OK</button></div>
+    </div>`;
+  const close = () => { modal.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape' || e.key === 'Enter') close(); };
+  document.addEventListener('keydown', onKey);
+  modal.addEventListener('click', e => { if (e.target.closest('[data-act]') || e.target === modal) close(); });
+  document.body.appendChild(modal);
+  setTimeout(() => modal.querySelector('[data-act="ok"]')?.focus(), 50);
+}
+
+async function checkQuickExit(serverName, launchedAt) {
+  const secs = Math.round((Date.now() - launchedAt) / 1000);
+  if (!(secs >= 0 && secs < QUICK_EXIT_SECONDS)) return;
+  const server = (state.servers || []).find(s => s.name === serverName);
+  if (!server) return;
+  let reported = false;
+  try {
+    const r = await fetch('https://api.therspshub.com/api/servers/launch_report.php', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + (state.user?.token || ''), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_id: server.id, seconds: secs }),
+    });
+    reported = r.ok;
+  } catch (_) {}
+  showInfoThemed(`${server.name} closed very quickly`, reported
+    ? "If it didn't start properly, it's not something you did. We've let staff know so we can look into it."
+    : "If it didn't start properly, it's not something you did. Please use Report on the server's page so staff can look into it.");
+}
+
+// Staff: servers whose games keep closing right after launch (last 7 days,
+// flagged at 2+ players). Appended under the download-health list on Home.
+async function appendLaunchHealth(host) {
+  let d = null;
+  try {
+    d = await fetch('https://api.therspshub.com/api/servers/launch_health.php', {
+      headers: { 'Authorization': 'Bearer ' + (state.user?.token || '') }, cache: 'no-store',
+    }).then(r => (r.ok ? r.json() : null));
+  } catch (_) {}
+  if (!host.isConnected || !d || !Array.isArray(d.servers)) return;
+  const flagged = d.servers.filter(s => s.flagged);
+  const box = document.createElement('div');
+  box.innerHTML = `
+    <div class="staff-dl-sum ${flagged.length ? 'bad' : 'good'}" style="margin-top:14px">
+      <span>${flagged.length ? `${flagged.length} server${flagged.length === 1 ? '' : 's'} closing right after launch` : 'No games closing right after launch'}</span>
+      <span class="staff-dl-meta">Last 7 days · 2+ players</span>
+    </div>
+    ${flagged.map(s => `
+      <button class="staff-dl-row" type="button" data-id="${escAttr(String(s.server_id))}">
+        <span class="staff-dl-name">${escHtml(s.name)}</span>
+        <span class="staff-dl-why">${s.players} players · closed after ~${s.avg_seconds}s</span>
+      </button>`).join('')}`;
+  host.appendChild(box);
+  box.querySelectorAll('.staff-dl-row').forEach(r => r.addEventListener('click', () => {
+    const s = (state.servers || []).find(x => String(x.id) === r.dataset.id);
+    if (s) showServerDetail(s);
+  }));
+}
+
 // ── STAFF: DOWNLOAD HEALTH ──────────────────────────────────────────────────
 // Staff-only Home panel: which listed servers have a broken download right
 // now. The check runs in this launcher through the same Java code installs
@@ -2336,6 +2410,7 @@ async function loadStaffDownloadHealth(host, refresh) {
         <span class="staff-dl-why">${escHtml(b.reason)}</span>
       </button>`).join('')}`;
   host.querySelector('.staff-dl-recheck')?.addEventListener('click', () => loadStaffDownloadHealth(host, true));
+  appendLaunchHealth(host);
   host.querySelectorAll('.staff-dl-row').forEach(r => r.addEventListener('click', () => {
     const s = (state.servers || []).find(x => String(x.id) === r.dataset.id);
     if (s) showServerDetail(s);
@@ -7584,6 +7659,7 @@ function startActiveSessionChip(serverName) {
   timeEl.textContent = '0:00:00';
   beginSessionSummary(serverName);
   markPlayed(serverName);
+  const launchedAt = Date.now();
   chip.style.display = 'flex';
 
   // Give the VPS a few seconds to register our session_start, then refresh
@@ -7602,6 +7678,7 @@ function startActiveSessionChip(serverName) {
         clearInterval(_activeSessionInterval);
         _activeSessionInterval = null;
         chip.style.display = 'none';
+        checkQuickExit(serverName, launchedAt);
         // Bust every cache that could carry stale post-session data so the
         // next render anywhere shows fresh numbers. Without this the stats
         // modal / sidebar happily showed minute-stale playtime, which made
