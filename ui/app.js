@@ -545,6 +545,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       startNewVideoPolling();
       startVoteReminderPolling();
       loadFollows().then(startFollowLaunchPolling);
+      startStaffDownloadWatch();
       startPlaytimeRefresh();
       // Prefetch tab data so Stats/Friends/Chat open instantly from cache.
       prefetchTabs();
@@ -1834,6 +1835,7 @@ function buildServerCard(server) {
         ${isActive ? '<span class="card-badge b-hot">🔥 ACTIVE</span>' : ''}
       </div>` : ''}
       ${buildLiveBadgeHTML(server)}
+      <span class="srv-lvl-crest" title="Server level: rises with every hour all players spend on ${escAttr(server.name)} through the Hub">SERVER LV ${serverLevel(server.hoursPlayed || 0)}</span>
       <button class="banner-fav${isFav ? ' active' : ''}" data-name="${escAttr(server.name)}" data-tip="${isFav ? 'Unfavourite' : 'Favourite'}">${isFav ? '★' : '☆'}</button>
     </div>
     <div class="card-info">
@@ -1860,7 +1862,7 @@ function buildServerCard(server) {
           data-orb="${escHtml(server.name[0].toUpperCase())}"
           data-xp="${Math.round(xpPct*100)}"
           data-time="${escHtml(calcTooltip(server.name, level, minutes).split('·')[1]?.trim() || 'Max level')}">
-          <span class="level-badge" style="border-color:${accent};color:${accent}">Lv. ${level}</span>
+          <span class="level-badge" style="border-color:${accent};color:${accent}" title="Your level on this server, from your own hours">Your Lv. ${level}</span>
         </span>
       </div>
       <p class="card-desc">${escHtml(truncate(server.description || '', 200))}</p>
@@ -2263,6 +2265,47 @@ function attachTilt(node, max) {
   node.addEventListener('mouseleave', () => { node.style.transform = ''; });
 }
 
+// ── PLAYED-AT TIMES (Home "Jump back in" + Library "Recently played") ──────
+// When you start a server from the Hub we save the time per server in
+// uiPrefs.playedAt, plus the single latest in uiPrefs.lastPlayed for Home.
+// Servers played before this existed are filled in once from your
+// "started playing" entries in the activity feed.
+function markPlayed(name) {
+  if (!name) return;
+  const at = Date.now();
+  setUiPref('playedAt', { ...(getUiPrefs().playedAt || {}), [name]: at });
+  setUiPref('lastPlayed', { name, at });
+}
+
+function feedTime(dt) {
+  const t = new Date(String(dt || '').replace(' ', 'T') + 'Z').getTime();
+  return isNaN(t) ? 0 : t;
+}
+
+// Fill in times we don't have yet from the activity feed. Never overwrites a
+// time recorded by an actual launch.
+function seedPlayedFromFeed(feed) {
+  const me = state.user?.username;
+  const playedAt = { ...(getUiPrefs().playedAt || {}) };
+  let changed = false;
+  for (const a of feed || []) {
+    if (a.username !== me || a.action !== 'started playing' || !a.target) continue;
+    const t = feedTime(a.created_at);
+    if (t && !(a.target in playedAt)) { playedAt[a.target] = t; changed = true; }
+  }
+  if (changed) setUiPref('playedAt', playedAt);
+  return changed;
+}
+
+function fmtPlayedAgo(ms) {
+  if (!ms) return 'Not played yet';
+  const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 1) return 'Played just now';
+  if (m < 60) return `Played ${m}m ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `Played ${h}h ago`;
+  const d = Math.floor(h / 24); return d < 30 ? `Played ${d}d ago` : `Played ${Math.floor(d / 30)}mo ago`;
+}
+
 // ── STAFF: DOWNLOAD HEALTH ──────────────────────────────────────────────────
 // Staff-only Home panel: which listed servers have a broken download right
 // now. The check runs in this launcher through the same Java code installs
@@ -2297,6 +2340,38 @@ async function loadStaffDownloadHealth(host, refresh) {
     const s = (state.servers || []).find(x => String(x.id) === r.dataset.id);
     if (s) showServerDetail(s);
   }));
+}
+
+// Staff only: a notification when a listed server's download newly breaks,
+// or starts working again. Rides on the cached download-health check, so it
+// costs nothing extra. The first run records what's already broken quietly.
+let _staffDlWatchStarted = false;
+function startStaffDownloadWatch() {
+  if (_staffDlWatchStarted || !state.user?.isStaff) return;
+  _staffDlWatchStarted = true;
+  const check = async () => {
+    let d;
+    try { d = await window.hub.get('/api/dev/download-health'); } catch { return; }
+    if (!d || !Array.isArray(d.broken)) return;
+    const now = Object.fromEntries(d.broken.map(b => [String(b.id), b]));
+    const known = getUiPrefs().dlBrokenKnown;   // { id: name } from the last check
+    if (known && state.settings?.notifStaffDownloads !== false) {
+      for (const id in now) {
+        if (!(id in known)) pushNotif('staff-download', 'Download broken', `${now[id].name}: ${now[id].reason}`);
+      }
+      for (const id in known) {
+        // Only "fixed" if it's still listed and playable; hiding a server or
+        // switching it to Coming soon also takes it out of the check.
+        const s = (state.servers || []).find(x => String(x.id) === id);
+        if (!(id in now) && s && s.releaseStatus !== 'coming_soon') {
+          pushNotif('staff-download', 'Download fixed', `${known[id]}'s download is working again`);
+        }
+      }
+    }
+    setUiPref('dlBrokenKnown', Object.fromEntries(Object.entries(now).map(([id, b]) => [id, b.name])));
+  };
+  setTimeout(check, 60_000);
+  setInterval(check, 30 * 60_000);
 }
 
 // Living home dashboard: greeting + live pulse, jump-back-in, friends online,
@@ -2502,6 +2577,7 @@ async function renderHome(el) {
     const me = state.user?.username;
     // No last-played saved yet (first run on this version): take it from
     // your latest "started playing" and redraw Home once.
+    seedPlayedFromFeed(feed);
     if (!getUiPrefs().lastPlayed) {
       const mine = feed.find(a => a.username === me && a.action === 'started playing' && a.target);
       if (mine) {
@@ -2606,9 +2682,26 @@ async function renderAltContent(tab, el) {
   }
 
   else if (tab === 'library') {
+    // Fill in play times from the activity feed once, then redraw.
+    if (!el._libSeeded) {
+      el._libSeeded = true;
+      window.hub.get('/api/activity/feed').then(d => { if (seedPlayedFromFeed(d?.feed)) rerenderLibraryIfOpen(); }).catch(() => {});
+    }
+    const playedAt = getUiPrefs().playedAt || {};
+    const libSort = getUiPrefs().librarySort || 'recent';
     const installed = state.servers.filter(s => s.downloaded);
+    const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    if (libSort === 'recent') installed.sort((a, b) => (playedAt[b.name] || 0) - (playedAt[a.name] || 0) || byName(a, b));
+    else if (libSort === 'hours') installed.sort((a, b) => (state.playtime[b.name] || 0) - (state.playtime[a.name] || 0) || byName(a, b));
+    else installed.sort(byName);
     el.innerHTML = `
-      <div class="alt-header"><h2>LIBRARY</h2><p>Your installed servers</p></div>
+      <div class="alt-header lib-header"><div><h2>LIBRARY</h2><p>Your installed servers</p></div>
+        ${installed.length > 1 ? `<select class="lib-sort" aria-label="Sort library">
+          <option value="recent"${libSort === 'recent' ? ' selected' : ''}>Recently played</option>
+          <option value="hours"${libSort === 'hours' ? ' selected' : ''}>Most played</option>
+          <option value="az"${libSort === 'az' ? ' selected' : ''}>A to Z</option>
+        </select>` : ''}
+      </div>
       ${installed.length === 0
         ? '<p class="empty-msg">No servers installed yet. Head to the Store to install one!</p>'
         : installed.map(s => `
@@ -2620,7 +2713,7 @@ async function renderAltContent(tab, el) {
             </div>
             <div class="library-info">
               <span class="library-name">${escHtml(s.name)}</span>
-              <span class="library-meta">${escHtml((s.tags || []).slice(0,3).map(t => String(t).toUpperCase()).join(' · '))}</span>
+              <span class="library-meta">${escHtml(fmtPlayedAgo(playedAt[s.name]))}${(s.tags || []).length ? ' · ' + escHtml((s.tags || []).slice(0,3).map(t => String(t).toUpperCase()).join(' · ')) : ''}</span>
             </div>
             <div class="library-actions">
               <button class="action-btn play-btn" data-lib-action="play" data-lib-name="${escHtml(s.name)}">PLAY</button>
@@ -2630,6 +2723,10 @@ async function renderAltContent(tab, el) {
         `).join('')
       }
     `;
+    el.querySelector('.lib-sort')?.addEventListener('change', e => {
+      setUiPref('librarySort', e.target.value);
+      rerenderLibraryIfOpen();
+    });
     // Bind library button actions (replaces onclick=… to avoid string injection)
     el.querySelectorAll('[data-lib-action]').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -6334,6 +6431,7 @@ function showServerDetail(server) {
       <!-- STATS ROW -->
       <div class="sd-stats-row">
         <div class="sd-stat"><span class="sd-stat-val">${(server.hoursPlayed || 0).toLocaleString()}</span><span class="sd-stat-lbl">Hours Played</span></div>
+        <div class="sd-stat" title="Rises with every hour all players spend here through the Hub"><span class="sd-stat-val">${serverLevel(server.hoursPlayed || 0)}</span><span class="sd-stat-lbl">Server Level${serverLevel(server.hoursPlayed || 0) < 99 ? ' · ' + Math.floor(serverLevelProgress(server.hoursPlayed || 0) * 100) + '% to ' + (serverLevel(server.hoursPlayed || 0) + 1) : ''}</span></div>
         ${(() => {
           // Servers that push a heartbeat still get their live count shown
           // beside the hours. Stale reports (>10 min) are dropped so a crashed
@@ -7165,6 +7263,7 @@ function setupAuthForms() {
     startNewVideoPolling();
     startVoteReminderPolling();
     loadFollows().then(startFollowLaunchPolling);
+    startStaffDownloadWatch();
     startPlaytimeRefresh();
     // Kick off background prefetch for expensive tab data so the first
     // click on Stats / Friends / Chat renders instantly from cache.
@@ -7329,7 +7428,7 @@ async function launchWebServer(server) {
   // Chip already running for this server (window was reused). Don't double-track.
   if (res?.reused) return;
   beginSessionSummary(server.name);
-  setUiPref('lastPlayed', { name: server.name, at: Date.now() });
+  markPlayed(server.name);
   startWebSessionChip(server);
 }
 
@@ -7476,7 +7575,7 @@ function startActiveSessionChip(serverName) {
   nameEl.textContent = serverName;
   timeEl.textContent = '0:00:00';
   beginSessionSummary(serverName);
-  setUiPref('lastPlayed', { name: serverName, at: Date.now() });
+  markPlayed(serverName);
   chip.style.display = 'flex';
 
   // Give the VPS a few seconds to register our session_start, then refresh
@@ -7651,6 +7750,7 @@ const NOTIF_ICONS = {
   'streak':         '🔥',
   'server-launch':  '🚀',
   'session-summary':'⏱️',
+  'staff-download': '🛠️',
 };
 
 // ── NOTIFICATION SOUND + WINDOWS NOTIFICATIONS ──────────────────────────────
@@ -7668,6 +7768,7 @@ const NOTIF_CATEGORY = {
   'vote-ready':     'voteReady',
   'server-launch':  'serverLaunch',
   'session-summary':'sessionSummary',
+  'staff-download': 'staffDownloads',
   'mention': 'community', 'reply': 'community', 'reaction': 'community',
   'pin': 'community', 'video_comment': 'community', 'message': 'community',
 };
@@ -9874,6 +9975,7 @@ function buildSettingsHTML(s) {
       ['set-nf-su',     'notifServerUpdates',  'Server Updates',   'When a server you play pushes an update'],
       ['set-nf-streak', 'notifStreakReminder',  'Streak Reminders', 'Remind you to play before your daily streak resets'],
       ['set-nf-sys',    'notifSystem',         'System Messages',  'Hub announcements and important updates'],
+      ...(state.user?.isStaff ? [['set-nf-dl', 'notifStaffDownloads', 'Broken Downloads (staff)', 'When a listed server\'s download breaks or starts working again']] : []),
     ].map(([id, key, lbl, sub]) => `
       <div class="set-row set-between">
         <div>
@@ -10085,6 +10187,7 @@ function bindSettingsEvents(el, initial) {
     'set-nf-vr':     'notifVoteReady',
     'set-nf-sl':     'notifServerLaunch',
     'set-nf-ss':     'notifSessionSummary',
+    'set-nf-dl':     'notifStaffDownloads',
     'set-nf-cm':     'notifCommunity',
     'set-nf-desktop':'notifDesktop',
     'set-nf-sound':  'notifSound',
@@ -10259,6 +10362,21 @@ function bindSettingsEvents(el, initial) {
 // ── LEVEL / XP — matches ServerSkillSystem.java exactly ─────────────────────
 // Square-root curve: Lv99 = 60,000 minutes (1,000 hours)
 const MAX_MINUTES = 60000;
+
+// Server level: grows with the hours ALL players spend on a server through
+// the Hub. Same shape as the personal level (quick early, slow later) with
+// level 99 at 100,000 hours. Separate from your own level on that server.
+const SERVER_MAX_HOURS = 100000;
+function serverLevel(hours) {
+  if (!(hours > 0)) return 1;
+  return Math.min(99, Math.floor(1 + 98 * Math.sqrt(Math.min(1, hours / SERVER_MAX_HOURS))));
+}
+function serverLevelProgress(hours) {
+  const lv = serverLevel(hours);
+  if (lv >= 99) return 1;
+  const at = l => (l <= 1 ? 0 : Math.pow((l - 1) / 98, 2) * SERVER_MAX_HOURS);
+  return Math.max(0, Math.min(1, ((hours || 0) - at(lv)) / (at(lv + 1) - at(lv))));
+}
 
 function calcLevel(minutes) {
   if (minutes <= 0) return 1;

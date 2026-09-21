@@ -2684,6 +2684,26 @@ body.is-mac .title-bar { padding-left: 80px; }
   border-radius: 12px; padding: 16px 18px;
   backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
 }
+/* Server level crest, bottom-left of the card banner */
+.srv-lvl-crest {
+  position: absolute; left: 6px; bottom: 6px; z-index: 2;
+  font-family: 'Cinzel', serif; font-size: 0.56rem; font-weight: 700; letter-spacing: 1px;
+  color: #f4d77c; background: rgba(10,8,6,0.85); border: 1px solid #a07030;
+  padding: 2px 7px; border-radius: 3px; box-shadow: 0 2px 6px rgba(0,0,0,0.6); pointer-events: auto;
+}
+
+/* Library header with sort control */
+.lib-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.lib-sort {
+  background: #0e0c08; border: 1px solid #2e2410; border-radius: 3px;
+  padding: 6px 28px 6px 10px; color: #d4b86a; font-family: 'Inter', sans-serif; font-size: 0.78rem;
+  outline: none; cursor: pointer; appearance: none; margin-bottom: 4px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23c8a840'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 9px center;
+}
+.lib-sort:hover, .lib-sort:focus { border-color: var(--accent); }
+.lib-sort option { background: #1a1408; color: #d4b86a; }
+
 /* Staff-only download health panel on Home */
 .home-staff-sec { border-color: #5a3a14; }
 .staff-dl-sum { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
