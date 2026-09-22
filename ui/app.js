@@ -164,7 +164,9 @@ const api = {
   login:            (u, p)          => window.hub.post('/api/auth/login', { username: u, password: p }),
   logout:           ()              => window.hub.post('/api/auth/logout'),
   play:             (name)          => window.hub.post(`/api/servers/${encodeURIComponent(name)}/play`),
-  install:          (name, jarUrl, jarSha256, jarSizeBytes) => window.hub.post(`/api/servers/${encodeURIComponent(name)}/install`, { jarUrl, jarSha256, jarSizeBytes }),
+  // serverId lets the backend report a client that isn't the approved file.
+  install:          (name, jarUrl, jarSha256, jarSizeBytes) => window.hub.post(`/api/servers/${encodeURIComponent(name)}/install`, {
+    jarUrl, jarSha256, jarSizeBytes, serverId: (state.servers || []).find(s => s.name === name)?.id }),
   uninstall:        (name)          => window.hub.post(`/api/servers/${encodeURIComponent(name)}/uninstall`),
   toggleFavourite:  (name)          => window.hub.post(`/api/servers/${encodeURIComponent(name)}/favourite`),
   getPlaytime:      ()              => window.hub.get('/api/playtime'),
@@ -2362,6 +2364,7 @@ async function appendLaunchHealth(host) {
   } catch (_) {}
   if (!host.isConnected || !d || !Array.isArray(d.servers)) return;
   const flagged = d.servers.filter(s => s.flagged);
+  const changed = Array.isArray(d.changed_files) ? d.changed_files : [];
   const box = document.createElement('div');
   box.innerHTML = `
     <div class="staff-dl-sum ${flagged.length ? 'bad' : 'good'}" style="margin-top:14px">
@@ -2372,9 +2375,31 @@ async function appendLaunchHealth(host) {
       <button class="staff-dl-row" type="button" data-id="${escAttr(String(s.server_id))}">
         <span class="staff-dl-name">${escHtml(s.name)}</span>
         <span class="staff-dl-why">${s.players} players · closed after ~${s.avg_seconds}s</span>
-      </button>`).join('')}`;
+      </button>`).join('')}
+    ${changed.length ? `
+      <div class="staff-dl-sum bad" style="margin-top:14px">
+        <span>${changed.length} server${changed.length === 1 ? '' : 's'} sending players a changed file</span>
+        <span class="staff-dl-meta">Not re-hashed yet · last 7 days</span>
+      </div>
+      ${changed.map(s => `
+        <div class="staff-dl-row" data-id="${escAttr(String(s.server_id))}">
+          <span class="staff-dl-name">${escHtml(s.name)}</span>
+          <span class="staff-dl-why">${s.players} player${s.players === 1 ? '' : 's'} got a file that isn't the approved one</span>
+          <button class="staff-dl-rehash" type="button" data-rehash-changed="${escAttr(String(s.server_id))}">Re-hash</button>
+        </div>`).join('')}` : ''}`;
   host.appendChild(box);
-  box.querySelectorAll('.staff-dl-row').forEach(r => r.addEventListener('click', () => {
+  // Players are getting a file that isn't the approved one (usually an owner
+  // update). Re-hashing approves the file they're getting now.
+  box.querySelectorAll('[data-rehash-changed]').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    const name = changed.find(c => String(c.server_id) === btn.dataset.rehashChanged)?.name || 'Server';
+    btn.disabled = true; btn.textContent = 'Hashing…';
+    const r = await staffRehash(btn.dataset.rehashChanged);
+    showToast(r.ok ? `${name}: approved its current file as the trusted version.` : `${name}: re-hash failed (${r.error}).`, r.ok ? 'success' : 'error');
+    loadStaffDownloadHealth(host, 'quick');
+  }));
+  box.querySelectorAll('.staff-dl-row').forEach(r => r.addEventListener('click', e => {
+    if (e.target.closest('button')) return;
     const s = (state.servers || []).find(x => String(x.id) === r.dataset.id);
     if (s) showServerDetail(s);
   }));
@@ -2385,13 +2410,29 @@ async function appendLaunchHealth(host) {
 // now. The check runs in this launcher through the same Java code installs
 // use, so Cloudflare-protected hosts aren't falsely flagged. Players never
 // see this and nothing is hidden automatically.
+// Re-hash one server: the website re-downloads the file it's serving now and
+// stores that as the approved fingerprint (same as the Dev Portal button).
+async function staffRehash(id) {
+  try {
+    const res = await window.hub.post('/api/dev/rehash', { id: Number(id), promote_pending: false });
+    return res && res.ok ? { ok: true } : { ok: false, error: res?.error || 'unknown error' };
+  } catch (e) { return { ok: false, error: e.message || String(e) }; }
+}
+const isRehashable = b => /^File changed since it was approved|^No fingerprint on file/.test(b.reason || '');
+let _staffRehashAllRunning = false;
+
+// refresh: false = cached, 'quick' = fresh size check, true = full fingerprints.
 async function loadStaffDownloadHealth(host, refresh) {
   if (!host) return;
   const hdr = '<h2>🛠️ Staff: download health</h2>';
   host.innerHTML = hdr + '<p class="empty-msg">Checking every server\'s download…</p>';
+  const q = refresh === true ? '?refresh=1' : refresh === 'quick' ? '?refresh=quick' : '';
+  // Only the newest load may draw and wire buttons: an older one finishing
+  // late (e.g. after a re-hash triggered a reload) would double-bind them.
+  const token = host._dlToken = (host._dlToken || 0) + 1;
   let d = null;
-  try { d = await window.hub.get('/api/dev/download-health' + (refresh ? '?refresh=1' : '')); } catch (_) {}
-  if (!host.isConnected) return;
+  try { d = await window.hub.get('/api/dev/download-health' + q); } catch (_) {}
+  if (!host.isConnected || host._dlToken !== token) return;
   if (!d || d.error || !Array.isArray(d.broken)) {
     host.innerHTML = hdr + `<p class="empty-msg">Couldn't run the check${d?.error ? ': ' + escHtml(d.error) : ''}.</p>`;
     return;
@@ -2399,22 +2440,61 @@ async function loadStaffDownloadHealth(host, refresh) {
   const mins = Math.round((Date.now() - d.checkedAt) / 60000);
   const when = mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)}h ago`;
   const broken = d.broken;
+  const rehashable = broken.filter(isRehashable);
   host.innerHTML = hdr + `
     <div class="staff-dl-sum ${broken.length ? 'bad' : 'good'}">
       <span>${broken.length ? `${broken.length} of ${d.total} downloads broken` : `All ${d.total} downloads working`}</span>
-      <span class="staff-dl-meta">Checked ${when} · <button class="staff-dl-recheck" type="button">Re-check</button></span>
+      <span class="staff-dl-meta">Checked ${when} · <button class="staff-dl-recheck" type="button" title="Downloads every client to compare full fingerprints">Re-check</button>${rehashable.length
+        ? ` · <button class="staff-dl-recheck staff-dl-rehash-all" type="button">Re-hash all (${rehashable.length})</button>` : ''}</span>
     </div>
     ${broken.map(b => `
-      <button class="staff-dl-row" type="button" data-id="${escAttr(String(b.id))}" title="${escAttr(b.url || '')}">
+      <div class="staff-dl-row" data-id="${escAttr(String(b.id))}" title="${escAttr(b.url || '')}">
         <span class="staff-dl-name">${escHtml(b.name)}</span>
         <span class="staff-dl-why">${escHtml(b.reason)}</span>
-      </button>`).join('')}`;
+        ${isRehashable(b) ? `<button class="staff-dl-rehash" type="button" data-rehash="${escAttr(String(b.id))}">Re-hash</button>` : ''}
+      </div>`).join('')}`;
   host.querySelector('.staff-dl-recheck')?.addEventListener('click', () => loadStaffDownloadHealth(host, true));
   appendLaunchHealth(host);
-  host.querySelectorAll('.staff-dl-row').forEach(r => r.addEventListener('click', () => {
+  host.querySelectorAll('.staff-dl-row').forEach(r => r.addEventListener('click', e => {
+    if (e.target.closest('button')) return;
     const s = (state.servers || []).find(x => String(x.id) === r.dataset.id);
     if (s) showServerDetail(s);
   }));
+  // One server: an explicit click is the approval.
+  host.querySelectorAll('[data-rehash]').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    const name = broken.find(b => String(b.id) === btn.dataset.rehash)?.name || 'Server';
+    btn.disabled = true; btn.textContent = 'Hashing…';
+    const r = await staffRehash(btn.dataset.rehash);
+    showToast(r.ok ? `${name}: approved its current file as the trusted version.` : `${name}: re-hash failed (${r.error}).`, r.ok ? 'success' : 'error');
+    loadStaffDownloadHealth(host, 'quick');
+  }));
+  // All of them: this approves whatever each server serves right now, which is
+  // exactly when a swapped jar would slip through, so name every server first.
+  host.querySelector('.staff-dl-rehash-all')?.addEventListener('click', async e => {
+    e.stopPropagation();
+    if (_staffRehashAllRunning) return;   // never two runs at once
+    const ok = await confirmThemed(
+      `This approves the file each of these ${rehashable.length} servers is serving right now as its trusted version: `
+      + rehashable.map(b => b.name).join(', ')
+      + '. Only do this if you are happy these are genuine updates from the owners.',
+      { title: 'Re-hash all', okLabel: `Re-hash ${rehashable.length}`, danger: true });
+    if (!ok) return;
+    const btn = e.target;
+    btn.disabled = true;
+    _staffRehashAllRunning = true;
+    const failed = [];
+    for (let i = 0; i < rehashable.length; i++) {
+      btn.textContent = `Re-hashing ${i + 1}/${rehashable.length}…`;
+      const r = await staffRehash(rehashable[i].id);
+      if (!r.ok) failed.push(`${rehashable[i].name} (${r.error})`);
+    }
+    _staffRehashAllRunning = false;
+    const done = rehashable.length - failed.length;
+    showToast(failed.length ? `Re-hashed ${done} of ${rehashable.length}. Failed: ${failed.join(', ')}` : `Re-hashed all ${done} servers.`,
+      failed.length ? 'error' : 'success');
+    loadStaffDownloadHealth(host, 'quick');
+  });
 }
 
 // Staff only: a notification when a listed server's download newly breaks,
@@ -6438,10 +6518,12 @@ async function handleDeepLink(link) {
 function reportInstallIntegrity(server, result, quietWhenFine) {
   const status = result && result.hashStatus;
   if (status === 'mismatch') {
+    // The install still went ahead (hash checks warn, never block), so say so
+    // up front: a red "doesn't match" alone read like a failed install.
     showToast(
-      server.name + ': this client does not match the version the Hub approved. ' +
-      'It may just be an update the owner has not registered yet, but treat it with caution.',
-      'error');
+      server.name + " installed, but it isn't the exact version the Hub approved. " +
+      "It's most likely an update the owner hasn't registered yet, and staff can see it. Treat it with caution.",
+      'info');
   } else if (status === 'verified' && !quietWhenFine) {
     showToast(server.name + ': client verified against the Hub fingerprint.', 'success');
   }

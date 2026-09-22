@@ -2716,6 +2716,14 @@ body.is-mac .title-bar { padding-left: 80px; }
   background: rgba(14,10,6,0.55); border: 1px solid #3a2e14; border-radius: 4px; padding: 7px 10px; margin-top: 6px;
   color: #e0c890; font-family: 'Inter', sans-serif; font-size: 0.8rem; cursor: pointer; }
 .staff-dl-row:hover { border-color: var(--accent); }
+.staff-dl-row { align-items: center; }
+.staff-dl-why { margin-left: auto; }
+.staff-dl-rehash {
+  flex: none; margin-left: 10px; background: none; border: 1px solid #6b5228; color: #c8a840;
+  border-radius: 3px; padding: 2px 9px; font: inherit; font-size: 0.72rem; cursor: pointer;
+}
+.staff-dl-rehash:hover:not(:disabled) { border-color: var(--accent); color: #f0d870; }
+.staff-dl-rehash:disabled { opacity: 0.6; cursor: default; }
 .staff-dl-name { font-weight: 600; }
 .staff-dl-why  { color: #ff9a6a; text-align: right; }
 .home-section h2 { font-family: 'Cinzel', serif; font-size: 0.85rem; letter-spacing: 2px; text-transform: uppercase; color: var(--accent-hot); font-weight: 700; margin: 0 0 12px; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
