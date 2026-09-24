@@ -2591,9 +2591,11 @@ body.is-mac .title-bar { padding-left: 80px; }
 .friend-status-join:hover { text-decoration: underline; }
 
 /* "N friends playing here" chip on server cards */
+/* Sits in the tags row with stars and votes. It used to be its own column in
+   the card, which squeezed the text on any card where a friend was playing. */
 .card-friends-here {
-  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;
-  margin: 2px 0 6px; padding: 3px 9px; border-radius: 11px;
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  margin: 0; padding: 2px 9px; border-radius: 11px; white-space: nowrap;
   background: rgba(80,204,80,0.10); border: 1px solid rgba(80,204,80,0.35);
   color: #7ad88a; font-size: 0.72rem; font-weight: 600;
 }

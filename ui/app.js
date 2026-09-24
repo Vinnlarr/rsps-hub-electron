@@ -1809,6 +1809,7 @@ function buildServerCard(server) {
   const isActive  = players >= 5;
   const isBeta    = isBetaServer(server);
   const isSoon    = isComingSoon(server);
+  const friendsHere = (state.friendsPlayingByServer || {})[server.name] || [];
 
   // Visual star pictograph from avg_rating
   function starsFromRating(r) {
@@ -1871,6 +1872,7 @@ function buildServerCard(server) {
       <div class="card-tags">
         ${tags.map(t => `<span class="tag-pill">${escHtml(String(t).toUpperCase())}</span>`).join('')}
         <span class="card-tags-right">
+          ${friendsHere.length ? `<span class="card-friends-here" title="${escAttr(friendsHere.join(', '))}">👥 ${friendsHere.length} friend${friendsHere.length !== 1 ? 's' : ''} playing here</span>` : ''}
           ${server.reviewCount > 0 ? `
             <span class="card-stars-row">
               <span class="card-stars">${starsFromRating(server.avgRating)}</span>
@@ -1885,12 +1887,6 @@ function buildServerCard(server) {
         </span>
       </div>
     </div>
-    ${(() => {
-      const fh = (state.friendsPlayingByServer || {})[server.name] || [];
-      return fh.length
-        ? `<div class="card-friends-here" title="${escAttr(fh.join(', '))}">👥 ${fh.length} friend${fh.length !== 1 ? 's' : ''} playing here</div>`
-        : '';
-    })()}
     <div class="card-actions">
       <span class="player-count">${buildPlayerCountHTML(server, players)}</span>
       ${isSoon
